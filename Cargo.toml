@@ -48,7 +48,7 @@ iop-proto-wasm = { path = "./proto-wasm" }
 iop-vault = { path = "./vault" }
 json-digest-wasm = { path = "./json-digest-wasm" }
 json-digest = { path = "./json-digest" }
-mosaic-did-types = { path="./mosaic-did-types" }
+mosaic-did-types = { path="./mosaic-did-types", default-features = false }
 pallet-mosaic-did = { path="./pallet-mosaic-did" }
 
 anyhow = { version = "1.0.98" }
