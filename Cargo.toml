@@ -13,7 +13,9 @@ members = [
     "morpheus-node",
     "morpheus-proto",
     "morpheus-sdk",
+    "mosaic-did-types",
     "node-wasm",
+    "pallet-mosaic-did",
     "proto-wasm",
     "sdk",
     "sdk-ffi",
@@ -23,10 +25,10 @@ members = [
 
 [workspace.package]
 version = "0.0.17"
-rust-version = "1.85"
+rust-version = "1.88"
 edition = "2024"
 repository = "https://github.com/Internet-of-People/iop-rs"
-authors = ["IOP Ventures LLC <dev@iop-ventures.com>", "wigy <wigy_opensource_developer@yahoo.com>", "Rache Bartmoss <bartmoss@tutanota.com>"]
+authors = ["IOP Ventures LLC <dev@iop-ventures.com>"]
 license = "LGPL-3.0-or-later"
 homepage = "https://developer.iop.technology/glossary?id=multicipher"
 
@@ -46,6 +48,8 @@ iop-proto-wasm = { path = "./proto-wasm" }
 iop-vault = { path = "./vault" }
 json-digest-wasm = { path = "./json-digest-wasm" }
 json-digest = { path = "./json-digest" }
+mosaic-did-types = { path="./mosaic-did-types" }
+pallet-mosaic-did = { path="./pallet-mosaic-did" }
 
 anyhow = { version = "1.0.98" }
 blake2 = { version = "0.10.6" }

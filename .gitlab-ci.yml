@@ -2,7 +2,7 @@
 # http://blog.wjlr.org.uk/2016/08/16/fast-rust-gitlab-ci.html
 
 # This file is a template, and might need editing before it works on your project.
-image: "rust"
+image: "rust:1.88-bookworm"
 
 # To ensure that dependencies are cached correctly
 variables:

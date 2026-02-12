@@ -19,7 +19,7 @@ rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tiny-keccak = { version = "2.0.2", features = ["sha3"] }
-unicode-normalization = { version = "0.1.24" }
+unicode-normalization = { version = "0.1.22" }
 
 [dev-dependencies]
 hex = { workspace = true }
