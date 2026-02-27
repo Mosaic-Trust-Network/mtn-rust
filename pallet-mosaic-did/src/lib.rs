@@ -214,28 +214,22 @@ pub mod pallet {
                 Error::<T>::TooManyOperations
             );
 
-            // Phase 1: Validate all operations (dry run — reads state but doesn't mutate)
+            // Validate-then-apply each operation sequentially so that later
+            // operations in the same batch see state mutations from earlier ones
+            // (e.g. AddKey creates a DID, then AddRight on the same DID).
+            // Substrate extrinsics are transactional — if any op fails, all
+            // storage mutations in this call are rolled back.
             for op in &operations {
                 match op {
                     SsiOperation::Did(signed_op) => {
                         validation::validate_did_operation::<T>(signed_op, height_u32)?;
+                        Self::apply_did_operation(signed_op, height_u32, block_height)?;
                     }
                     SsiOperation::BeforeProof(content_id) => {
                         ensure!(
                             !BeforeProofs::<T>::contains_key(content_id),
                             Error::<T>::BeforeProofAlreadyExists
                         );
-                    }
-                }
-            }
-
-            // Phase 2: Apply all operations (commit — mutates state)
-            for op in &operations {
-                match op {
-                    SsiOperation::Did(signed_op) => {
-                        Self::apply_did_operation(signed_op, height_u32, block_height)?;
-                    }
-                    SsiOperation::BeforeProof(content_id) => {
                         Self::apply_before_proof(*content_id, height_u32, block_height)?;
                     }
                 }
@@ -300,8 +294,14 @@ pub mod pallet {
 
                     DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.get_or_insert_with(|| OnChainDidState::new(did));
-                        state.keys.try_push(vm)
-                            .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
+
+                        // Defensive: reject duplicate key IDs (validation should catch this)
+                        ensure!(
+                            state.find_key(key_id.as_bytes()).is_none(),
+                            Error::<T>::KeyAlreadyExists
+                        );
+
+                        state.keys.try_push(vm).map_err(|_| Error::<T>::StorageBoundsExceeded)?;
 
                         // Update nonce
                         Self::update_nonce(state, &signed_op.signer_key_id, signed_op.nonce)?;
@@ -407,16 +407,12 @@ pub mod pallet {
         }
 
         /// Apply a BeforeProof timestamp registration.
+        /// Caller must verify that the content_id does not already exist.
         fn apply_before_proof(
             content_id: ContentId,
             height_u32: u32,
             block_height: BlockNumberFor<T>,
         ) -> DispatchResult {
-            ensure!(
-                !BeforeProofs::<T>::contains_key(&content_id),
-                Error::<T>::BeforeProofAlreadyExists
-            );
-
             BeforeProofs::<T>::insert(
                 &content_id,
                 BeforeProofRecord {

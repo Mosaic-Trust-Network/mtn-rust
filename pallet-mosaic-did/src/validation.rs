@@ -24,7 +24,7 @@ pub fn validate_did_operation<T: Config>(
     let maybe_state = DidStates::<T>::get(did);
 
     match &signed_op.operation {
-        DidOperation::AddKey { did, public_key, .. } => {
+        DidOperation::AddKey { did, key_id, public_key, .. } => {
             match &maybe_state {
                 Some(state) => {
                     // DID exists: check not tombstoned, check nonce, check Update right
@@ -40,6 +40,11 @@ pub fn validate_did_operation<T: Config>(
                             height_u32,
                         ),
                         Error::<T>::InsufficientRight
+                    );
+                    // Reject duplicate key IDs
+                    ensure!(
+                        state.find_key(key_id.as_bytes()).is_none(),
+                        Error::<T>::KeyAlreadyExists
                     );
                 }
                 None => {
