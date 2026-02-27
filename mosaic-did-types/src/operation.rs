@@ -15,7 +15,15 @@ use crate::signature::MultiSignature;
 /// The rights model extends IOP Morpheus (Update, Impersonate) with
 /// additional capabilities for enterprise and compliance use cases.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, parity_scale_codec::MaxEncodedLen, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(
+        parity_scale_codec::Encode,
+        parity_scale_codec::Decode,
+        parity_scale_codec::MaxEncodedLen,
+        scale_info::TypeInfo
+    )
+)]
 pub enum Right {
     /// Can modify the DID Document (add/revoke keys, rights).
     Update,
@@ -60,7 +68,15 @@ impl core::fmt::Display for Right {
 
 /// Supported key types for verification methods.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, parity_scale_codec::MaxEncodedLen, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(
+        parity_scale_codec::Encode,
+        parity_scale_codec::Decode,
+        parity_scale_codec::MaxEncodedLen,
+        scale_info::TypeInfo
+    )
+)]
 pub enum KeyType {
     /// Ed25519 — default, required.
     Ed25519,
@@ -80,7 +96,15 @@ impl Default for KeyType {
 
 /// Key purposes per W3C DID Core verification relationships.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, parity_scale_codec::MaxEncodedLen, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(
+        parity_scale_codec::Encode,
+        parity_scale_codec::Decode,
+        parity_scale_codec::MaxEncodedLen,
+        scale_info::TypeInfo
+    )
+)]
 pub enum KeyPurpose {
     /// Prove control of DID (login, challenge-response).
     Authentication,
@@ -99,7 +123,10 @@ pub enum KeyPurpose {
 /// All operations are submitted inside `SignedOperation` bundles within an
 /// atomic `submit_did_operations` batch.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
+)]
 pub enum DidOperation {
     /// Add a new key to the DID document.
     ///
@@ -116,10 +143,7 @@ pub enum DidOperation {
     },
 
     /// Revoke an existing key from the DID document.
-    RevokeKey {
-        did: Did,
-        key_id: KeyId,
-    },
+    RevokeKey { did: Did, key_id: KeyId },
 
     /// Grant a right to a key.
     AddRight {
@@ -131,11 +155,7 @@ pub enum DidOperation {
     },
 
     /// Revoke a right from a key.
-    RevokeRight {
-        did: Did,
-        key_id: KeyId,
-        right: Right,
-    },
+    RevokeRight { did: Did, key_id: KeyId, right: Right },
 
     /// Permanently deactivate the DID. Irreversible.
     ///
@@ -143,9 +163,7 @@ pub enum DidOperation {
     /// - Resolution returns `deactivated: true`
     /// - No further operations are accepted
     /// - Historical state remains queryable
-    TombstoneDid {
-        did: Did,
-    },
+    TombstoneDid { did: Did },
 }
 
 impl DidOperation {
@@ -174,7 +192,10 @@ impl DidOperation {
 
 /// A top-level SSI operation: either a DID operation or a BeforeProof timestamp.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
+)]
 pub enum SsiOperation {
     /// A signed DID document operation.
     Did(SignedDidOperation),
@@ -187,7 +208,10 @@ pub enum SsiOperation {
 /// The signature proves the signer has authority over the operation.
 /// The nonce provides replay protection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
+)]
 pub struct SignedDidOperation {
     /// The DID operation to execute.
     pub operation: DidOperation,
@@ -201,7 +225,15 @@ pub struct SignedDidOperation {
 
 /// Record stored on-chain for a registered BeforeProof.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, parity_scale_codec::MaxEncodedLen, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(
+        parity_scale_codec::Encode,
+        parity_scale_codec::Decode,
+        parity_scale_codec::MaxEncodedLen,
+        scale_info::TypeInfo
+    )
+)]
 pub struct BeforeProofRecord {
     /// Block height at which the proof was registered.
     pub block_height: u32,
@@ -211,7 +243,10 @@ pub struct BeforeProofRecord {
 
 /// Type of DID operation (for events, without carrying full data).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
+)]
 pub enum DidOperationType {
     AddKey,
     RevokeKey,
@@ -269,19 +304,27 @@ mod tests {
                 expires_at_height: None,
             },
             DidOperation::RevokeKey { did, key_id: key_id.clone() },
-            DidOperation::AddRight { did, key_id: key_id.clone(), right: Right::Update, expires_at_height: None },
+            DidOperation::AddRight {
+                did,
+                key_id: key_id.clone(),
+                right: Right::Update,
+                expires_at_height: None,
+            },
             DidOperation::RevokeRight { did, key_id: key_id.clone(), right: Right::Update },
             DidOperation::TombstoneDid { did },
         ];
 
         let types: Vec<DidOperationType> = ops.iter().map(DidOperationType::from).collect();
-        assert_eq!(types, vec![
-            DidOperationType::AddKey,
-            DidOperationType::RevokeKey,
-            DidOperationType::AddRight,
-            DidOperationType::RevokeRight,
-            DidOperationType::TombstoneDid,
-        ]);
+        assert_eq!(
+            types,
+            vec![
+                DidOperationType::AddKey,
+                DidOperationType::RevokeKey,
+                DidOperationType::AddRight,
+                DidOperationType::RevokeRight,
+                DidOperationType::TombstoneDid,
+            ]
+        );
     }
 
     #[test]

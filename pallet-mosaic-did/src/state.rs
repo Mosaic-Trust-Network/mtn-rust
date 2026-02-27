@@ -3,9 +3,9 @@
 //! These types are designed for direct on-chain storage in Substrate pallets,
 //! using `BoundedVec` and `BoundedBTreeMap` for deterministic memory usage.
 
-use sp_std::vec::Vec;
 use frame_support::pallet_prelude::*;
 use frame_support::{BoundedBTreeMap, BoundedVec};
+use sp_std::vec::Vec;
 
 use mosaic_did_types::{Did, DidKind, KeyId, KeyPurpose, KeyType, Right};
 
@@ -143,10 +143,7 @@ impl Default for OnChainDidState {
 impl OnChainDidState {
     /// Create a new empty on-chain DID state.
     pub fn new(did: Did) -> Self {
-        Self {
-            did,
-            ..Default::default()
-        }
+        Self { did, ..Default::default() }
     }
 
     /// Returns whether this DID exists (has at least one key).
@@ -156,9 +153,7 @@ impl OnChainDidState {
 
     /// Returns whether this DID is tombstoned at the given height.
     pub fn is_tombstoned_at(&self, height: u32) -> bool {
-        self.tombstoned_at_height
-            .map(|h| height >= h)
-            .unwrap_or(false)
+        self.tombstoned_at_height.map(|h| height >= h).unwrap_or(false)
     }
 
     /// Find a key by its raw key_id bytes.

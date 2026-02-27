@@ -69,11 +69,7 @@ mod unit_tests {
         };
         assert_eq!(add_right.required_right(), Right::Delegate);
 
-        let revoke_right = DidOperation::RevokeRight {
-            did,
-            key_id,
-            right: Right::Issue,
-        };
+        let revoke_right = DidOperation::RevokeRight { did, key_id, right: Right::Issue };
         assert_eq!(revoke_right.required_right(), Right::Delegate);
     }
 
@@ -86,10 +82,7 @@ mod unit_tests {
 
     #[test]
     fn before_proof_record_structure() {
-        let record = BeforeProofRecord {
-            block_height: 12345,
-            extrinsic_index: 3,
-        };
+        let record = BeforeProofRecord { block_height: 12345, extrinsic_index: 3 };
         assert_eq!(record.block_height, 12345);
         assert_eq!(record.extrinsic_index, 3);
     }
@@ -149,9 +142,8 @@ mod unit_tests {
             nonce: 1,
         });
 
-        let before_proof_op = SsiOperation::BeforeProof(
-            ContentId::from_content(b"test document content")
-        );
+        let before_proof_op =
+            SsiOperation::BeforeProof(ContentId::from_content(b"test document content"));
 
         match &did_op {
             SsiOperation::Did(op) => assert_eq!(*op.operation.did(), did),
@@ -167,10 +159,10 @@ mod unit_tests {
     // ===== On-chain state tests (using OnChainDidState directly) =====
 
     mod on_chain_state_tests {
-        use mosaic_did_types::*;
         use crate::state::*;
         use frame_support::BoundedVec;
         use frame_support::pallet_prelude::ConstU32;
+        use mosaic_did_types::*;
 
         fn make_key_id(s: &str) -> BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>> {
             s.as_bytes().to_vec().try_into().unwrap()
@@ -187,7 +179,8 @@ mod unit_tests {
                 controller: did,
                 public_key: pk.to_vec().try_into().unwrap(),
                 purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
-                    .try_into().unwrap(),
+                    .try_into()
+                    .unwrap(),
                 added_at_height: 1,
                 expires_at_height: None,
                 revoked_at_height: None,
@@ -301,30 +294,38 @@ mod unit_tests {
             let mut state = OnChainDidState::new(did);
 
             // Add old key at height 1
-            state.keys.try_push(OnChainVerificationMethod {
-                id: make_key_id("key-old"),
-                key_type: KeyType::Ed25519,
-                controller: did,
-                public_key: vec![1u8; 32].try_into().unwrap(),
-                purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
-                    .try_into().unwrap(),
-                added_at_height: 1,
-                expires_at_height: None,
-                revoked_at_height: None,
-            }).unwrap();
+            state
+                .keys
+                .try_push(OnChainVerificationMethod {
+                    id: make_key_id("key-old"),
+                    key_type: KeyType::Ed25519,
+                    controller: did,
+                    public_key: vec![1u8; 32].try_into().unwrap(),
+                    purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
+                        .try_into()
+                        .unwrap(),
+                    added_at_height: 1,
+                    expires_at_height: None,
+                    revoked_at_height: None,
+                })
+                .unwrap();
 
             // Add new key at height 50
-            state.keys.try_push(OnChainVerificationMethod {
-                id: make_key_id("key-new"),
-                key_type: KeyType::Ed25519,
-                controller: did,
-                public_key: vec![2u8; 32].try_into().unwrap(),
-                purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
-                    .try_into().unwrap(),
-                added_at_height: 50,
-                expires_at_height: None,
-                revoked_at_height: None,
-            }).unwrap();
+            state
+                .keys
+                .try_push(OnChainVerificationMethod {
+                    id: make_key_id("key-new"),
+                    key_type: KeyType::Ed25519,
+                    controller: did,
+                    public_key: vec![2u8; 32].try_into().unwrap(),
+                    purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
+                        .try_into()
+                        .unwrap(),
+                    added_at_height: 50,
+                    expires_at_height: None,
+                    revoked_at_height: None,
+                })
+                .unwrap();
 
             // Revoke old key at height 50
             state.keys[0].revoked_at_height = Some(50);
@@ -343,7 +344,7 @@ mod unit_tests {
 
     #[test]
     fn did_document_state_reconstruction() {
-        use mosaic_did_types::document::{DidDocumentState, VerificationMethod, RightGrant};
+        use mosaic_did_types::document::{DidDocumentState, RightGrant, VerificationMethod};
 
         let pk = b"ed25519-public-key-32-bytes-long";
         let did = Did::from_public_key(pk);

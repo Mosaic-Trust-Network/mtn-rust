@@ -13,10 +13,15 @@ use serde::{Deserialize, Serialize};
 
 /// A 32-byte Mosaic DID identifier, derived as `BLAKE3-256(initial_public_key)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(
-    parity_scale_codec::Encode, parity_scale_codec::Decode,
-    parity_scale_codec::MaxEncodedLen, scale_info::TypeInfo,
-))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(
+        parity_scale_codec::Encode,
+        parity_scale_codec::Decode,
+        parity_scale_codec::MaxEncodedLen,
+        scale_info::TypeInfo,
+    )
+)]
 pub struct Did(pub [u8; 32]);
 
 impl Did {
@@ -50,18 +55,13 @@ impl Did {
 
     /// Parse a `did:mosaic:z...` string back into a Did.
     pub fn from_did_string(s: &str) -> Result<Self, DidParseError> {
-        let rest = s
-            .strip_prefix(Self::METHOD_PREFIX)
-            .ok_or(DidParseError::InvalidPrefix)?;
+        let rest = s.strip_prefix(Self::METHOD_PREFIX).ok_or(DidParseError::InvalidPrefix)?;
 
         // Expect multibase base58btc prefix 'z'
-        let base58_str = rest
-            .strip_prefix('z')
-            .ok_or(DidParseError::InvalidMultibase)?;
+        let base58_str = rest.strip_prefix('z').ok_or(DidParseError::InvalidMultibase)?;
 
-        let bytes = bs58::decode(base58_str)
-            .into_vec()
-            .map_err(|_| DidParseError::InvalidBase58)?;
+        let bytes =
+            bs58::decode(base58_str).into_vec().map_err(|_| DidParseError::InvalidBase58)?;
 
         if bytes.len() != 32 {
             return Err(DidParseError::InvalidLength(bytes.len()));
@@ -120,9 +120,10 @@ impl fmt::Display for DidParseError {
 /// References a specific verification method, e.g. `"key-1"`, `"key-recovery"`.
 /// Stored as raw bytes with a maximum length of 64.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(
-    parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo,
-))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo,)
+)]
 pub struct KeyId(Vec<u8>);
 
 impl KeyId {
@@ -164,10 +165,15 @@ impl fmt::Display for KeyId {
 
 /// A 32-byte content identifier for BeforeProof (BLAKE3 hash of content).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(
-    parity_scale_codec::Encode, parity_scale_codec::Decode,
-    parity_scale_codec::MaxEncodedLen, scale_info::TypeInfo,
-))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(
+        parity_scale_codec::Encode,
+        parity_scale_codec::Decode,
+        parity_scale_codec::MaxEncodedLen,
+        scale_info::TypeInfo,
+    )
+)]
 pub struct ContentId(pub [u8; 32]);
 
 impl ContentId {
@@ -203,10 +209,15 @@ impl fmt::Display for ContentId {
 
 /// DID kinds following IOP Morpheus architecture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(
-    parity_scale_codec::Encode, parity_scale_codec::Decode,
-    parity_scale_codec::MaxEncodedLen, scale_info::TypeInfo,
-))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(
+        parity_scale_codec::Encode,
+        parity_scale_codec::Decode,
+        parity_scale_codec::MaxEncodedLen,
+        scale_info::TypeInfo,
+    )
+)]
 pub enum DidKind {
     /// Human identity (end users, signers).
     Persona,

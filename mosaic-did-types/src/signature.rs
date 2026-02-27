@@ -15,7 +15,10 @@ use serde::{Deserialize, Serialize};
 /// Signatures are stored as `Vec<u8>` with runtime length validation
 /// to support serde across all array sizes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
+)]
 pub enum MultiSignature {
     /// Ed25519 signature (64 bytes).
     Ed25519(Vec<u8>),
@@ -68,7 +71,10 @@ impl MultiSignature {
 ///
 /// Public keys are stored as `Vec<u8>` with runtime length validation.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
+)]
 pub enum MultiPublicKey {
     /// Ed25519 public key (32 bytes).
     Ed25519(Vec<u8>),

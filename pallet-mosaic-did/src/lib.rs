@@ -22,8 +22,8 @@ pub use pallet::*;
 #[cfg(test)]
 mod tests;
 
-mod validation;
 pub mod state;
+mod validation;
 
 #[frame_support::pallet]
 pub mod pallet {
@@ -32,13 +32,13 @@ pub mod pallet {
     use sp_std::vec::Vec;
 
     use mosaic_did_types::{
-        BeforeProofRecord, ContentId, Did, DidOperation,
-        KeyId, KeyPurpose, KeyType, Right, SignedDidOperation, SsiOperation,
+        BeforeProofRecord, ContentId, Did, DidOperation, KeyId, KeyPurpose, KeyType, Right,
+        SignedDidOperation, SsiOperation,
     };
 
     use crate::state::{
-        OnChainDidState, OnChainVerificationMethod, OnChainRightGrant,
-        MAX_KEY_ID_LEN, MAX_PUBLIC_KEY_LEN, MAX_PURPOSES_PER_KEY,
+        MAX_KEY_ID_LEN, MAX_PUBLIC_KEY_LEN, MAX_PURPOSES_PER_KEY, OnChainDidState,
+        OnChainRightGrant, OnChainVerificationMethod,
     };
 
     use crate::validation;
@@ -81,22 +81,14 @@ pub mod pallet {
     /// This is the single source of truth — read and mutated in place.
     #[pallet::storage]
     #[pallet::getter(fn did_state)]
-    pub type DidStates<T: Config> = StorageMap<
-        _,
-        Blake2_128Concat, Did,
-        OnChainDidState,
-        OptionQuery,
-    >;
+    pub type DidStates<T: Config> =
+        StorageMap<_, Blake2_128Concat, Did, OnChainDidState, OptionQuery>;
 
     /// BeforeProof timestamps.
     #[pallet::storage]
     #[pallet::getter(fn before_proofs)]
-    pub type BeforeProofs<T: Config> = StorageMap<
-        _,
-        Blake2_128Concat, ContentId,
-        BeforeProofRecord,
-        OptionQuery,
-    >;
+    pub type BeforeProofs<T: Config> =
+        StorageMap<_, Blake2_128Concat, ContentId, BeforeProofRecord, OptionQuery>;
 
     // ========== EVENTS ==========
 
@@ -122,11 +114,7 @@ pub mod pallet {
         },
 
         /// A key was revoked from a DID document.
-        KeyRevoked {
-            did: Did,
-            key_id: Vec<u8>,
-            block_height: BlockNumberFor<T>,
-        },
+        KeyRevoked { did: Did, key_id: Vec<u8>, block_height: BlockNumberFor<T> },
 
         /// A right was granted to a key.
         RightAdded {
@@ -138,24 +126,13 @@ pub mod pallet {
         },
 
         /// A right was revoked from a key.
-        RightRevoked {
-            did: Did,
-            key_id: Vec<u8>,
-            right: Right,
-            block_height: BlockNumberFor<T>,
-        },
+        RightRevoked { did: Did, key_id: Vec<u8>, right: Right, block_height: BlockNumberFor<T> },
 
         /// DID permanently deactivated.
-        DidTombstoned {
-            did: Did,
-            block_height: BlockNumberFor<T>,
-        },
+        DidTombstoned { did: Did, block_height: BlockNumberFor<T> },
 
         /// BeforeProof timestamp registered.
-        BeforeProofRegistered {
-            content_id: ContentId,
-            block_height: BlockNumberFor<T>,
-        },
+        BeforeProofRegistered { content_id: ContentId, block_height: BlockNumberFor<T> },
     }
 
     // ========== ERRORS ==========
@@ -202,8 +179,7 @@ pub mod pallet {
         #[pallet::call_index(0)]
         #[pallet::weight(T::WeightInfo::submit_did_operations(operations.len() as u32))]
         pub fn submit_did_operations(
-            origin: OriginFor<T>,
-            operations: Vec<SsiOperation>,
+            origin: OriginFor<T>, operations: Vec<SsiOperation>,
         ) -> DispatchResult {
             let submitter = ensure_signed(origin)?;
             let block_height = <frame_system::Pallet<T>>::block_number();
@@ -248,13 +224,9 @@ pub mod pallet {
         #[pallet::call_index(1)]
         #[pallet::weight(T::WeightInfo::register_before_proof())]
         pub fn register_before_proof(
-            origin: OriginFor<T>,
-            content_id: ContentId,
+            origin: OriginFor<T>, content_id: ContentId,
         ) -> DispatchResult {
-            Self::submit_did_operations(
-                origin,
-                sp_std::vec![SsiOperation::BeforeProof(content_id)],
-            )
+            Self::submit_did_operations(origin, sp_std::vec![SsiOperation::BeforeProof(content_id)])
         }
     }
 
@@ -263,22 +235,30 @@ pub mod pallet {
     impl<T: Config> Pallet<T> {
         /// Apply a single signed DID operation by mutating `OnChainDidState` in place.
         fn apply_did_operation(
-            signed_op: &SignedDidOperation,
-            height_u32: u32,
-            block_height: BlockNumberFor<T>,
+            signed_op: &SignedDidOperation, height_u32: u32, block_height: BlockNumberFor<T>,
         ) -> DispatchResult {
             let did = *signed_op.operation.did();
 
             match &signed_op.operation {
-                DidOperation::AddKey { did: _, key_id, key_type, public_key, purposes, expires_at_height } => {
-                    let key_id_bytes: BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>> =
-                        key_id.as_bytes().to_vec().try_into()
-                            .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
+                DidOperation::AddKey {
+                    did: _,
+                    key_id,
+                    key_type,
+                    public_key,
+                    purposes,
+                    expires_at_height,
+                } => {
+                    let key_id_bytes: BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>> = key_id
+                        .as_bytes()
+                        .to_vec()
+                        .try_into()
+                        .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                     let pk_bytes: BoundedVec<u8, ConstU32<MAX_PUBLIC_KEY_LEN>> =
-                        public_key.clone().try_into()
-                            .map_err(|_| Error::<T>::InvalidPublicKey)?;
+                        public_key.clone().try_into().map_err(|_| Error::<T>::InvalidPublicKey)?;
                     let bounded_purposes: BoundedVec<KeyPurpose, ConstU32<MAX_PURPOSES_PER_KEY>> =
-                        purposes.clone().try_into()
+                        purposes
+                            .clone()
+                            .try_into()
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
 
                     let vm = OnChainVerificationMethod {
@@ -322,8 +302,8 @@ pub mod pallet {
                 DidOperation::RevokeKey { did: _, key_id } => {
                     DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                        let key = state.find_key_mut(key_id.as_bytes())
-                            .ok_or(Error::<T>::KeyNotFound)?;
+                        let key =
+                            state.find_key_mut(key_id.as_bytes()).ok_or(Error::<T>::KeyNotFound)?;
                         key.revoked_at_height = Some(height_u32);
                         Self::update_nonce(state, &signed_op.signer_key_id, signed_op.nonce)?;
                         Ok(())
@@ -337,9 +317,11 @@ pub mod pallet {
                 }
 
                 DidOperation::AddRight { did: _, key_id, right, expires_at_height } => {
-                    let key_id_bytes: BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>> =
-                        key_id.as_bytes().to_vec().try_into()
-                            .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
+                    let key_id_bytes: BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>> = key_id
+                        .as_bytes()
+                        .to_vec()
+                        .try_into()
+                        .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
 
                     let grant = OnChainRightGrant {
                         key_id: key_id_bytes,
@@ -351,7 +333,9 @@ pub mod pallet {
 
                     DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                        state.rights.try_push(grant)
+                        state
+                            .rights
+                            .try_push(grant)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Self::update_nonce(state, &signed_op.signer_key_id, signed_op.nonce)?;
                         Ok(())
@@ -370,11 +354,16 @@ pub mod pallet {
                     DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
                         // Find most recent active grant for this key+right
-                        let grant = state.rights.iter_mut().rev().find(|rg| {
-                            rg.key_id.as_slice() == key_id.as_bytes()
-                                && rg.right == *right
-                                && rg.revoked_at_height.is_none()
-                        }).ok_or(Error::<T>::RightNotFound)?;
+                        let grant = state
+                            .rights
+                            .iter_mut()
+                            .rev()
+                            .find(|rg| {
+                                rg.key_id.as_slice() == key_id.as_bytes()
+                                    && rg.right == *right
+                                    && rg.revoked_at_height.is_none()
+                            })
+                            .ok_or(Error::<T>::RightNotFound)?;
                         grant.revoked_at_height = Some(height_u32);
                         Self::update_nonce(state, &signed_op.signer_key_id, signed_op.nonce)?;
                         Ok(())
@@ -396,10 +385,7 @@ pub mod pallet {
                         Ok(())
                     })?;
 
-                    Self::deposit_event(Event::DidTombstoned {
-                        did,
-                        block_height,
-                    });
+                    Self::deposit_event(Event::DidTombstoned { did, block_height });
                 }
             }
 
@@ -409,9 +395,7 @@ pub mod pallet {
         /// Apply a BeforeProof timestamp registration.
         /// Caller must verify that the content_id does not already exist.
         fn apply_before_proof(
-            content_id: ContentId,
-            height_u32: u32,
-            block_height: BlockNumberFor<T>,
+            content_id: ContentId, height_u32: u32, block_height: BlockNumberFor<T>,
         ) -> DispatchResult {
             BeforeProofs::<T>::insert(
                 &content_id,
@@ -421,29 +405,28 @@ pub mod pallet {
                 },
             );
 
-            Self::deposit_event(Event::BeforeProofRegistered {
-                content_id,
-                block_height,
-            });
+            Self::deposit_event(Event::BeforeProofRegistered { content_id, block_height });
 
             Ok(())
         }
 
         /// Update the nonce for a signer key in the DID state.
         fn update_nonce(
-            state: &mut OnChainDidState,
-            signer_key_id: &KeyId,
-            nonce: u64,
+            state: &mut OnChainDidState, signer_key_id: &KeyId, nonce: u64,
         ) -> DispatchResult {
-            let key_bytes: BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>> =
-                signer_key_id.as_bytes().to_vec().try_into()
-                    .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
+            let key_bytes: BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>> = signer_key_id
+                .as_bytes()
+                .to_vec()
+                .try_into()
+                .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
 
             // Try to update existing entry first
             if let Some(existing) = state.nonces.get_mut(&key_bytes) {
                 *existing = nonce;
             } else {
-                state.nonces.try_insert(key_bytes, nonce)
+                state
+                    .nonces
+                    .try_insert(key_bytes, nonce)
                     .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
             }
             Ok(())

@@ -5,9 +5,7 @@
 
 use frame_support::ensure;
 
-use mosaic_did_types::{
-    Did, DidOperation, Right, SignedDidOperation,
-};
+use mosaic_did_types::{Did, DidOperation, Right, SignedDidOperation};
 
 use crate::pallet::{Config, DidStates, Error};
 
@@ -15,8 +13,7 @@ use crate::pallet::{Config, DidStates, Error};
 ///
 /// Reads materialized state directly — no history reconstruction needed.
 pub fn validate_did_operation<T: Config>(
-    signed_op: &SignedDidOperation,
-    height_u32: u32,
+    signed_op: &SignedDidOperation, height_u32: u32,
 ) -> Result<(), sp_runtime::DispatchError> {
     let did = signed_op.operation.did();
 
@@ -28,10 +25,7 @@ pub fn validate_did_operation<T: Config>(
             match &maybe_state {
                 Some(state) => {
                     // DID exists: check not tombstoned, check nonce, check Update right
-                    ensure!(
-                        !state.is_tombstoned_at(height_u32),
-                        Error::<T>::DidTombstoned
-                    );
+                    ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
                     validate_nonce::<T>(state, signed_op)?;
                     ensure!(
                         state.has_right_at(
@@ -60,11 +54,7 @@ pub fn validate_did_operation<T: Config>(
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
             ensure!(
-                state.has_right_at(
-                    signed_op.signer_key_id.as_bytes(),
-                    Right::Update,
-                    height_u32,
-                ),
+                state.has_right_at(signed_op.signer_key_id.as_bytes(), Right::Update, height_u32,),
                 Error::<T>::InsufficientRight
             );
         }
@@ -74,11 +64,8 @@ pub fn validate_did_operation<T: Config>(
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
             ensure!(
-                state.has_right_at(
-                    signed_op.signer_key_id.as_bytes(),
-                    Right::Delegate,
-                    height_u32,
-                ),
+                state
+                    .has_right_at(signed_op.signer_key_id.as_bytes(), Right::Delegate, height_u32,),
                 Error::<T>::InsufficientRight
             );
         }
@@ -88,11 +75,8 @@ pub fn validate_did_operation<T: Config>(
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
             ensure!(
-                state.has_right_at(
-                    signed_op.signer_key_id.as_bytes(),
-                    Right::Delegate,
-                    height_u32,
-                ),
+                state
+                    .has_right_at(signed_op.signer_key_id.as_bytes(), Right::Delegate, height_u32,),
                 Error::<T>::InsufficientRight
             );
         }
@@ -102,11 +86,7 @@ pub fn validate_did_operation<T: Config>(
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
             ensure!(
-                state.has_right_at(
-                    signed_op.signer_key_id.as_bytes(),
-                    Right::Update,
-                    height_u32,
-                ),
+                state.has_right_at(signed_op.signer_key_id.as_bytes(), Right::Update, height_u32,),
                 Error::<T>::InsufficientRight
             );
         }
@@ -120,8 +100,7 @@ pub fn validate_did_operation<T: Config>(
 
 /// Validate nonce is strictly greater than stored nonce (replay protection).
 fn validate_nonce<T: Config>(
-    state: &crate::state::OnChainDidState,
-    signed_op: &SignedDidOperation,
+    state: &crate::state::OnChainDidState, signed_op: &SignedDidOperation,
 ) -> Result<(), sp_runtime::DispatchError> {
     let stored_nonce = state.nonce_for_key(signed_op.signer_key_id.as_bytes());
     ensure!(signed_op.nonce > stored_nonce, Error::<T>::InvalidNonce);
@@ -133,9 +112,6 @@ fn validate_signature<T: Config>(
     signed_op: &SignedDidOperation,
 ) -> Result<(), sp_runtime::DispatchError> {
     let sig_bytes = signed_op.signature.as_bytes();
-    ensure!(
-        !sig_bytes.iter().all(|b| *b == 0),
-        Error::<T>::InvalidSignature
-    );
+    ensure!(!sig_bytes.iter().all(|b| *b == 0), Error::<T>::InvalidSignature);
     Ok(())
 }

@@ -14,7 +14,10 @@ use crate::operation::{KeyPurpose, KeyType, Right};
 
 /// A verification method in the DID Document.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
+)]
 pub struct VerificationMethod {
     /// Key identifier (fragment), e.g. "key-1".
     pub id: KeyId,
@@ -56,7 +59,10 @@ impl VerificationMethod {
 
 /// A right grant record.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
+)]
 pub struct RightGrant {
     /// The key this right is granted to.
     pub key_id: KeyId,
@@ -92,7 +98,10 @@ impl RightGrant {
 
 /// A service endpoint in the DID Document (Phase 2).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
+)]
 pub struct ServiceEndpoint {
     /// Service identifier fragment, e.g. "service-eurosign".
     pub id: String,
@@ -107,7 +116,10 @@ pub struct ServiceEndpoint {
 /// This is the internal representation used for state management.
 /// It is converted to W3C-compliant JSON for external consumption.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
+)]
 pub struct DidDocumentState {
     /// The DID this document describes.
     pub did: Did,
@@ -141,9 +153,7 @@ impl DidDocumentState {
 
     /// Returns whether this DID is tombstoned at the given height.
     pub fn is_tombstoned_at(&self, height: u32) -> bool {
-        self.tombstoned_at_height
-            .map(|h| height >= h)
-            .unwrap_or(false)
+        self.tombstoned_at_height.map(|h| height >= h).unwrap_or(false)
     }
 
     /// Returns whether this DID has ever been created (has at least one key).
@@ -178,9 +188,9 @@ impl DidDocumentState {
             }
         }
 
-        self.rights.iter().any(|rg| {
-            rg.key_id == *key_id && rg.right == right && rg.is_active_at(height)
-        })
+        self.rights
+            .iter()
+            .any(|rg| rg.key_id == *key_id && rg.right == right && rg.is_active_at(height))
     }
 
     /// Get the current nonce for a key.
@@ -253,11 +263,15 @@ impl DidDocumentState {
             key_agreement,
             capability_invocation,
             capability_delegation,
-            service: self.services.iter().map(|s| DidDocumentService {
-                id: alloc::format!("{}#{}", self.did.to_did_string(), s.id),
-                type_: s.service_type.clone(),
-                service_endpoint: s.service_endpoint.clone(),
-            }).collect(),
+            service: self
+                .services
+                .iter()
+                .map(|s| DidDocumentService {
+                    id: alloc::format!("{}#{}", self.did.to_did_string(), s.id),
+                    type_: s.service_type.clone(),
+                    service_endpoint: s.service_endpoint.clone(),
+                })
+                .collect(),
             deactivated,
         }
     }
