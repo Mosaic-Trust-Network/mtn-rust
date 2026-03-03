@@ -178,11 +178,13 @@ impl DidDocumentState {
 
     /// Check if a key has a specific right at the given height.
     pub fn has_right_at(&self, key_id: &KeyId, right: Right, height: u32) -> bool {
-        // The initial key (first key added) implicitly has Update and Impersonate rights
+        // The initial key (first key added) implicitly has Update, Impersonate, and
+        // Delegate rights. Delegate is required to bootstrap the rights system (grant
+        // rights to other keys). Without it, AddRight/RevokeRight are unreachable.
         if let Some(first_key) = self.keys.first() {
             if first_key.id == *key_id && first_key.is_valid_at(height) {
                 match right {
-                    Right::Update | Right::Impersonate => return true,
+                    Right::Update | Right::Impersonate | Right::Delegate => return true,
                     _ => {}
                 }
             }
@@ -434,7 +436,7 @@ mod tests {
 
         assert!(state.has_right_at(&key_id, Right::Update, 1));
         assert!(state.has_right_at(&key_id, Right::Impersonate, 1));
-        assert!(!state.has_right_at(&key_id, Right::Delegate, 1));
+        assert!(state.has_right_at(&key_id, Right::Delegate, 1));
         assert!(!state.has_right_at(&key_id, Right::Issue, 1));
     }
 
@@ -443,18 +445,19 @@ mod tests {
         let mut state = make_test_state();
         let key_id = KeyId::from_str_id("key-1").unwrap();
 
+        // Test with Issue right (not implicit, so we can verify grant timing)
         state.rights.push(RightGrant {
             key_id: key_id.clone(),
-            right: Right::Delegate,
+            right: Right::Issue,
             granted_at_height: 10,
             expires_at_height: Some(100),
             revoked_at_height: None,
         });
 
-        assert!(!state.has_right_at(&key_id, Right::Delegate, 9));
-        assert!(state.has_right_at(&key_id, Right::Delegate, 10));
-        assert!(state.has_right_at(&key_id, Right::Delegate, 99));
-        assert!(!state.has_right_at(&key_id, Right::Delegate, 100));
+        assert!(!state.has_right_at(&key_id, Right::Issue, 9));
+        assert!(state.has_right_at(&key_id, Right::Issue, 10));
+        assert!(state.has_right_at(&key_id, Right::Issue, 99));
+        assert!(!state.has_right_at(&key_id, Right::Issue, 100));
     }
 
     #[test]

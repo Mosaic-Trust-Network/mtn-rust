@@ -7,6 +7,8 @@ use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
+use crate::operation::KeyType;
+
 /// Multi-algorithm signature supporting Ed25519 and secp256k1.
 ///
 /// Designed for algorithm agility — new variants can be added for
@@ -120,6 +122,18 @@ impl MultiPublicKey {
     /// Validate that the key bytes have the correct length.
     pub fn is_valid_length(&self) -> bool {
         self.as_bytes().len() == self.expected_len()
+    }
+
+    /// Construct a MultiPublicKey from a KeyType and raw public key bytes.
+    ///
+    /// Returns `None` for key types that don't support signature verification
+    /// (e.g. X25519 key agreement only, or Secp256r1 not yet implemented).
+    pub fn from_key_type_and_bytes(key_type: KeyType, bytes: &[u8]) -> Option<Self> {
+        match key_type {
+            KeyType::Ed25519 => Some(MultiPublicKey::Ed25519(bytes.to_vec())),
+            KeyType::Secp256k1 => Some(MultiPublicKey::Secp256k1(bytes.to_vec())),
+            _ => None,
+        }
     }
 
     /// Verify a signature against this public key and message.

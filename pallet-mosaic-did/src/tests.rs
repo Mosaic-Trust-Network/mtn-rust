@@ -257,7 +257,7 @@ mod unit_tests {
 
             assert!(state.has_right_at(key_id, Right::Update, 1));
             assert!(state.has_right_at(key_id, Right::Impersonate, 1));
-            assert!(!state.has_right_at(key_id, Right::Delegate, 1));
+            assert!(state.has_right_at(key_id, Right::Delegate, 1));
             assert!(!state.has_right_at(key_id, Right::Issue, 1));
         }
 
@@ -266,19 +266,20 @@ mod unit_tests {
             let mut state = make_test_state();
             let key_id_bytes = make_key_id("key-1");
 
+            // Test with Issue right (not implicit, so we can verify grant timing)
             let grant = OnChainRightGrant {
                 key_id: key_id_bytes,
-                right: Right::Delegate,
+                right: Right::Issue,
                 granted_at_height: 10,
                 expires_at_height: Some(100),
                 revoked_at_height: None,
             };
             state.rights.try_push(grant).unwrap();
 
-            assert!(!state.has_right_at(b"key-1", Right::Delegate, 9));
-            assert!(state.has_right_at(b"key-1", Right::Delegate, 10));
-            assert!(state.has_right_at(b"key-1", Right::Delegate, 99));
-            assert!(!state.has_right_at(b"key-1", Right::Delegate, 100));
+            assert!(!state.has_right_at(b"key-1", Right::Issue, 9));
+            assert!(state.has_right_at(b"key-1", Right::Issue, 10));
+            assert!(state.has_right_at(b"key-1", Right::Issue, 99));
+            assert!(!state.has_right_at(b"key-1", Right::Issue, 100));
         }
 
         #[test]
@@ -369,20 +370,22 @@ mod unit_tests {
 
         assert!(state.has_right_at(&key_id, Right::Update, 1));
         assert!(state.has_right_at(&key_id, Right::Impersonate, 1));
-        assert!(!state.has_right_at(&key_id, Right::Delegate, 1));
+        assert!(state.has_right_at(&key_id, Right::Delegate, 1));
+        assert!(!state.has_right_at(&key_id, Right::Issue, 1));
 
+        // Test explicit right grant with a non-implicit right (Issue)
         state.rights.push(RightGrant {
             key_id: key_id.clone(),
-            right: Right::Delegate,
+            right: Right::Issue,
             granted_at_height: 5,
             expires_at_height: Some(100),
             revoked_at_height: None,
         });
 
-        assert!(!state.has_right_at(&key_id, Right::Delegate, 4));
-        assert!(state.has_right_at(&key_id, Right::Delegate, 5));
-        assert!(state.has_right_at(&key_id, Right::Delegate, 99));
-        assert!(!state.has_right_at(&key_id, Right::Delegate, 100));
+        assert!(!state.has_right_at(&key_id, Right::Issue, 4));
+        assert!(state.has_right_at(&key_id, Right::Issue, 5));
+        assert!(state.has_right_at(&key_id, Right::Issue, 99));
+        assert!(!state.has_right_at(&key_id, Right::Issue, 100));
     }
 
     #[test]

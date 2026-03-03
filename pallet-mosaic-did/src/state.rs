@@ -173,11 +173,13 @@ impl OnChainDidState {
 
     /// Check if a key has a specific right at the given height.
     pub fn has_right_at(&self, key_id_bytes: &[u8], right: Right, height: u32) -> bool {
-        // The initial key (first key added) implicitly has Update and Impersonate rights
+        // The initial key (first key added) implicitly has Update, Impersonate, and
+        // Delegate rights. Delegate is required to bootstrap the rights system (grant
+        // rights to other keys). Without it, AddRight/RevokeRight are unreachable.
         if let Some(first_key) = self.keys.first() {
             if first_key.id.as_slice() == key_id_bytes && first_key.is_valid_at(height) {
                 match right {
-                    Right::Update | Right::Impersonate => return true,
+                    Right::Update | Right::Impersonate | Right::Delegate => return true,
                     _ => {}
                 }
             }
