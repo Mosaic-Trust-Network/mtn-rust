@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
-use crate::did::{Did, DidKind, KeyId};
+use crate::did::{Did, KeyRef};
 use crate::operation::{KeyPurpose, KeyType, Right};
 
 /// A verification method in the DID Document.
@@ -20,7 +20,7 @@ use crate::operation::{KeyPurpose, KeyType, Right};
 )]
 pub struct VerificationMethod {
     /// Key identifier (fragment), e.g. "key-1".
-    pub id: KeyId,
+    pub id: KeyRef,
     /// Algorithm type.
     pub key_type: KeyType,
     /// Controller DID (usually the DID itself).
@@ -65,7 +65,7 @@ impl VerificationMethod {
 )]
 pub struct RightGrant {
     /// The key this right is granted to.
-    pub key_id: KeyId,
+    pub key_id: KeyRef,
     /// The right granted.
     pub right: Right,
     /// Block height at which the right was granted.
@@ -123,8 +123,6 @@ pub struct ServiceEndpoint {
 pub struct DidDocumentState {
     /// The DID this document describes.
     pub did: Did,
-    /// Optional DID kind (persona, device, group, resource).
-    pub kind: Option<DidKind>,
     /// All verification methods (keys), including revoked/expired ones for history.
     pub keys: Vec<VerificationMethod>,
     /// All right grants, including revoked ones for history.
@@ -142,7 +140,6 @@ impl DidDocumentState {
     pub fn new(did: Did) -> Self {
         Self {
             did,
-            kind: None,
             keys: Vec::new(),
             rights: Vec::new(),
             services: Vec::new(),
@@ -161,13 +158,13 @@ impl DidDocumentState {
         !self.keys.is_empty()
     }
 
-    /// Find a key by its KeyId.
-    pub fn find_key(&self, key_id: &KeyId) -> Option<&VerificationMethod> {
+    /// Find a key by its KeyRef.
+    pub fn find_key(&self, key_id: &KeyRef) -> Option<&VerificationMethod> {
         self.keys.iter().find(|k| k.id == *key_id)
     }
 
-    /// Find a key by its KeyId (mutable).
-    pub fn find_key_mut(&mut self, key_id: &KeyId) -> Option<&mut VerificationMethod> {
+    /// Find a key by its KeyRef (mutable).
+    pub fn find_key_mut(&mut self, key_id: &KeyRef) -> Option<&mut VerificationMethod> {
         self.keys.iter_mut().find(|k| k.id == *key_id)
     }
 
@@ -177,7 +174,7 @@ impl DidDocumentState {
     }
 
     /// Check if a key has a specific right at the given height.
-    pub fn has_right_at(&self, key_id: &KeyId, right: Right, height: u32) -> bool {
+    pub fn has_right_at(&self, key_id: &KeyRef, right: Right, height: u32) -> bool {
         // The initial key (first key added) implicitly has Update, Impersonate, and
         // Delegate rights. Delegate is required to bootstrap the rights system (grant
         // rights to other keys). Without it, AddRight/RevokeRight are unreachable.
@@ -196,15 +193,8 @@ impl DidDocumentState {
     }
 
     /// Get the current nonce for a key.
-    pub fn nonce_for_key(&self, key_id: &KeyId) -> u64 {
+    pub fn nonce_for_key(&self, key_id: &KeyRef) -> u64 {
         self.nonces.get(key_id.as_bytes()).copied().unwrap_or(0)
-    }
-
-    /// Increment the nonce for a key and return the new value.
-    pub fn increment_nonce(&mut self, key_id: &KeyId) -> u64 {
-        let entry = self.nonces.entry(key_id.as_bytes().to_vec()).or_insert(0);
-        *entry += 1;
-        *entry
     }
 
     /// Produce a W3C-compliant DID Document JSON structure at the given height.
@@ -352,7 +342,7 @@ mod tests {
 
         // Add initial key
         state.keys.push(VerificationMethod {
-            id: KeyId::from_str_id("key-1").unwrap(),
+            id: KeyRef::from_str_id("key-1").unwrap(),
             key_type: KeyType::Ed25519,
             controller: did,
             public_key: b"test-pk-32-bytes-for-ed25519!!!".to_vec(),
@@ -383,7 +373,7 @@ mod tests {
     #[test]
     fn key_validity_at_height() {
         let vm = VerificationMethod {
-            id: KeyId::from_str_id("key-1").unwrap(),
+            id: KeyRef::from_str_id("key-1").unwrap(),
             key_type: KeyType::Ed25519,
             controller: Did::default(),
             public_key: vec![0u8; 32],
@@ -403,7 +393,7 @@ mod tests {
     #[test]
     fn key_revoked_at_height() {
         let vm = VerificationMethod {
-            id: KeyId::from_str_id("key-1").unwrap(),
+            id: KeyRef::from_str_id("key-1").unwrap(),
             key_type: KeyType::Ed25519,
             controller: Did::default(),
             public_key: vec![0u8; 32],
@@ -432,7 +422,7 @@ mod tests {
     #[test]
     fn initial_key_has_implicit_rights() {
         let state = make_test_state();
-        let key_id = KeyId::from_str_id("key-1").unwrap();
+        let key_id = KeyRef::from_str_id("key-1").unwrap();
 
         assert!(state.has_right_at(&key_id, Right::Update, 1));
         assert!(state.has_right_at(&key_id, Right::Impersonate, 1));
@@ -443,7 +433,7 @@ mod tests {
     #[test]
     fn explicit_right_grant() {
         let mut state = make_test_state();
-        let key_id = KeyId::from_str_id("key-1").unwrap();
+        let key_id = KeyRef::from_str_id("key-1").unwrap();
 
         // Test with Issue right (not implicit, so we can verify grant timing)
         state.rights.push(RightGrant {
@@ -461,34 +451,64 @@ mod tests {
     }
 
     #[test]
-    fn nonce_management() {
-        let mut state = make_test_state();
-        let key_id = KeyId::from_str_id("key-1").unwrap();
-
+    fn nonce_defaults_to_zero() {
+        let state = make_test_state();
+        let key_id = KeyRef::from_str_id("key-1").unwrap();
         assert_eq!(state.nonce_for_key(&key_id), 0);
-        assert_eq!(state.increment_nonce(&key_id), 1);
-        assert_eq!(state.nonce_for_key(&key_id), 1);
-        assert_eq!(state.increment_nonce(&key_id), 2);
+
+        let unknown = KeyRef::from_str_id("key-nonexistent").unwrap();
+        assert_eq!(state.nonce_for_key(&unknown), 0);
     }
 
     #[test]
-    fn to_w3c_did_document() {
-        let state = make_test_state();
+    fn w3c_did_document_structure() {
+        let pk = b"w3c-test-key-for-did-doc-struct!";
+        let did = Did::from_public_key(pk);
+
+        let mut state = DidDocumentState::new(did);
+        state.keys.push(VerificationMethod {
+            id: KeyRef::from_str_id("key-1").unwrap(),
+            key_type: KeyType::Ed25519,
+            controller: did,
+            public_key: pk.to_vec(),
+            purposes: vec![
+                KeyPurpose::Authentication,
+                KeyPurpose::AssertionMethod,
+                KeyPurpose::CapabilityDelegation,
+            ],
+            added_at_height: 1,
+            expires_at_height: None,
+            revoked_at_height: None,
+        });
+
         let doc = state.to_did_document_at(1);
 
+        assert_eq!(doc.context[0], "https://www.w3.org/ns/did/v1");
+        assert_eq!(doc.context[1], "https://mosaic.network/ns/did/v1");
         assert!(doc.id.starts_with("did:mosaic:z"));
-        assert_eq!(doc.context.len(), 2);
         assert_eq!(doc.verification_method.len(), 1);
         assert_eq!(doc.verification_method[0].type_, "Ed25519VerificationKey2020");
+        assert!(doc.verification_method[0].public_key_multibase.starts_with('z'));
         assert_eq!(doc.authentication.len(), 1);
         assert_eq!(doc.assertion_method.len(), 1);
+        assert_eq!(doc.capability_delegation.len(), 1);
+        assert!(doc.capability_invocation.is_empty());
         assert!(!doc.deactivated);
+
+        let json = serde_json::to_string_pretty(&doc).unwrap();
+        assert!(json.contains("\"@context\""));
+        assert!(json.contains("\"verificationMethod\""));
+        assert!(json.contains("\"Ed25519VerificationKey2020\""));
     }
 
     #[test]
     fn tombstoned_did_document() {
         let mut state = make_test_state();
         state.tombstoned_at_height = Some(50);
+
+        assert!(!state.is_tombstoned_at(49));
+        assert!(state.is_tombstoned_at(50));
+        assert!(state.is_tombstoned_at(100));
 
         let doc = state.to_did_document_at(100);
         assert!(doc.deactivated);

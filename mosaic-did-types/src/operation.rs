@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
-use crate::did::{ContentId, Did, KeyId};
+use crate::did::{ContentId, Did, KeyRef};
 use crate::signature::MultiSignature;
 
 /// Rights that can be assigned to keys in a DID Document.
@@ -134,7 +134,7 @@ pub enum DidOperation {
     /// The DID identifier MUST equal `BLAKE3-256(public_key)` for the initial key.
     AddKey {
         did: Did,
-        key_id: KeyId,
+        key_id: KeyRef,
         key_type: KeyType,
         public_key: Vec<u8>,
         purposes: Vec<KeyPurpose>,
@@ -143,19 +143,19 @@ pub enum DidOperation {
     },
 
     /// Revoke an existing key from the DID document.
-    RevokeKey { did: Did, key_id: KeyId },
+    RevokeKey { did: Did, key_id: KeyRef },
 
     /// Grant a right to a key.
     AddRight {
         did: Did,
-        key_id: KeyId,
+        key_id: KeyRef,
         right: Right,
         /// Optional block height at which this right grant expires.
         expires_at_height: Option<u32>,
     },
 
     /// Revoke a right from a key.
-    RevokeRight { did: Did, key_id: KeyId, right: Right },
+    RevokeRight { did: Did, key_id: KeyRef, right: Right },
 
     /// Permanently deactivate the DID. Irreversible.
     ///
@@ -216,29 +216,11 @@ pub struct SignedDidOperation {
     /// The DID operation to execute.
     pub operation: DidOperation,
     /// The key identifier of the signer within the target DID document.
-    pub signer_key_id: KeyId,
+    pub signer_key_id: KeyRef,
     /// Cryptographic signature over the operation.
     pub signature: MultiSignature,
     /// Monotonic nonce for replay protection (per-DID, per-key).
     pub nonce: u64,
-}
-
-/// Record stored on-chain for a registered BeforeProof.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(
-        parity_scale_codec::Encode,
-        parity_scale_codec::Decode,
-        parity_scale_codec::MaxEncodedLen,
-        scale_info::TypeInfo
-    )
-)]
-pub struct BeforeProofRecord {
-    /// Block height at which the proof was registered.
-    pub block_height: u32,
-    /// Index of the extrinsic within the block.
-    pub extrinsic_index: u32,
 }
 
 /// Type of DID operation (for events, without carrying full data).
@@ -274,7 +256,7 @@ mod tests {
     #[test]
     fn operation_did_accessor() {
         let did = Did::from_public_key(b"test-key");
-        let key_id = KeyId::from_str_id("key-1").unwrap();
+        let key_id = KeyRef::from_str_id("key-1").unwrap();
 
         let op = DidOperation::AddKey {
             did,
@@ -292,7 +274,7 @@ mod tests {
     #[test]
     fn operation_type_conversion() {
         let did = Did::default();
-        let key_id = KeyId::from_str_id("key-1").unwrap();
+        let key_id = KeyRef::from_str_id("key-1").unwrap();
 
         let ops = vec![
             DidOperation::AddKey {

@@ -124,21 +124,21 @@ impl fmt::Display for DidParseError {
     feature = "substrate",
     derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo,)
 )]
-pub struct KeyId(Vec<u8>);
+pub struct KeyRef(Vec<u8>);
 
-impl KeyId {
+impl KeyRef {
     /// Maximum length of a key identifier in bytes.
     pub const MAX_LEN: usize = 64;
 
-    /// Create a new KeyId from bytes.
+    /// Create a new KeyRef from bytes.
     pub fn new(bytes: Vec<u8>) -> Result<Self, &'static str> {
         if bytes.len() > Self::MAX_LEN {
-            return Err("KeyId exceeds maximum length of 64 bytes");
+            return Err("KeyRef exceeds maximum length of 64 bytes");
         }
-        Ok(KeyId(bytes))
+        Ok(KeyRef(bytes))
     }
 
-    /// Create a KeyId from a string identifier (e.g. "key-1").
+    /// Create a KeyRef from a string identifier (e.g. "key-1").
     pub fn from_str_id(s: &str) -> Result<Self, &'static str> {
         Self::new(s.as_bytes().to_vec())
     }
@@ -154,11 +154,11 @@ impl KeyId {
     }
 }
 
-impl fmt::Display for KeyId {
+impl fmt::Display for KeyRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.as_str() {
             Some(s) => write!(f, "{}", s),
-            None => write!(f, "0x{}", hex_encode(&self.0)),
+            None => write!(f, "0x{}", hex::encode(&self.0)),
         }
     }
 }
@@ -203,41 +203,8 @@ impl From<[u8; 32]> for ContentId {
 
 impl fmt::Display for ContentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "0x{}", hex_encode(&self.0))
+        write!(f, "0x{}", hex::encode(&self.0))
     }
-}
-
-/// DID kinds following IOP Morpheus architecture.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(
-        parity_scale_codec::Encode,
-        parity_scale_codec::Decode,
-        parity_scale_codec::MaxEncodedLen,
-        scale_info::TypeInfo,
-    )
-)]
-pub enum DidKind {
-    /// Human identity (end users, signers).
-    Persona,
-    /// Hardware/software agent (mobile apps, HSMs, IoT).
-    Device,
-    /// Organizational identity (companies, DAOs).
-    Group,
-    /// Non-agent entities (documents, invoices, data assets).
-    Resource,
-}
-
-impl Default for DidKind {
-    fn default() -> Self {
-        DidKind::Persona
-    }
-}
-
-// Simple hex encoding helper (no_std compatible)
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| alloc::format!("{:02x}", b)).collect()
 }
 
 #[cfg(test)]
@@ -294,16 +261,16 @@ mod tests {
 
     #[test]
     fn key_id_from_str() {
-        let kid = KeyId::from_str_id("key-1").unwrap();
+        let kid = KeyRef::from_str_id("key-1").unwrap();
         assert_eq!(kid.as_str(), Some("key-1"));
     }
 
     #[test]
     fn key_id_max_length() {
         let long = vec![b'a'; 65];
-        assert!(KeyId::new(long).is_err());
+        assert!(KeyRef::new(long).is_err());
 
         let ok = vec![b'a'; 64];
-        assert!(KeyId::new(ok).is_ok());
+        assert!(KeyRef::new(ok).is_ok());
     }
 }

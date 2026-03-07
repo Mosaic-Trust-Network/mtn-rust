@@ -32,13 +32,13 @@ pub mod pallet {
     use sp_std::vec::Vec;
 
     use mosaic_did_types::{
-        BeforeProofRecord, ContentId, Did, DidOperation, KeyId, KeyPurpose, KeyType, Right,
-        SignedDidOperation, SsiOperation,
+        ContentId, Did, DidOperation, KeyPurpose, KeyRef, KeyType, Right, SignedDidOperation,
+        SsiOperation,
     };
 
     use crate::state::{
-        MAX_KEY_ID_LEN, MAX_PUBLIC_KEY_LEN, MAX_PURPOSES_PER_KEY, OnChainDidState,
-        OnChainRightGrant, OnChainVerificationMethod,
+        BeforeProofRecord, MAX_KEY_ID_LEN, MAX_PUBLIC_KEY_LEN, MAX_PURPOSES_PER_KEY,
+        OnChainDidState, OnChainRightGrant, OnChainVerificationMethod,
     };
 
     use crate::validation;
@@ -412,7 +412,7 @@ pub mod pallet {
 
         /// Update the nonce for a signer key in the DID state.
         fn update_nonce(
-            state: &mut OnChainDidState, signer_key_id: &KeyId, nonce: u64,
+            state: &mut OnChainDidState, signer_key_id: &KeyRef, nonce: u64,
         ) -> DispatchResult {
             let key_bytes: BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>> = signer_key_id
                 .as_bytes()

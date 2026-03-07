@@ -7,7 +7,16 @@ use frame_support::pallet_prelude::*;
 use frame_support::{BoundedBTreeMap, BoundedVec};
 use sp_std::vec::Vec;
 
-use mosaic_did_types::{Did, DidKind, KeyId, KeyPurpose, KeyType, Right};
+use mosaic_did_types::{Did, KeyPurpose, KeyRef, KeyType, Right};
+
+/// Record stored on-chain for a registered BeforeProof.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
+pub struct BeforeProofRecord {
+    /// Block height at which the proof was registered.
+    pub block_height: u32,
+    /// Index of the extrinsic within the block.
+    pub extrinsic_index: u32,
+}
 
 /// Maximum number of keys per DID document.
 pub const MAX_KEYS_PER_DID: u32 = 32;
@@ -62,9 +71,9 @@ impl OnChainVerificationMethod {
         true
     }
 
-    /// Get the key ID as a KeyId type.
-    pub fn key_id(&self) -> Option<KeyId> {
-        KeyId::new(self.id.to_vec()).ok()
+    /// Get the key ID as a KeyRef type.
+    pub fn key_id(&self) -> Option<KeyRef> {
+        KeyRef::new(self.id.to_vec()).ok()
     }
 }
 
@@ -111,8 +120,6 @@ impl OnChainRightGrant {
 pub struct OnChainDidState {
     /// The DID this document describes.
     pub did: Did,
-    /// Optional DID kind.
-    pub kind: Option<DidKind>,
     /// All verification methods (keys), including revoked/expired ones for history.
     pub keys: BoundedVec<OnChainVerificationMethod, ConstU32<MAX_KEYS_PER_DID>>,
     /// All right grants, including revoked ones for history.
@@ -131,7 +138,6 @@ impl Default for OnChainDidState {
     fn default() -> Self {
         Self {
             did: Did::default(),
-            kind: None,
             keys: BoundedVec::default(),
             rights: BoundedVec::default(),
             tombstoned_at_height: None,

@@ -139,9 +139,8 @@ fn validate_signature_from_state<T: Config>(
     signed_op: &SignedDidOperation, state: &OnChainDidState,
 ) -> Result<(), sp_runtime::DispatchError> {
     // Resolve the signer's verification method from on-chain state
-    let signer_key = state
-        .find_key(signed_op.signer_key_id.as_bytes())
-        .ok_or(Error::<T>::KeyNotFound)?;
+    let signer_key =
+        state.find_key(signed_op.signer_key_id.as_bytes()).ok_or(Error::<T>::KeyNotFound)?;
 
     // Construct the typed public key from stored key_type + raw bytes
     let public_key =

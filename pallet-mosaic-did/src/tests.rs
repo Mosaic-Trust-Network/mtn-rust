@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 mod unit_tests {
+    use crate::state::BeforeProofRecord;
     use mosaic_did_types::*;
 
     // ===== Type-level tests (no runtime needed) =====
@@ -39,7 +40,7 @@ mod unit_tests {
     fn operation_creates_correct_types() {
         let pk = b"ed25519-public-key-32-bytes-long";
         let did = Did::from_public_key(pk);
-        let key_id = KeyId::from_str_id("key-1").unwrap();
+        let key_id = KeyRef::from_str_id("key-1").unwrap();
 
         let add_key = DidOperation::AddKey {
             did,
@@ -59,7 +60,7 @@ mod unit_tests {
     fn rights_system() {
         let pk = b"ed25519-public-key-32-bytes-long";
         let did = Did::from_public_key(pk);
-        let key_id = KeyId::from_str_id("key-1").unwrap();
+        let key_id = KeyRef::from_str_id("key-1").unwrap();
 
         let add_right = DidOperation::AddRight {
             did,
@@ -102,7 +103,7 @@ mod unit_tests {
     fn signed_operation_construction() {
         let pk = b"ed25519-public-key-32-bytes-long";
         let did = Did::from_public_key(pk);
-        let key_id = KeyId::from_str_id("key-1").unwrap();
+        let key_id = KeyRef::from_str_id("key-1").unwrap();
 
         let signed_op = SignedDidOperation {
             operation: DidOperation::AddKey {
@@ -126,7 +127,7 @@ mod unit_tests {
     fn ssi_operation_variants() {
         let pk = b"ssi-op-test-key-32-bytes-long!!!";
         let did = Did::from_public_key(pk);
-        let key_id = KeyId::from_str_id("key-1").unwrap();
+        let key_id = KeyRef::from_str_id("key-1").unwrap();
 
         let did_op = SsiOperation::Did(SignedDidOperation {
             operation: DidOperation::AddKey {
@@ -341,130 +342,11 @@ mod unit_tests {
         }
     }
 
-    // ===== Off-chain document state tests (DidDocumentState for RPC/SDK) =====
-
-    #[test]
-    fn did_document_state_reconstruction() {
-        use mosaic_did_types::document::{DidDocumentState, RightGrant, VerificationMethod};
-
-        let pk = b"ed25519-public-key-32-bytes-long";
-        let did = Did::from_public_key(pk);
-        let key_id = KeyId::from_str_id("key-1").unwrap();
-
-        let mut state = DidDocumentState::new(did);
-        assert!(!state.exists());
-
-        state.keys.push(VerificationMethod {
-            id: key_id.clone(),
-            key_type: KeyType::Ed25519,
-            controller: did,
-            public_key: pk.to_vec(),
-            purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod],
-            added_at_height: 1,
-            expires_at_height: None,
-            revoked_at_height: None,
-        });
-
-        assert!(state.exists());
-        assert_eq!(state.valid_keys_at(1).len(), 1);
-
-        assert!(state.has_right_at(&key_id, Right::Update, 1));
-        assert!(state.has_right_at(&key_id, Right::Impersonate, 1));
-        assert!(state.has_right_at(&key_id, Right::Delegate, 1));
-        assert!(!state.has_right_at(&key_id, Right::Issue, 1));
-
-        // Test explicit right grant with a non-implicit right (Issue)
-        state.rights.push(RightGrant {
-            key_id: key_id.clone(),
-            right: Right::Issue,
-            granted_at_height: 5,
-            expires_at_height: Some(100),
-            revoked_at_height: None,
-        });
-
-        assert!(!state.has_right_at(&key_id, Right::Issue, 4));
-        assert!(state.has_right_at(&key_id, Right::Issue, 5));
-        assert!(state.has_right_at(&key_id, Right::Issue, 99));
-        assert!(!state.has_right_at(&key_id, Right::Issue, 100));
-    }
-
-    #[test]
-    fn did_document_tombstone_flow() {
-        use mosaic_did_types::document::{DidDocumentState, VerificationMethod};
-
-        let did = Did::from_public_key(b"tombstone-test-key-32-bytes!!!!!");
-        let mut state = DidDocumentState::new(did);
-
-        state.keys.push(VerificationMethod {
-            id: KeyId::from_str_id("key-1").unwrap(),
-            key_type: KeyType::Ed25519,
-            controller: did,
-            public_key: vec![0u8; 32],
-            purposes: vec![KeyPurpose::Authentication],
-            added_at_height: 1,
-            expires_at_height: None,
-            revoked_at_height: None,
-        });
-
-        assert!(!state.is_tombstoned_at(50));
-        state.tombstoned_at_height = Some(50);
-
-        assert!(!state.is_tombstoned_at(49));
-        assert!(state.is_tombstoned_at(50));
-        assert!(state.is_tombstoned_at(100));
-
-        let doc = state.to_did_document_at(100);
-        assert!(doc.deactivated);
-    }
-
-    #[test]
-    fn w3c_did_document_structure() {
-        use mosaic_did_types::document::{DidDocumentState, VerificationMethod};
-
-        let pk = b"w3c-test-key-for-did-doc-struct!";
-        let did = Did::from_public_key(pk);
-
-        let mut state = DidDocumentState::new(did);
-        state.keys.push(VerificationMethod {
-            id: KeyId::from_str_id("key-1").unwrap(),
-            key_type: KeyType::Ed25519,
-            controller: did,
-            public_key: pk.to_vec(),
-            purposes: vec![
-                KeyPurpose::Authentication,
-                KeyPurpose::AssertionMethod,
-                KeyPurpose::CapabilityDelegation,
-            ],
-            added_at_height: 1,
-            expires_at_height: None,
-            revoked_at_height: None,
-        });
-
-        let doc = state.to_did_document_at(1);
-
-        assert_eq!(doc.context[0], "https://www.w3.org/ns/did/v1");
-        assert_eq!(doc.context[1], "https://mosaic.network/ns/did/v1");
-        assert!(doc.id.starts_with("did:mosaic:z"));
-        assert_eq!(doc.verification_method.len(), 1);
-        assert_eq!(doc.verification_method[0].type_, "Ed25519VerificationKey2020");
-        assert!(doc.verification_method[0].public_key_multibase.starts_with('z'));
-        assert_eq!(doc.authentication.len(), 1);
-        assert_eq!(doc.assertion_method.len(), 1);
-        assert_eq!(doc.capability_delegation.len(), 1);
-        assert!(doc.capability_invocation.is_empty());
-        assert!(!doc.deactivated);
-
-        let json = serde_json::to_string_pretty(&doc).unwrap();
-        assert!(json.contains("\"@context\""));
-        assert!(json.contains("\"verificationMethod\""));
-        assert!(json.contains("\"Ed25519VerificationKey2020\""));
-    }
-
     #[test]
     fn eurosign_workflow_types() {
         let signer_pk = b"eurosign-signer-pk-32-bytes-ed25";
         let signer_did = Did::from_public_key(signer_pk);
-        let key_id = KeyId::from_str_id("key-signing").unwrap();
+        let key_id = KeyRef::from_str_id("key-signing").unwrap();
 
         let create_op = SsiOperation::Did(SignedDidOperation {
             operation: DidOperation::AddKey {

@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 blake3 = { version = "1", default-features = false }
 bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
 
@@ -29,6 +30,7 @@ default = ["std"]
 std = [
     "blake3/std",
     "bs58/std",
+    "hex/std",
     "serde/std",
     "serde_json/std",
     "parity-scale-codec?/std",
