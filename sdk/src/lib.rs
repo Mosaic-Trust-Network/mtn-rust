@@ -63,7 +63,7 @@ mod test {
         let hydra_priv = hydra_plugin.private(unlock_password)?;
         let hydra_signer = hydra_priv.key_by_pk(&hyd_wallet_pubkey0)?.to_private_key();
 
-        println!("Hydra Wallet 0 Public Key: {}", hyd_wallet_pubkey0);
+        println!("Hydra Wallet 0 Public Key: {hyd_wallet_pubkey0}");
         println!("Hydra Wallet 0 Address: {}", hyd_bip44_pubkey0.to_p2pkh_addr());
         println!(
             "Hydra Wallet 0 Ark KeyId: {}",
@@ -132,7 +132,7 @@ mod test {
         let hydra_priv = hydra_plugin.private(unlock_password)?;
         let hydra_signer = hydra_priv.key_by_pk(&hyd_wallet_pubkey0)?.to_private_key();
 
-        println!("Hydra Wallet 0 Public Key: {}", hyd_wallet_pubkey0);
+        println!("Hydra Wallet 0 Public Key: {hyd_wallet_pubkey0}");
         println!("Hydra Wallet 0 Address: {}", hyd_bip44_pubkey0.to_p2pkh_addr());
         println!(
             "Hydra Wallet 0 Ark KeyId: {}",
@@ -147,8 +147,8 @@ mod test {
         let mph_persona_pubkey0 = mph_bip32_pubkey0.public_key();
         let mph_persona_did0 = morpheus::data::Did::new(mph_persona_pubkey0.key_id());
 
-        println!("Morpheus Persona 0 Public Key: {}", mph_persona_pubkey0);
-        println!("Morpheus Persona 0 Did: {}", mph_persona_did0);
+        println!("Morpheus Persona 0 Public Key: {mph_persona_pubkey0}");
+        println!("Morpheus Persona 0 Did: {mph_persona_did0}");
 
         let common_fields = hydra::txtype::CommonTransactionFields {
             network: &ciphersuite::secp256k1::hyd::Testnet,
@@ -266,10 +266,9 @@ mod test {
     fn show_tx_json(message: &str, txs: Vec<hydra::TransactionData>) -> anyhow::Result<()> {
         let tx_batch = hydra::TxBatch { transactions: txs };
         let txs_json_str = serde_json::to_string(&tx_batch)?;
-        println!("{}", message);
+        println!("{message}");
         println!(
-            "curl --header 'Content-Type: application/json' --request POST --data '{}' http://test.hydra.iop.global:4703/api/v2/transactions",
-            txs_json_str
+            "curl --header 'Content-Type: application/json' --request POST --data '{txs_json_str}' http://test.hydra.iop.global:4703/api/v2/transactions"
         );
         Ok(())
     }

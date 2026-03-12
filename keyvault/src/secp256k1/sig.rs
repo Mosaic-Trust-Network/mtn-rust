@@ -32,11 +32,10 @@ impl SecpSignature {
     /// [`to_bytes`]: #method.to_bytes
     pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self> {
         let bytes = bytes.as_ref();
-        ensure!(bytes.len() == SIGNATURE_SIZE, "Signature length is not {}", SIGNATURE_SIZE);
+        ensure!(bytes.len() == SIGNATURE_SIZE, "Signature length is not {SIGNATURE_SIZE}");
         ensure!(
             bytes[0] == SIGNATURE_VERSION1,
-            "Only identifier version {:x} is supported",
-            SIGNATURE_VERSION1
+            "Only identifier version {SIGNATURE_VERSION1:x} is supported"
         );
         let mut array = [0u8; secp::util::SIGNATURE_SIZE];
         array.copy_from_slice(&bytes[VERSION_SIZE..]);

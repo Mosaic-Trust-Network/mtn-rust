@@ -262,8 +262,8 @@ mod tests {
         assert_eq!(key_nfc, "álom");
         assert_eq!(key_nfkd, "álom");
 
-        let str_nfc = format!("{{\"{}\": 1}}", key_nfc);
-        let str_nfkd = format!("{{\"{}\": 1}}", key_nfkd);
+        let str_nfc = format!("{{\"{key_nfc}\": 1}}");
+        let str_nfkd = format!("{{\"{key_nfkd}\": 1}}");
         assert_eq!(digest_json_str(&str_nfkd)?, "cjuRab8yOeLzxmFY_fEMC79cW5z9XyihRhaGnTSvMabrA8");
         assert!(digest_json_str(&str_nfc).is_err());
 

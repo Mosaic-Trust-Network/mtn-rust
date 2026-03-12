@@ -52,7 +52,7 @@ impl Domain {
         let domain = self
             .children
             .remove(edge)
-            .with_context(|| format!("Attempt to delete nonexisting child: {}", edge))?;
+            .with_context(|| format!("Attempt to delete nonexisting child: {edge}"))?;
         Ok(domain)
     }
 
@@ -103,7 +103,7 @@ impl Domain {
     pub(crate) fn new_root() -> Self {
         let to_edge = |e: &&str| {
             Edge::new(e).unwrap_or_else(|_| {
-                panic!("Implementation error creating root: {} is not a valid edge name", e)
+                panic!("Implementation error creating root: {e} is not a valid edge name")
             })
         };
         let name = |edges: &[&str]| {

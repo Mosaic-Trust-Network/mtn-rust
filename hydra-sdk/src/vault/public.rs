@@ -55,7 +55,7 @@ impl Public {
                 return Ok(key);
             }
         }
-        bail!("Could not find {} among Hydra keys", addr)
+        bail!("Could not find {addr} among Hydra keys")
     }
 
     pub fn xpub(&self) -> Result<String> {

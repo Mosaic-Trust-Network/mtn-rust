@@ -33,9 +33,7 @@ impl Principal {
             Self::PublicKey(mypk) => {
                 ensure!(
                     mypk == impersonator_pk,
-                    "PublicKey principal {} cannot be impersonated by {}",
-                    mypk,
-                    impersonator_pk
+                    "PublicKey principal {mypk} cannot be impersonated by {impersonator_pk}"
                 );
                 Ok(())
             }

@@ -167,13 +167,13 @@ impl<'a> Transaction<'a> {
     pub fn vote<'b>(
         common_fields: CommonTransactionFields<'a>, delegate: &'b SecpPublicKey,
     ) -> Self {
-        Self::create_vote(common_fields, format!("+{}", delegate))
+        Self::create_vote(common_fields, format!("+{delegate}"))
     }
 
     pub fn unvote<'b>(
         common_fields: CommonTransactionFields<'a>, delegate: &'b SecpPublicKey,
     ) -> Self {
-        Self::create_vote(common_fields, format!("-{}", delegate))
+        Self::create_vote(common_fields, format!("-{delegate}"))
     }
 
     fn create_vote(common_fields: CommonTransactionFields<'a>, vote: String) -> Self {

@@ -42,7 +42,7 @@ impl FromStr for DidKind {
             "device" => Ok(DidKind::Device),
             "group" => Ok(DidKind::Group),
             "resource" => Ok(DidKind::Resource),
-            _ => bail!("Unknown DID kind {}", input),
+            _ => bail!("Unknown DID kind {input}"),
         }
     }
 }

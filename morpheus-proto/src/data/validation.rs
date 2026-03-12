@@ -19,7 +19,7 @@ impl std::fmt::Display for ValidationStatus {
             Self::MaybeValid => "maybe valid",
             Self::Invalid => "invalid",
         };
-        write!(f, "{}", msg)
+        write!(f, "{msg}")
     }
 }
 
@@ -35,7 +35,7 @@ impl std::fmt::Display for ValidationIssueSeverity {
             Self::Warning => "warning",
             Self::Error => "error",
         };
-        write!(f, "{}", msg)
+        write!(f, "{msg}")
     }
 }
 

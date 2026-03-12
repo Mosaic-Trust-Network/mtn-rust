@@ -47,6 +47,6 @@ impl Public {
                 return key_res;
             }
         }
-        bail!("Could not find {} among Morpheus key ids", id);
+        bail!("Could not find {id} among Morpheus key ids");
     }
 }

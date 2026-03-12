@@ -102,7 +102,7 @@ impl JsMorpheusState {
 
     fn check_height(height: BlockHeight) -> Result<(), JsValue> {
         if height > i32::MAX as u32 {
-            return Err(JsValue::from(format!("Blockheight cannot be negative: {}", height)));
+            return Err(JsValue::from(format!("Blockheight cannot be negative: {height}")));
         }
         Ok(())
     }

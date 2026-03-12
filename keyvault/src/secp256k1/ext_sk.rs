@@ -87,7 +87,7 @@ impl SecpExtPrivateKey {
     /// [`BIP32`]: https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#serialization-format
     pub fn from_xprv(xprv: &str, prefix: &[u8; BIP32_VERSION_PREFIX_SIZE]) -> Result<Self> {
         let data = from_base58check(xprv)?;
-        ensure!(data.len() == XPRV_DATA_SIZE, "Length of data must be {}", XPRV_DATA_SIZE);
+        ensure!(data.len() == XPRV_DATA_SIZE, "Length of data must be {XPRV_DATA_SIZE}");
 
         debug_assert_eq!(BIP32_VERSION_PREFIX_SIZE, 4);
 
@@ -108,7 +108,7 @@ impl SecpExtPrivateKey {
             let chain_code_bytes = &data[13..45];
             ChainCode::from_bytes(chain_code_bytes)?
         };
-        ensure!(data[45] == SK_PREFIX, "xprv must have a private key prefixed with {}", SK_PREFIX);
+        ensure!(data[45] == SK_PREFIX, "xprv must have a private key prefixed with {SK_PREFIX}");
         let sk = {
             let sk_bytes = &data[46..78];
             SecpPrivateKey::from_bytes(sk_bytes)?

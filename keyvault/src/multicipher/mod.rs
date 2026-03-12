@@ -68,7 +68,7 @@ impl CipherSuite {
         match c {
             'e' => Ok(Self::Ed25519),
             's' => Ok(Self::Secp256k1),
-            _ => bail!("Unknown crypto suite '{}'", c),
+            _ => bail!("Unknown crypto suite '{c}'"),
         }
     }
 }

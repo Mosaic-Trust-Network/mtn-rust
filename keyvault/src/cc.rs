@@ -29,8 +29,7 @@ impl ChainCode {
         let bytes = bytes.as_ref();
         ensure! {
             bytes.len() == CHAIN_CODE_SIZE,
-            "Chain code length is not {}",
-            CHAIN_CODE_SIZE
+            "Chain code length is not {CHAIN_CODE_SIZE}"
         }
         let mut cc = [0u8; CHAIN_CODE_SIZE];
         cc.copy_from_slice(bytes);

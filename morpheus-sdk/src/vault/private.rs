@@ -57,6 +57,6 @@ impl Private {
                 return key_res;
             }
         }
-        bail!("Could not find {} among Morpheus keys", pk);
+        bail!("Could not find {pk} among Morpheus keys");
     }
 }

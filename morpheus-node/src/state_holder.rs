@@ -101,8 +101,7 @@ impl StateHolder {
             let confirmed_opt = inner.is_confirmed(txid);
             ensure!(
                 confirmed_opt.is_some(),
-                "Transaction {} has not been applied, cannot revert.",
-                txid
+                "Transaction {txid} has not been applied, cannot revert."
             );
 
             // Option::unwrap is panic-free after handling None above

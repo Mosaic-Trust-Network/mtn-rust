@@ -59,7 +59,7 @@ impl Private {
                 return Ok(key);
             }
         }
-        bail!("Could not find {} among Hydra keys", pk)
+        bail!("Could not find {pk} among Hydra keys")
     }
 
     pub fn xprv(&self) -> String {

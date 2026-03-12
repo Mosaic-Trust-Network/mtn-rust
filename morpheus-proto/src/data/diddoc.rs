@@ -19,7 +19,7 @@ impl Display for Right {
         let value =
             serde_json::to_value(self).expect("Implementation error: Right is not serializable");
         match value {
-            serde_json::Value::String(s) => write!(f, "{}", s),
+            serde_json::Value::String(s) => write!(f, "{s}"),
             _ => panic!("Implementation error: unexpected Right serialization"),
         }
     }
@@ -191,8 +191,7 @@ impl DidDocument {
         ensure!(key_link.starts_with('#'), "Key links for remote DIDs are not supported yet");
         let idx_str: String = key_link.chars().skip(1).collect();
         let idx: usize = idx_str.parse()?;
-        let key =
-            self.keys.get(idx).ok_or_else(|| anyhow!("No key found for link {}", key_link))?;
+        let key = self.keys.get(idx).ok_or_else(|| anyhow!("No key found for link {key_link}"))?;
         Ok(key.to_owned())
     }
 
@@ -248,7 +247,7 @@ impl DidDocument {
         &self, auth: &Authentication, right: Right, from: BlockHeight, until: BlockHeight,
     ) -> Result<ValidationResult> {
         ensure!(1 <= from, "Range must not predate genesis block");
-        ensure!(from < until, "Invalid block range {}-{}", from, until);
+        ensure!(from < until, "Invalid block range {from}-{until}");
         self.ensure_known_height(until)?;
 
         let mut result: ValidationResult = Default::default();

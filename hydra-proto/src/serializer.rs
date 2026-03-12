@@ -112,7 +112,7 @@ fn serialize_vote(transaction: &TransactionData, bytes: &mut Vec<u8>) -> Result<
             .iter()
             .filter_map(|vote| {
                 let prefix = if vote.starts_with('+') { "01" } else { "00" };
-                vote.get(1..).map(|delegate| format!("{}{}", prefix, delegate))
+                vote.get(1..).map(|delegate| format!("{prefix}{delegate}"))
             })
             .collect();
 

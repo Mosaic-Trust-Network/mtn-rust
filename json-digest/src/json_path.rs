@@ -59,7 +59,7 @@ pub fn split_alternatives(paths_pattern: &str) -> Vec<&str> {
 /// ```
 pub fn split_head_tail(path: &str) -> Result<(&str, Option<&str>)> {
     if !path.starts_with('.') {
-        bail!("Path must start with '.' but it's: {}", path);
+        bail!("Path must start with '.' but it's: {path}");
     }
     let path = &path[1..];
 

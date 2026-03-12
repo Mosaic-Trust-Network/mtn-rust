@@ -13,11 +13,10 @@ fn validate_inside_state(
 ) -> Result<()> {
     if let Some(domain_before_op) = domain_before_op_opt {
         let last_block = state.last_seen_height();
-        ensure!(domain_before_op.is_expired_at(last_block), "Valid domain {} exists", name);
+        ensure!(domain_before_op.is_expired_at(last_block), "Valid domain {name} exists");
         ensure!(
             domain_before_op.is_grace_period_over(last_block),
-            "Expired domain {} in grace period exists",
-            name
+            "Expired domain {name} in grace period exists"
         );
     }
 

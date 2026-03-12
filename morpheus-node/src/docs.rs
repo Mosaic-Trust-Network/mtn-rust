@@ -103,7 +103,7 @@ impl DidDocumentState {
         };
 
         let state = KeyRightState { history: items };
-        let key_link = format!("#{}", idx);
+        let key_link = format!("#{idx}");
         let derived = KeyRightDerived { key_link, valid };
         KeyRightHistory { state, derived }
     }
@@ -135,24 +135,16 @@ impl DidDocumentState {
         if let Some(entry) = self.last_by_auth(auth) {
             ensure!(
                 entry.is_valid_at(tombstoned_at_height, height),
-                "Key matching {} of DID {} is invalid at height {}",
-                auth,
-                did,
-                height
+                "Key matching {auth} of DID {did} is invalid at height {height}"
             );
 
             if let Some(history) = entry.rights.get_mut(&right) {
                 Ok(history)
             } else {
-                bail!(
-                    "Key matching {} of DID {} has no right history of right {}",
-                    auth,
-                    did,
-                    right
-                );
+                bail!("Key matching {auth} of DID {did} has no right history of right {right}");
             }
         } else {
-            bail!("DID {} has no key matching {}", did, auth)
+            bail!("DID {did} has no key matching {auth}")
         }
     }
 
@@ -171,7 +163,7 @@ impl DidDocumentState {
     }
 
     fn ensure_different_auth(&self, signer: &Authentication, auth: &Authentication) -> Result<()> {
-        ensure!(signer != auth, "{} cannot modify its own authorization (as {})", signer, auth);
+        ensure!(signer != auth, "{signer} cannot modify its own authorization (as {auth})");
         Ok(())
     }
 
@@ -187,9 +179,7 @@ impl DidDocumentState {
                 if let Some(existing_entry) = self.last_by_auth(auth) {
                     ensure!(
                         !existing_entry.is_valid_at(None, height),
-                        "DID {} already has a still valid key matching {}",
-                        did,
-                        auth
+                        "DID {did} already has a still valid key matching {auth}"
                     )
                 }
                 self.key_entries.push(KeyEntry {
@@ -207,34 +197,28 @@ impl DidDocumentState {
                 if let Some(existing_entry) = self.last_by_auth(auth) {
                     ensure!(
                         existing_entry.is_valid_at(None, height),
-                        "DID {} has a key matching {}, but it's already invalidated",
-                        did,
-                        auth
+                        "DID {did} has a key matching {auth}, but it's already invalidated"
                     );
                     ensure!(
                         existing_entry.revoked_at.is_none(),
-                        "key matching {} in DID {} was already revoked",
-                        auth,
-                        did
+                        "key matching {auth} in DID {did} was already revoked"
                     );
                     existing_entry.revoked_at = Some(height);
                 } else {
-                    bail!("DID {} does not have a key matching {}", did, auth)
+                    bail!("DID {did} does not have a key matching {auth}")
                 }
             }
             AddRight { auth, right } => {
                 self.ensure_different_auth(signer, auth)?;
                 self.ensure_not_tombstoned()?;
                 let history = self.right_history(did, height, auth, right)?;
-                history
-                    .apply(height, true, || format!("Validity of key {} in DID {}", auth, did))?;
+                history.apply(height, true, || format!("Validity of key {auth} in DID {did}"))?;
             }
             RevokeRight { auth, right } => {
                 self.ensure_different_auth(signer, auth)?;
                 self.ensure_not_tombstoned()?;
                 let history = self.right_history(did, height, auth, right)?;
-                history
-                    .apply(height, false, || format!("Validity of key {} in DID {}", auth, did))?;
+                history.apply(height, false, || format!("Validity of key {auth} in DID {did}"))?;
             }
             TombstoneDid {} => {
                 self.ensure_not_tombstoned()?;
@@ -256,21 +240,18 @@ impl DidDocumentState {
                 if let Some(last_entry) = self.key_entries.pop() {
                     ensure!(
                         &last_entry.auth == auth,
-                        "Cannot revert addKey in DID {}, because the key does not match the last added one.",
-                        did
+                        "Cannot revert addKey in DID {did}, because the key does not match the last added one."
                     );
                     ensure!(
                         last_entry.added_at_height == Some(height),
-                        "Cannot revert addKey in DID {}, because it was not added at the specified height.",
-                        did
+                        "Cannot revert addKey in DID {did}, because it was not added at the specified height."
                     );
                     ensure!(
                         &last_entry.expires_at_height == expires_at_height,
-                        "Cannot revert addKey in DID {}, because it was not added with the same expiration.",
-                        did
+                        "Cannot revert addKey in DID {did}, because it was not added with the same expiration."
                     )
                 } else {
-                    bail!("Cannot revert addKey in DID {}, because there are no keys", did);
+                    bail!("Cannot revert addKey in DID {did}, because there are no keys");
                 }
             }
             RevokeKey { auth } => {
@@ -280,22 +261,16 @@ impl DidDocumentState {
                 if let Some(existing_entry) = self.last_by_auth(auth) {
                     ensure!(
                         existing_entry.revoked_at.is_some(),
-                        "Cannot revert revokeKey in DID {} because key matching {} was not revoked",
-                        did,
-                        auth
+                        "Cannot revert revokeKey in DID {did} because key matching {auth} was not revoked"
                     );
                     existing_entry.revoked_at = None;
                     ensure!(
                         existing_entry.is_valid_at(None, height),
-                        "Failed to revert revokeKey in DID {} for key matching {}. It's still invalid after reverted revoking.",
-                        did,
-                        auth
+                        "Failed to revert revokeKey in DID {did} for key matching {auth}. It's still invalid after reverted revoking."
                     );
                 } else {
                     bail!(
-                        "Cannot revert revokeKey in DID {} because it does not have a key matching {}",
-                        did,
-                        auth
+                        "Cannot revert revokeKey in DID {did} because it does not have a key matching {auth}"
                     )
                 }
             }
@@ -303,21 +278,18 @@ impl DidDocumentState {
                 self.ensure_different_auth(signer, auth)?;
                 self.ensure_not_tombstoned()?;
                 let history = self.right_history(did, height, auth, right)?;
-                history
-                    .revert(height, true, || format!("Validity of key {} in DID {}", auth, did))?;
+                history.revert(height, true, || format!("Validity of key {auth} in DID {did}"))?;
             }
             RevokeRight { auth, right } => {
                 self.ensure_different_auth(signer, auth)?;
                 self.ensure_not_tombstoned()?;
                 let history = self.right_history(did, height, auth, right)?;
-                history
-                    .revert(height, false, || format!("Validity of key {} in DID {}", auth, did))?;
+                history.revert(height, false, || format!("Validity of key {auth} in DID {did}"))?;
             }
             TombstoneDid {} => {
                 ensure!(
                     self.tombstoned_at_height.is_some(),
-                    "Failed to revert tombstoning DID {}. It was not tombstoned yet.",
-                    did
+                    "Failed to revert tombstoning DID {did}. It was not tombstoned yet."
                 );
                 self.tombstoned_at_height = None;
             }

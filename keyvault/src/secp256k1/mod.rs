@@ -20,7 +20,7 @@ fn hash160<B: AsRef<[u8]>>(input: B) -> [u8; 20] {
     let mut inner_hasher = Sha256::default();
     inner_hasher.update(input);
     let mut outer_hasher = Ripemd160::default();
-    outer_hasher.update(inner_hasher.finalize_fixed().as_slice());
+    outer_hasher.update(inner_hasher.finalize_fixed());
     outer_hasher.finalize_fixed().into()
 }
 
@@ -78,7 +78,7 @@ impl Secp256k1 {
         let mut hasher = Sha256::default();
         hasher.update(data.as_ref());
         let mut hash = [0u8; secp::util::MESSAGE_SIZE];
-        hash.copy_from_slice(hasher.finalize_fixed().as_slice());
+        hash.copy_from_slice( &hasher.finalize_fixed());
         secp::Message::parse(&hash)
     }
 }

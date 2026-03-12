@@ -86,7 +86,7 @@ impl State {
         let chain_last_txn = self.last_tx_id(&did_data);
         if last_tx_id.as_ref() != chain_last_txn.map(|t| &t.transaction_id) {
             let op_state = if let Some(txid) = last_tx_id {
-                format!("after txn {}", txid)
+                format!("after txn {txid}")
             } else {
                 "on an implicit document".to_owned()
             };
@@ -118,8 +118,7 @@ impl State {
             // We can change the state fearlessly even if we Err, because the caller will throw away changed state on error
             ensure!(
                 this.txn_status.insert(txid.to_owned(), status).is_none(),
-                "Transaction {} was already confirmed",
-                txid
+                "Transaction {txid} was already confirmed"
             );
             Ok(())
         }
@@ -220,18 +219,16 @@ impl State {
     pub(super) fn revert(&mut self, mutation: Mutation) -> Result<()> {
         fn remove_txn_status(this: &mut State, txid: &str, status: bool) -> Result<()> {
             let confirmed_opt = this.txn_status.remove(txid);
-            ensure!(confirmed_opt.is_some(), "Transaction {} was not seen", txid);
+            ensure!(confirmed_opt.is_some(), "Transaction {txid} was not seen");
             if confirmed_opt.unwrap() {
                 ensure!(
                     status,
-                    "Transaction {} was confirmed, hence its rejection cannot be reverted",
-                    txid
+                    "Transaction {txid} was confirmed, hence its rejection cannot be reverted"
                 );
             } else {
                 ensure!(
                     !status,
-                    "Transaction {} was rejected, hence its confirmation cannot be reverted",
-                    txid
+                    "Transaction {txid} was rejected, hence its confirmation cannot be reverted"
                 );
             }
             Ok(())
@@ -255,24 +252,15 @@ impl State {
                 let old_txid = old_state.txid;
                 ensure!(
                     height == old_height,
-                    "Before proof {} was registered at {}, cannot be reverted at {}",
-                    content_id,
-                    old_height,
-                    height
+                    "Before proof {content_id} was registered at {old_height}, cannot be reverted at {height}"
                 );
                 ensure!(
                     txid == old_txid,
-                    "Before proof {} was registered by txn {}, cannot be reverted by txn {}",
-                    content_id,
-                    old_txid,
-                    txid
+                    "Before proof {content_id} was registered by txn {old_txid}, cannot be reverted by txn {txid}"
                 );
                 Ok(())
             } else {
-                bail!(
-                    "Before proof {} was not registered, therefore cannot be reverted",
-                    content_id
-                );
+                bail!("Before proof {content_id} was not registered, therefore cannot be reverted");
             }
         }
 

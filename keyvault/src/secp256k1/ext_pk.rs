@@ -62,7 +62,7 @@ impl SecpExtPublicKey {
     /// [`BIP32`]: https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#serialization-format
     pub fn from_xpub(xprv: &str, prefix: &[u8; BIP32_VERSION_PREFIX_SIZE]) -> Result<Self> {
         let data = from_base58check(xprv)?;
-        ensure!(data.len() == XPUB_DATA_SIZE, "Length of data must be {}", XPUB_DATA_SIZE);
+        ensure!(data.len() == XPUB_DATA_SIZE, "Length of data must be {XPUB_DATA_SIZE}");
 
         debug_assert_eq!(BIP32_VERSION_PREFIX_SIZE, 4);
 

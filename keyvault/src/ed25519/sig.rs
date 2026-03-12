@@ -31,11 +31,10 @@ impl EdSignature {
     /// [`to_bytes`]: #method.to_bytes
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
         let bytes = bytes.as_ref();
-        ensure!(bytes.len() == SIGNATURE_SIZE, "Signature length is not {}", SIGNATURE_SIZE);
+        ensure!(bytes.len() == SIGNATURE_SIZE, "Signature length is not {SIGNATURE_SIZE}");
         ensure!(
             bytes[0] == SIGNATURE_VERSION1,
-            "Only identifier version {:x} is supported",
-            SIGNATURE_VERSION1
+            "Only identifier version {SIGNATURE_VERSION1:x} is supported"
         );
         let sig = ed::Signature::try_from(&bytes[VERSION_SIZE..])?;
         Ok(Self(sig))

@@ -77,12 +77,10 @@ impl State {
         self.set_corrupted_on_err(|state| {
             ensure!(
                 height_before_revert == height,
-                "Cannot revert block at height {}, because currently the state is at height {}",
-                height,
-                height_before_revert,
+                "Cannot revert block at height {height}, because currently the state is at height {height_before_revert}",
             );
             state.undo_operation(state.version() - 1)?;
-            ensure!(height_before_revert > state.last_seen_height, "Cannot revert block at height {}, because the operation undone was not reducing the block height.", height);
+            ensure!(height_before_revert > state.last_seen_height, "Cannot revert block at height {height}, because the operation undone was not reducing the block height.");
             Ok(())
         })
     }
@@ -179,13 +177,13 @@ impl State {
     pub fn domain(&self, name: &DomainName) -> Result<&Domain> {
         name.iter()
             .try_fold(&self.root, |dom, e| dom.child(e))
-            .with_context(|| format!("Cannot find domain with name {}", name))
+            .with_context(|| format!("Cannot find domain with name {name}"))
     }
 
     pub(crate) fn domain_mut(&mut self, name: &DomainName) -> Result<&mut Domain> {
         name.iter()
             .try_fold(&mut self.root, |dom, e| dom.child_mut(e))
-            .with_context(|| format!("Cannot find domain with name {}", name))
+            .with_context(|| format!("Cannot find domain with name {name}"))
     }
 
     pub fn nonce(&self, pk: &MPublicKey) -> Nonce {
@@ -193,16 +191,16 @@ impl State {
     }
 
     pub fn get_txn_status(&self, txid: &str) -> Result<&TxnStatus> {
-        self.txn_statuses.get(txid).with_context(|| format!("Cannot find txn with id {}", txid))
+        self.txn_statuses.get(txid).with_context(|| format!("Cannot find txn with id {txid}"))
     }
 
     pub fn resolve_data(&self, name: &DomainName) -> Result<&DynamicContent> {
         let domain = name.iter().try_fold(self.root(), |dom, edge| {
             dom.child(edge)
-                .with_context(|| format!("Edge {} was not found for domain {}", edge, name))
+                .with_context(|| format!("Edge {edge} was not found for domain {name}"))
                 .and_then(|child| {
                     if child.is_expired_at(self.last_seen_height) {
-                        bail!("Edge {} in domain {} expired", edge, name)
+                        bail!("Edge {edge} in domain {name} expired")
                     } else {
                         Ok(child)
                     }
@@ -248,7 +246,7 @@ impl State {
             let undo_op = state
                 .undo_operations
                 .pop()
-                .with_context(|| format!("Cannot undo to version {} anymore", to_version))?;
+                .with_context(|| format!("Cannot undo to version {to_version} anymore"))?;
             undo_op.execute(state)
         })
     }
@@ -314,7 +312,7 @@ mod test {
 
     fn name_does_not_resolve(state: &State, domain_name: &DomainName) -> Result<()> {
         let last_edge = domain_name.last_edge().unwrap();
-        let err_msg = format!("Edge {} in domain {} expired", last_edge, domain_name);
+        let err_msg = format!("Edge {last_edge} in domain {domain_name} expired");
 
         let err = state.resolve_data(domain_name).unwrap_err();
         assert_eq!(err.to_string(), err_msg);

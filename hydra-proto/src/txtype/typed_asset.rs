@@ -111,14 +111,13 @@ impl<'de> Deserialize<'de> for TypedAsset {
                                 }
                                 _ => {
                                     return Err(de::Error::custom(format!(
-                                        "Invalid (typeGroup,type) pair: ({:?},{})",
-                                        type_group, transaction_type
+                                        "Invalid (typeGroup,type) pair: ({type_group:?},{transaction_type})"
                                     )));
                                 }
                             }
                         }
                         other => {
-                            return Err(de::Error::custom(format!("Key {} is not known.", other)));
+                            return Err(de::Error::custom(format!("Key {other} is not known.")));
                         }
                     }
                 }

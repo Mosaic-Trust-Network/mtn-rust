@@ -27,6 +27,6 @@ impl Networks {
             .iter()
             .find(|n| n.name() == name)
             .copied()
-            .ok_or_else(|| anyhow!("Could not find network with name {}.", name))
+            .ok_or_else(|| anyhow!("Could not find network with name {name}."))
     }
 }

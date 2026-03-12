@@ -12,7 +12,7 @@ impl AlgorithmSignature for JwtSignature {
     }
 
     fn try_from_slice(bytes: &[u8]) -> anyhow::Result<Self> {
-        let inner = MSignature::from_bytes(bytes).map_err(|e| anyhow!("{}", e))?;
+        let inner = MSignature::from_bytes(bytes).map_err(|e| anyhow!("{e}"))?;
         Ok(JwtSignature(inner))
     }
 }

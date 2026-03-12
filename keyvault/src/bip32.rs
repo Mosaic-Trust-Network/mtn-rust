@@ -199,8 +199,8 @@ impl FromStr for ChildIndex {
 impl fmt::Display for ChildIndex {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
-            ChildIndex::Normal(idx) => formatter.write_fmt(format_args!("{}", idx)),
-            ChildIndex::Hardened(idx) => formatter.write_fmt(format_args!("{}'", idx)),
+            ChildIndex::Normal(idx) => formatter.write_fmt(format_args!("{idx}")),
+            ChildIndex::Hardened(idx) => formatter.write_fmt(format_args!("{idx}'")),
         }
     }
 }
@@ -242,7 +242,7 @@ impl FromStr for Path {
             pieces.map(|p: &str| (p, p.parse::<ChildIndex>())).partition(|(_p, i)| i.is_ok());
 
         if !errors.is_empty() {
-            bail!("BIP32 derivation path contains invalid child indices: {:?}", errors);
+            bail!("BIP32 derivation path contains invalid child indices: {errors:?}");
         }
 
         // because of the above partitioning, successes only contain parse results
@@ -263,7 +263,7 @@ impl fmt::Display for Path {
         use fmt::Write as _;
         formatter.write_char('m')?;
         for c in &self.path {
-            write!(formatter, "/{}", c)?;
+            write!(formatter, "/{c}")?;
         }
         Ok(())
     }
