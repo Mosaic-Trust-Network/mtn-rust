@@ -398,7 +398,7 @@ pub mod pallet {
             content_id: ContentId, height_u32: u32, block_height: BlockNumberFor<T>,
         ) -> DispatchResult {
             BeforeProofs::<T>::insert(
-                &content_id,
+                content_id,
                 BeforeProofRecord {
                     block_height: height_u32,
                     extrinsic_index: 0, // TODO: get actual extrinsic index

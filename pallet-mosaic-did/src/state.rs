@@ -134,22 +134,16 @@ pub struct OnChainDidState {
     >,
 }
 
-impl Default for OnChainDidState {
-    fn default() -> Self {
+impl OnChainDidState {
+    /// Create a new empty on-chain DID state.
+    pub fn new(did: Did) -> Self {
         Self {
-            did: Did::default(),
+            did,
             keys: BoundedVec::default(),
             rights: BoundedVec::default(),
             tombstoned_at_height: None,
             nonces: BoundedBTreeMap::default(),
         }
-    }
-}
-
-impl OnChainDidState {
-    /// Create a new empty on-chain DID state.
-    pub fn new(did: Did) -> Self {
-        Self { did, ..Default::default() }
     }
 
     /// Returns whether this DID exists (has at least one key).

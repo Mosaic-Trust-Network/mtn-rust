@@ -24,6 +24,16 @@ use serde::{Deserialize, Serialize};
 )]
 pub struct Did(pub [u8; 32]);
 
+#[cfg(test)]
+impl Did {
+    // Public key of Alice
+    const PK_ALICE: &[u8; 32] = b"\xd4\x35\x93\xc7\x15\xfd\xd3\x1c\x61\x14\x1a\xbd\x04\xa9\x9f\xd6\x82\x2c\x85\x58\x85\x4c\xcd\xe3\x9a\x56\x84\xe7\xa5\x6d\xa2\x7d";
+
+    pub fn alice() -> Self {
+        Self::from_public_key(Self::PK_ALICE)
+    }
+}
+
 impl Did {
     /// The DID method prefix.
     pub const METHOD_PREFIX: &'static str = "did:mosaic:";
@@ -79,12 +89,6 @@ impl fmt::Display for Did {
     }
 }
 
-impl Default for Did {
-    fn default() -> Self {
-        Did([0u8; 32])
-    }
-}
-
 impl From<[u8; 32]> for Did {
     fn from(bytes: [u8; 32]) -> Self {
         Did(bytes)
@@ -110,7 +114,7 @@ impl fmt::Display for DidParseError {
             Self::InvalidPrefix => write!(f, "DID must start with '{}'", Did::METHOD_PREFIX),
             Self::InvalidMultibase => write!(f, "expected multibase base58btc prefix 'z'"),
             Self::InvalidBase58 => write!(f, "invalid base58 encoding"),
-            Self::InvalidLength(len) => write!(f, "expected 32 bytes, got {}", len),
+            Self::InvalidLength(len) => write!(f, "expected 32 bytes, got {len}"),
         }
     }
 }
@@ -157,7 +161,7 @@ impl KeyRef {
 impl fmt::Display for KeyRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.as_str() {
-            Some(s) => write!(f, "{}", s),
+            Some(s) => write!(f, "{s}"),
             None => write!(f, "0x{}", hex::encode(&self.0)),
         }
     }
@@ -189,12 +193,6 @@ impl ContentId {
     }
 }
 
-impl Default for ContentId {
-    fn default() -> Self {
-        ContentId([0u8; 32])
-    }
-}
-
 impl From<[u8; 32]> for ContentId {
     fn from(bytes: [u8; 32]) -> Self {
         ContentId(bytes)
@@ -203,13 +201,28 @@ impl From<[u8; 32]> for ContentId {
 
 impl fmt::Display for ContentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "0x{}", hex::encode(&self.0))
+        write!(f, "0x{}", hex::encode(self.0))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const DID_ALICE: &str = "did:mosaic:zDmfekcjeeeZKwAgu5pAXS5ZxEZxmkCfKpTs7Upm2sjsN";
+
+    #[test]
+    fn did_alice_to_string() {
+        let did = Did::alice();
+        assert_eq!(&did.to_did_string(), DID_ALICE);
+    }
+
+    #[test]
+    fn did_alice_from_string() {
+        let did1 = Did::alice();
+        let did2 = Did::from_did_string(DID_ALICE).expect("constant known to parse correctly");
+        assert_eq!(did1, did2);
+    }
 
     #[test]
     fn did_from_public_key_deterministic() {
@@ -227,16 +240,6 @@ mod tests {
     }
 
     #[test]
-    fn did_string_roundtrip() {
-        let did = Did::from_public_key(b"test-public-key-ed25519-32bytes!");
-        let did_string = did.to_did_string();
-        assert!(did_string.starts_with("did:mosaic:z"));
-
-        let parsed = Did::from_did_string(&did_string).unwrap();
-        assert_eq!(did, parsed);
-    }
-
-    #[test]
     fn did_parse_invalid_prefix() {
         let err = Did::from_did_string("did:morpheus:z123").unwrap_err();
         assert_eq!(err, DidParseError::InvalidPrefix);
@@ -246,6 +249,12 @@ mod tests {
     fn did_parse_invalid_multibase() {
         let err = Did::from_did_string("did:mosaic:f123").unwrap_err();
         assert_eq!(err, DidParseError::InvalidMultibase);
+    }
+
+    #[test]
+    fn did_parse_invalid_length() {
+        let err = Did::from_did_string("did:mosaic:zqztJ6XX6GDxdSgdiySiT3J").unwrap_err();
+        assert!(matches!(err, DidParseError::InvalidLength(_)));
     }
 
     #[test]

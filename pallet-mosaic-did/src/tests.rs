@@ -152,7 +152,7 @@ mod unit_tests {
         }
 
         match &before_proof_op {
-            SsiOperation::BeforeProof(cid) => assert_ne!(*cid, ContentId::default()),
+            SsiOperation::BeforeProof(cid) => assert_ne!(*cid, ContentId([0u8; 32])),
             _ => panic!("Expected BeforeProof variant"),
         }
     }
@@ -164,6 +164,11 @@ mod unit_tests {
         use frame_support::BoundedVec;
         use frame_support::pallet_prelude::ConstU32;
         use mosaic_did_types::*;
+
+        fn some_did() -> Did {
+            Did::from_did_string("did:mosaic:zDmfekcjeeeZKwAgu5pAXS5ZxEZxmkCfKpTs7Upm2sjsN")
+                .expect("constant known to parse correctly")
+        }
 
         fn make_key_id(s: &str) -> BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>> {
             s.as_bytes().to_vec().try_into().unwrap()
@@ -192,7 +197,7 @@ mod unit_tests {
 
         #[test]
         fn new_state_is_empty() {
-            let state = OnChainDidState::new(Did::default());
+            let state = OnChainDidState::new(some_did());
             assert!(!state.exists());
             assert!(!state.is_tombstoned_at(0));
         }
@@ -208,7 +213,7 @@ mod unit_tests {
             let vm = OnChainVerificationMethod {
                 id: make_key_id("key-1"),
                 key_type: KeyType::Ed25519,
-                controller: Did::default(),
+                controller: some_did(),
                 public_key: vec![0u8; 32].try_into().unwrap(),
                 purposes: BoundedVec::default(),
                 added_at_height: 10,
@@ -228,7 +233,7 @@ mod unit_tests {
             let vm = OnChainVerificationMethod {
                 id: make_key_id("key-1"),
                 key_type: KeyType::Ed25519,
-                controller: Did::default(),
+                controller: some_did(),
                 public_key: vec![0u8; 32].try_into().unwrap(),
                 purposes: BoundedVec::default(),
                 added_at_height: 10,

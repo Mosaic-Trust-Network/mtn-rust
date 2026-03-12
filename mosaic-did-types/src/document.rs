@@ -329,7 +329,7 @@ fn key_type_to_w3c_string(key_type: KeyType) -> String {
 /// Encode a public key as multibase base58btc.
 fn multibase_encode_key(key_bytes: &[u8]) -> String {
     let encoded = bs58::encode(key_bytes).into_string();
-    alloc::format!("z{}", encoded)
+    alloc::format!("z{encoded}")
 }
 
 #[cfg(test)]
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn new_state_is_empty() {
-        let did = Did::default();
+        let did = Did::alice();
         let state = DidDocumentState::new(did);
         assert!(!state.exists());
         assert!(!state.is_tombstoned_at(0));
@@ -375,7 +375,7 @@ mod tests {
         let vm = VerificationMethod {
             id: KeyRef::from_str_id("key-1").unwrap(),
             key_type: KeyType::Ed25519,
-            controller: Did::default(),
+            controller: Did::alice(),
             public_key: vec![0u8; 32],
             purposes: vec![],
             added_at_height: 10,
@@ -395,7 +395,7 @@ mod tests {
         let vm = VerificationMethod {
             id: KeyRef::from_str_id("key-1").unwrap(),
             key_type: KeyType::Ed25519,
-            controller: Did::default(),
+            controller: Did::alice(),
             public_key: vec![0u8; 32],
             purposes: vec![],
             added_at_height: 10,

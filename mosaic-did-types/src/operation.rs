@@ -88,12 +88,6 @@ pub enum KeyType {
     X25519,
 }
 
-impl Default for KeyType {
-    fn default() -> Self {
-        KeyType::Ed25519
-    }
-}
-
 /// Key purposes per W3C DID Core verification relationships.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(
@@ -273,7 +267,7 @@ mod tests {
 
     #[test]
     fn operation_type_conversion() {
-        let did = Did::default();
+        let did = Did::alice();
         let key_id = KeyRef::from_str_id("key-1").unwrap();
 
         let ops = vec![
