@@ -11,19 +11,19 @@ repository.workspace = true
 [dependencies]
 blake3 = { version = "1", default-features = false }
 bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
-hex = { version = "0.4", default-features = false, features = ["alloc"] }
-serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
-serde_json = { version = "1", default-features = false, features = ["alloc"] }
+hex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # Substrate SCALE codec — optional, enabled with "substrate" feature
-parity-scale-codec = { version = "3", default-features = false, features = ["derive", "max-encoded-len"], optional = true }
-scale-info = { version = "2", default-features = false, features = ["derive"], optional = true }
+parity-scale-codec = { workspace = true, optional = true }
+scale-info = { workspace = true, optional = true }
 
 # IOP reuse (keyvault crypto is blockchain-agnostic)
 iop-keyvault.workspace = true
 
 [dev-dependencies]
-anyhow = "1"
+anyhow ={ workspace = true }
 
 [features]
 default = ["std"]

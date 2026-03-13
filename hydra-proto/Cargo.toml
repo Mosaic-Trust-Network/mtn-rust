@@ -32,5 +32,5 @@ varint = { workspace = true }
 
 
 [target.'cfg(target_os="android")'.dependencies]
-jni = { version = "0.21.1", default-features = false }
-android_logger = { version = "0.15.1" }
+jni = { workspace = true }
+android_logger = { workspace = true }
