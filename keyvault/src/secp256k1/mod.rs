@@ -78,7 +78,7 @@ impl Secp256k1 {
         let mut hasher = Sha256::default();
         hasher.update(data.as_ref());
         let mut hash = [0u8; secp::util::MESSAGE_SIZE];
-        hash.copy_from_slice( &hasher.finalize_fixed());
+        hash.copy_from_slice(&hasher.finalize_fixed());
         secp::Message::parse(&hash)
     }
 }

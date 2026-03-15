@@ -17,9 +17,52 @@ pub const KEY_ID_SALT: &[u8; 17] = b"open social graph";
 /// hash result, it is not a standard size.
 pub const KEY_ID_SIZE: usize = <HashSize as Unsigned>::USIZE + VERSION_SIZE;
 
-/// The serialized byte representation for the current version of the hash algorithm
+/// The serialized byte representation for the legacy morpheus non-multihash algorithm
 /// applied on the public key to obtain the key identifier
 pub const KEY_ID_VERSION1: u8 = b'\x01';
+
+/// A trait that makes it possible to use different hashing strategies for calculating key ids from public keys
+pub trait IdHasher {
+    /// A single-byte version prefix that will be prepended to the hash to discriminate it from other strategies
+    const VERSION_BYTE: u8;
+
+    /// The actual algorithm that hashes the public key bytes
+    fn hash(pk: &EdPublicKey) -> Vec<u8>;
+}
+
+type Blake2bMacVar = Blake2bMac<HashSize>;
+
+/// A hashing strategy used by legacy Morpheus, which is a salted Blake2b MAC using a non-standard version byte prefix
+pub struct LegacyV1;
+
+impl IdHasher for LegacyV1 {
+    // 128-bit Blake2bMac with a salt would still use 0xb210 in multihash, but our legacy code just used
+    // 0x01 as a version number
+    const VERSION_BYTE: u8 = KEY_ID_VERSION1;
+
+    fn hash(pk: &EdPublicKey) -> Vec<u8> {
+        let mut hasher = <Blake2bMacVar as KeyInit>::new_from_slice(KEY_ID_SALT)
+            .expect("KEY_ID_SALT is shorter than 512 bits for Blake2b512; qed");
+        hasher.update(&pk.to_bytes());
+        hasher.finalize().into_bytes().to_vec()
+        // let mut hash = [0u8; KEY_ID_SIZE];
+        // hash[0] = KEY_ID_VERSION1;
+        // hash[VERSION_SIZE..].clone_from_slice(&hasher.finalize().into_bytes());
+        // hash.into()
+    }
+}
+
+/// A hashing strategy using plain Blake3 and the standard multihash prefix
+pub struct Blake3;
+
+impl IdHasher for Blake3 {
+    const VERSION_BYTE: u8 = b'\x1e';
+
+    fn hash(pk: &EdPublicKey) -> Vec<u8> {
+        let hash = blake3::hash(&pk.to_bytes());
+        hash.as_slice().to_vec()
+    }
+}
 
 /// Implementation of Ed25519::KeyId
 #[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -49,12 +92,19 @@ impl EdKeyId {
         );
         Ok(Self(bytes.to_owned()))
     }
+
+    /// Creates a key id from a public key using a hashing strategy.
+    ///
+    /// Usage: `EdKeyId::from_pk::<Blake3>(pk)`
+    pub fn from_pk<H: IdHasher>(pk: &EdPublicKey) -> Self {
+        let mut hash = H::hash(pk);
+        hash.insert(0, H::VERSION_BYTE);
+        EdKeyId(hash)
+    }
 }
 
-type Blake2bMacVar = Blake2bMac<HashSize>;
-
 impl From<&EdPublicKey> for EdKeyId {
-    fn from(pk: &EdPublicKey) -> EdKeyId {
+    fn from(pk: &EdPublicKey) -> Self {
         let mut hasher = <Blake2bMacVar as KeyInit>::new_from_slice(KEY_ID_SALT)
             .expect("KEY_ID_SALT is shorter than 512 bits for Blake2b512; qed");
         hasher.update(&pk.to_bytes());

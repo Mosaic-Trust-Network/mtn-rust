@@ -54,6 +54,7 @@ pallet-mosaic-did = { version = "0.0.17" }
 android_logger = { version = "0.15.1" }
 anyhow = { version = "1.0.98" }
 blake2 = { version = "0.10.6" }
+blake3 = { version = "1", default-features = false }
 byteorder = { version = "1.5.0" }
 chrono = { version = "0.4.41", features = ["wasmbind"] }
 digest = { version = "0.10.7", features = ["mac"] }
