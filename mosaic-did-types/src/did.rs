@@ -167,7 +167,16 @@ impl fmt::Display for KeyRef {
     }
 }
 
-/// A 32-byte content identifier for BeforeProof (BLAKE3 hash of content).
+/// Content identifier for BeforeProof — discriminates hashing strategy.
+///
+/// Two hashing strategies exist in the ecosystem:
+/// - **ByteHash**: BLAKE3-256 of raw binary content (new, Mosaic-native).
+/// - **JsonDigest**: SHA3-256 Merkle-tree hash of structured JSON data
+///   (legacy Morpheus `cj`-prefix format). Enables selective disclosure
+///   of document subtrees — a property flat hashing cannot provide.
+///
+/// Both variants store a fixed 32-byte hash. The enum discriminant captures
+/// *how* the hash was produced, which determines verifiability semantics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[cfg_attr(
     feature = "substrate",
@@ -178,30 +187,57 @@ impl fmt::Display for KeyRef {
         scale_info::TypeInfo,
     )
 )]
-pub struct ContentId(pub [u8; 32]);
+pub enum ContentId {
+    /// BLAKE3-256 hash of raw binary content.
+    ByteHash([u8; 32]),
+    /// SHA3-256 json-digest Merkle-tree hash of structured JSON data.
+    /// Supports selective disclosure of document subtrees.
+    JsonDigest([u8; 32]),
+}
 
 impl ContentId {
     /// Compute a ContentId from arbitrary content bytes using BLAKE3.
     pub fn from_content(content: &[u8]) -> Self {
         let hash = blake3::hash(content);
-        ContentId(*hash.as_bytes())
+        ContentId::ByteHash(*hash.as_bytes())
     }
 
-    /// Return the raw 32-byte hash.
+    /// Create a ContentId from a pre-computed JSON-digest hash (SHA3-256).
+    pub fn from_json_digest_hash(hash: [u8; 32]) -> Self {
+        ContentId::JsonDigest(hash)
+    }
+
+    /// Return the raw 32-byte hash, regardless of hashing strategy.
     pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
+        match self {
+            ContentId::ByteHash(h) | ContentId::JsonDigest(h) => h,
+        }
+    }
+
+    /// Returns `true` if this content ID was produced by json-digest.
+    pub fn is_json_digest(&self) -> bool {
+        matches!(self, ContentId::JsonDigest(_))
+    }
+}
+
+impl Default for ContentId {
+    fn default() -> Self {
+        ContentId::ByteHash([0u8; 32])
     }
 }
 
 impl From<[u8; 32]> for ContentId {
     fn from(bytes: [u8; 32]) -> Self {
-        ContentId(bytes)
+        ContentId::ByteHash(bytes)
     }
 }
 
 impl fmt::Display for ContentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "0x{}", hex::encode(self.0))
+        match self {
+            ContentId::ByteHash(h) => write!(f, "0x{}", hex::encode(h)),
+            ContentId::JsonDigest(h) => write!(f, "cj:0x{}", hex::encode(h)),
+        }
     }
 }
 
@@ -263,9 +299,32 @@ mod tests {
         let cid1 = ContentId::from_content(content);
         let cid2 = ContentId::from_content(content);
         assert_eq!(cid1, cid2);
+        assert!(!cid1.is_json_digest());
 
         let cid3 = ContentId::from_content(b"Different content");
         assert_ne!(cid1, cid3);
+    }
+
+    #[test]
+    fn content_id_json_digest_variant() {
+        let hash = [0xABu8; 32];
+        let cid = ContentId::from_json_digest_hash(hash);
+        assert!(cid.is_json_digest());
+        assert_eq!(cid.as_bytes(), &hash);
+
+        // ByteHash and JsonDigest with same bytes are NOT equal (different variants)
+        let byte_cid = ContentId::ByteHash(hash);
+        assert_ne!(cid, byte_cid);
+    }
+
+    #[test]
+    fn content_id_display() {
+        let hash = [0x42u8; 32];
+        let byte_cid = ContentId::ByteHash(hash);
+        assert!(byte_cid.to_string().starts_with("0x"));
+
+        let json_cid = ContentId::JsonDigest(hash);
+        assert!(json_cid.to_string().starts_with("cj:0x"));
     }
 
     #[test]

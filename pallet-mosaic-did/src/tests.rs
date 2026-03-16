@@ -152,7 +152,7 @@ mod unit_tests {
         }
 
         match &before_proof_op {
-            SsiOperation::BeforeProof(cid) => assert_ne!(*cid, ContentId([0u8; 32])),
+            SsiOperation::BeforeProof(cid) => assert_ne!(*cid, ContentId::default()),
             _ => panic!("Expected BeforeProof variant"),
         }
     }
