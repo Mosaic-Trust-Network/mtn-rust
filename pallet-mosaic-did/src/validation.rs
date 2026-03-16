@@ -51,7 +51,7 @@ pub fn validate_did_operation<T: Config>(
                         Error::<T>::KeyAlreadyExists
                     );
                     // Verify signature against signer's key resolved from state
-                    validate_signature_from_state::<T>(signed_op, state)?;
+                    validate_signature_from_state::<T>(signed_op, state, height_u32)?;
                 }
                 None => {
                     // Implicit DID creation: DID must equal BLAKE3-256(public_key)
@@ -72,7 +72,7 @@ pub fn validate_did_operation<T: Config>(
                 state.has_right_at(signed_op.signer_key_id.as_bytes(), Right::Update, height_u32,),
                 Error::<T>::InsufficientRight
             );
-            validate_signature_from_state::<T>(signed_op, state)?;
+            validate_signature_from_state::<T>(signed_op, state, height_u32)?;
         }
 
         DidOperation::AddRight { .. } => {
@@ -84,7 +84,7 @@ pub fn validate_did_operation<T: Config>(
                     .has_right_at(signed_op.signer_key_id.as_bytes(), Right::Delegate, height_u32,),
                 Error::<T>::InsufficientRight
             );
-            validate_signature_from_state::<T>(signed_op, state)?;
+            validate_signature_from_state::<T>(signed_op, state, height_u32)?;
         }
 
         DidOperation::RevokeRight { .. } => {
@@ -96,7 +96,7 @@ pub fn validate_did_operation<T: Config>(
                     .has_right_at(signed_op.signer_key_id.as_bytes(), Right::Delegate, height_u32,),
                 Error::<T>::InsufficientRight
             );
-            validate_signature_from_state::<T>(signed_op, state)?;
+            validate_signature_from_state::<T>(signed_op, state, height_u32)?;
         }
 
         DidOperation::TombstoneDid { .. } => {
@@ -107,7 +107,7 @@ pub fn validate_did_operation<T: Config>(
                 state.has_right_at(signed_op.signer_key_id.as_bytes(), Right::Update, height_u32,),
                 Error::<T>::InsufficientRight
             );
-            validate_signature_from_state::<T>(signed_op, state)?;
+            validate_signature_from_state::<T>(signed_op, state, height_u32)?;
         }
     }
 
@@ -135,12 +135,16 @@ fn signable_payload(signed_op: &SignedDidOperation) -> Vec<u8> {
 ///
 /// This binds the claimed `signer_key_id` to an actual public key stored on-chain,
 /// then verifies the signature was produced by the corresponding private key.
+/// Rejects revoked or expired keys — a revoked key is cryptographically dead.
 fn validate_signature_from_state<T: Config>(
-    signed_op: &SignedDidOperation, state: &OnChainDidState,
+    signed_op: &SignedDidOperation, state: &OnChainDidState, height: u32,
 ) -> Result<(), sp_runtime::DispatchError> {
     // Resolve the signer's verification method from on-chain state
     let signer_key =
         state.find_key(signed_op.signer_key_id.as_bytes()).ok_or(Error::<T>::KeyNotFound)?;
+
+    // A revoked or expired key MUST NOT be accepted for signing operations.
+    ensure!(signer_key.is_valid_at(height), Error::<T>::SignerKeyInvalid);
 
     // Construct the typed public key from stored key_type + raw bytes
     let public_key =

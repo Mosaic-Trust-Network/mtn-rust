@@ -149,6 +149,8 @@ pub mod pallet {
         InvalidNonce,
         /// The key being revoked does not exist.
         KeyNotFound,
+        /// The signer's key has been revoked or has expired.
+        SignerKeyInvalid,
         /// The key already exists.
         KeyAlreadyExists,
         /// The right is already granted.

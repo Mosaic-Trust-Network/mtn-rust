@@ -172,6 +172,9 @@ impl OnChainDidState {
     }
 
     /// Check if a key has a specific right at the given height.
+    ///
+    /// Both the key itself and the right grant must be valid at the given height.
+    /// A revoked or expired key has no rights, even if the grant is still active.
     pub fn has_right_at(&self, key_id_bytes: &[u8], right: Right, height: u32) -> bool {
         // The initial key (first key added) implicitly has Update, Impersonate, and
         // Delegate rights. Delegate is required to bootstrap the rights system (grant
@@ -185,9 +188,19 @@ impl OnChainDidState {
             }
         }
 
-        self.rights.iter().any(|rg| {
-            rg.key_id.as_slice() == key_id_bytes && rg.right == right && rg.is_active_at(height)
-        })
+        // For explicit rights: the key must be valid AND the grant must be active.
+        // A revoked/expired key is cryptographically dead — no rights survive revocation.
+        let key_valid = self
+            .keys
+            .iter()
+            .any(|k| k.id.as_slice() == key_id_bytes && k.is_valid_at(height));
+
+        key_valid
+            && self.rights.iter().any(|rg| {
+                rg.key_id.as_slice() == key_id_bytes
+                    && rg.right == right
+                    && rg.is_active_at(height)
+            })
     }
 
     /// Get the current nonce for a key.
