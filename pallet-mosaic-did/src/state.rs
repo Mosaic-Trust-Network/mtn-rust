@@ -190,16 +190,12 @@ impl OnChainDidState {
 
         // For explicit rights: the key must be valid AND the grant must be active.
         // A revoked/expired key is cryptographically dead — no rights survive revocation.
-        let key_valid = self
-            .keys
-            .iter()
-            .any(|k| k.id.as_slice() == key_id_bytes && k.is_valid_at(height));
+        let key_valid =
+            self.keys.iter().any(|k| k.id.as_slice() == key_id_bytes && k.is_valid_at(height));
 
         key_valid
             && self.rights.iter().any(|rg| {
-                rg.key_id.as_slice() == key_id_bytes
-                    && rg.right == right
-                    && rg.is_active_at(height)
+                rg.key_id.as_slice() == key_id_bytes && rg.right == right && rg.is_active_at(height)
             })
     }
 
