@@ -17,6 +17,8 @@ test:cargo:
     - du -hs target || true
     - du -hs cargo || true
     - rustc --version && cargo --version # Print version info for debugging
+    - curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+    - cargo binstall --no-discover-github-token --disable-telemetry -y cargo-deny
     - export RUST_BACKTRACE=1
     - time cargo update
     - time cargo deny check
