@@ -9,19 +9,19 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
-use serde::{Deserialize, Serialize};
+use bounded_collections::{BoundedVec, ConstU32};
+use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
+use scale_info::TypeInfo;
+
+/// Maximum key ID size in bytes.
+pub const MAX_KEY_ID_LEN: u32 = 64;
 
 /// A 32-byte Mosaic DID identifier, derived as `BLAKE3-256(initial_public_key)`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(
-        parity_scale_codec::Encode,
-        parity_scale_codec::Decode,
-        parity_scale_codec::MaxEncodedLen,
-        scale_info::TypeInfo,
-    )
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode, MaxEncodedLen,
+    TypeInfo,
 )]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Did(pub [u8; 32]);
 
 #[cfg(test)]
@@ -122,24 +122,17 @@ impl fmt::Display for DidParseError {
 /// Key identifier within a DID document.
 ///
 /// References a specific verification method, e.g. `"key-1"`, `"key-recovery"`.
-/// Stored as raw bytes with a maximum length of 64.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo,)
-)]
-pub struct KeyRef(Vec<u8>);
+/// Stored as bounded bytes with a maximum length of 64.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct KeyRef(BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>>);
 
 impl KeyRef {
-    /// Maximum length of a key identifier in bytes.
-    pub const MAX_LEN: usize = 64;
-
     /// Create a new KeyRef from bytes.
     pub fn new(bytes: Vec<u8>) -> Result<Self, &'static str> {
-        if bytes.len() > Self::MAX_LEN {
-            return Err("KeyRef exceeds maximum length of 64 bytes");
-        }
-        Ok(KeyRef(bytes))
+        let bounded = BoundedVec::try_from(bytes)
+            .map_err(|_| "KeyRef exceeds maximum length of 64 bytes")?;
+        Ok(KeyRef(bounded))
     }
 
     /// Create a KeyRef from a string identifier (e.g. "key-1").
@@ -149,12 +142,37 @@ impl KeyRef {
 
     /// Return the raw bytes.
     pub fn as_bytes(&self) -> &[u8] {
-        &self.0
+        self.0.as_slice()
     }
 
     /// Return as a UTF-8 string if valid.
     pub fn as_str(&self) -> Option<&str> {
-        core::str::from_utf8(&self.0).ok()
+        core::str::from_utf8(self.0.as_slice()).ok()
+    }
+
+    /// Access the inner BoundedVec directly.
+    pub fn as_bounded(&self) -> &BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>> {
+        &self.0
+    }
+}
+
+// Manual impls for traits that BoundedVec may not derive.
+
+impl PartialOrd for KeyRef {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for KeyRef {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.as_bytes().cmp(other.as_bytes())
+    }
+}
+
+impl core::hash::Hash for KeyRef {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.as_bytes().hash(state);
     }
 }
 
@@ -162,31 +180,26 @@ impl fmt::Display for KeyRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.as_str() {
             Some(s) => write!(f, "{s}"),
-            None => write!(f, "0x{}", hex::encode(&self.0)),
+            None => write!(f, "0x{}", hex::encode(self.as_bytes())),
         }
     }
 }
 
-/// Content identifier for BeforeProof — discriminates hashing strategy.
+/// Content identifier for BeforeProof -- discriminates hashing strategy.
 ///
 /// Two hashing strategies exist in the ecosystem:
 /// - **ByteHash**: BLAKE3-256 of raw binary content (new, Mosaic-native).
 /// - **JsonDigest**: SHA3-256 Merkle-tree hash of structured JSON data
 ///   (legacy Morpheus `cj`-prefix format). Enables selective disclosure
-///   of document subtrees — a property flat hashing cannot provide.
+///   of document subtrees -- a property flat hashing cannot provide.
 ///
 /// Both variants store a fixed 32-byte hash. The enum discriminant captures
 /// *how* the hash was produced, which determines verifiability semantics.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(
-        parity_scale_codec::Encode,
-        parity_scale_codec::Decode,
-        parity_scale_codec::MaxEncodedLen,
-        scale_info::TypeInfo,
-    )
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode, MaxEncodedLen,
+    TypeInfo,
 )]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ContentId {
     /// BLAKE3-256 hash of raw binary content.
     ByteHash([u8; 32]),

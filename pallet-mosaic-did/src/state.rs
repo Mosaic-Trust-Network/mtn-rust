@@ -1,6 +1,18 @@
-//! On-chain DID document state types.
+//! On-chain DID state types and re-exports.
 //!
-//! Re-exports the canonical bounded types from `mosaic-did-types::on_chain`.
-//! The types crate owns the definitions; the pallet just stores them.
+//! Re-exports the canonical types from `mosaic-did-types`.
+//! `BeforeProofRecord` is defined locally as it's pallet-specific.
 
-pub use mosaic_did_types::on_chain::*;
+use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
+use scale_info::TypeInfo;
+
+pub use mosaic_did_types::document::*;
+
+/// Record stored on-chain for a registered BeforeProof.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
+pub struct BeforeProofRecord {
+    /// Block height at which the proof was registered.
+    pub block_height: u32,
+    /// Index of the extrinsic within the block.
+    pub extrinsic_index: u32,
+}

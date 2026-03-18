@@ -46,8 +46,10 @@ mod unit_tests {
             did,
             key_id,
             key_type: KeyType::Ed25519,
-            public_key: pk.to_vec(),
-            purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod],
+            public_key: pk.to_vec().try_into().unwrap(),
+            purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
+                .try_into()
+                .unwrap(),
             expires_at_height: None,
         };
 
@@ -110,8 +112,8 @@ mod unit_tests {
                 did,
                 key_id: key_id.clone(),
                 key_type: KeyType::Ed25519,
-                public_key: pk.to_vec(),
-                purposes: vec![KeyPurpose::Authentication],
+                public_key: pk.to_vec().try_into().unwrap(),
+                purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
                 expires_at_height: None,
             },
             signer_key_id: key_id,
@@ -134,8 +136,8 @@ mod unit_tests {
                 did,
                 key_id: key_id.clone(),
                 key_type: KeyType::Ed25519,
-                public_key: pk.to_vec(),
-                purposes: vec![KeyPurpose::Authentication],
+                public_key: pk.to_vec().try_into().unwrap(),
+                purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
                 expires_at_height: None,
             },
             signer_key_id: key_id,
@@ -157,12 +159,11 @@ mod unit_tests {
         }
     }
 
-    // ===== On-chain state tests (using OnChainDidState directly) =====
+    // ===== State tests (using DidState directly) =====
 
-    mod on_chain_state_tests {
+    mod state_tests {
         use crate::state::*;
         use frame_support::BoundedVec;
-        use frame_support::pallet_prelude::ConstU32;
         use mosaic_did_types::*;
 
         fn some_did() -> Did {
@@ -170,17 +171,13 @@ mod unit_tests {
                 .expect("constant known to parse correctly")
         }
 
-        fn make_key_id(s: &str) -> BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>> {
-            s.as_bytes().to_vec().try_into().unwrap()
-        }
-
-        fn make_test_state() -> OnChainDidState {
+        fn make_test_state() -> DidState {
             let pk = b"ed25519-public-key-32-bytes-long";
             let did = Did::from_public_key(pk);
-            let mut state = OnChainDidState::new(did);
+            let mut state = DidState::new(did);
 
-            let vm = OnChainVerificationMethod {
-                id: make_key_id("key-1"),
+            let vm = VerificationMethod {
+                id: KeyRef::from_str_id("key-1").unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: did,
                 public_key: pk.to_vec().try_into().unwrap(),
@@ -197,7 +194,7 @@ mod unit_tests {
 
         #[test]
         fn new_state_is_empty() {
-            let state = OnChainDidState::new(some_did());
+            let state = DidState::new(some_did());
             assert!(!state.exists());
             assert!(!state.is_tombstoned_at(0));
         }
@@ -210,8 +207,8 @@ mod unit_tests {
 
         #[test]
         fn key_validity_at_height() {
-            let vm = OnChainVerificationMethod {
-                id: make_key_id("key-1"),
+            let vm = VerificationMethod {
+                id: KeyRef::from_str_id("key-1").unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: some_did(),
                 public_key: vec![0u8; 32].try_into().unwrap(),
@@ -230,8 +227,8 @@ mod unit_tests {
 
         #[test]
         fn key_revoked_at_height() {
-            let vm = OnChainVerificationMethod {
-                id: make_key_id("key-1"),
+            let vm = VerificationMethod {
+                id: KeyRef::from_str_id("key-1").unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: some_did(),
                 public_key: vec![0u8; 32].try_into().unwrap(),
@@ -259,22 +256,21 @@ mod unit_tests {
         #[test]
         fn initial_key_has_implicit_rights() {
             let state = make_test_state();
-            let key_id = b"key-1";
+            let key_id = KeyRef::from_str_id("key-1").unwrap();
 
-            assert!(state.has_right_at(key_id, Right::Update, 1));
-            assert!(state.has_right_at(key_id, Right::Impersonate, 1));
-            assert!(state.has_right_at(key_id, Right::Delegate, 1));
-            assert!(!state.has_right_at(key_id, Right::Issue, 1));
+            assert!(state.has_right_at(&key_id, Right::Update, 1));
+            assert!(state.has_right_at(&key_id, Right::Impersonate, 1));
+            assert!(state.has_right_at(&key_id, Right::Delegate, 1));
+            assert!(!state.has_right_at(&key_id, Right::Issue, 1));
         }
 
         #[test]
         fn explicit_right_grant() {
             let mut state = make_test_state();
-            let key_id_bytes = make_key_id("key-1");
+            let key_id = KeyRef::from_str_id("key-1").unwrap();
 
-            // Test with Issue right (not implicit, so we can verify grant timing)
-            let grant = OnChainRightGrant {
-                key_id: key_id_bytes,
+            let grant = RightGrant {
+                key_id: key_id.clone(),
                 right: Right::Issue,
                 granted_at_height: 10,
                 expires_at_height: Some(100),
@@ -282,29 +278,31 @@ mod unit_tests {
             };
             state.rights.try_push(grant).unwrap();
 
-            assert!(!state.has_right_at(b"key-1", Right::Issue, 9));
-            assert!(state.has_right_at(b"key-1", Right::Issue, 10));
-            assert!(state.has_right_at(b"key-1", Right::Issue, 99));
-            assert!(!state.has_right_at(b"key-1", Right::Issue, 100));
+            assert!(!state.has_right_at(&key_id, Right::Issue, 9));
+            assert!(state.has_right_at(&key_id, Right::Issue, 10));
+            assert!(state.has_right_at(&key_id, Right::Issue, 99));
+            assert!(!state.has_right_at(&key_id, Right::Issue, 100));
         }
 
         #[test]
         fn nonce_management() {
             let state = make_test_state();
-            assert_eq!(state.nonce_for_key(b"key-1"), 0);
-            assert_eq!(state.nonce_for_key(b"key-nonexistent"), 0);
+            let key_id = KeyRef::from_str_id("key-1").unwrap();
+            let unknown = KeyRef::from_str_id("key-nonexistent").unwrap();
+            assert_eq!(state.nonce_for_key(&key_id), 0);
+            assert_eq!(state.nonce_for_key(&unknown), 0);
         }
 
         #[test]
         fn key_rotation_flow() {
             let did = Did::from_public_key(b"rotation-test-key-32-bytes!!!!!!");
-            let mut state = OnChainDidState::new(did);
+            let mut state = DidState::new(did);
 
             // Add old key at height 1
             state
                 .keys
-                .try_push(OnChainVerificationMethod {
-                    id: make_key_id("key-old"),
+                .try_push(VerificationMethod {
+                    id: KeyRef::from_str_id("key-old").unwrap(),
                     key_type: KeyType::Ed25519,
                     controller: did,
                     public_key: vec![1u8; 32].try_into().unwrap(),
@@ -320,8 +318,8 @@ mod unit_tests {
             // Add new key at height 50
             state
                 .keys
-                .try_push(OnChainVerificationMethod {
-                    id: make_key_id("key-new"),
+                .try_push(VerificationMethod {
+                    id: KeyRef::from_str_id("key-new").unwrap(),
                     key_type: KeyType::Ed25519,
                     controller: did,
                     public_key: vec![2u8; 32].try_into().unwrap(),
@@ -339,11 +337,11 @@ mod unit_tests {
 
             // Before rotation: only old key valid
             assert_eq!(state.valid_keys_at(49).len(), 1);
-            assert_eq!(state.valid_keys_at(49)[0].id.as_slice(), b"key-old");
+            assert_eq!(state.valid_keys_at(49)[0].id.as_bytes(), b"key-old");
 
             // After rotation: only new key valid
             assert_eq!(state.valid_keys_at(50).len(), 1);
-            assert_eq!(state.valid_keys_at(50)[0].id.as_slice(), b"key-new");
+            assert_eq!(state.valid_keys_at(50)[0].id.as_bytes(), b"key-new");
         }
     }
 
@@ -358,8 +356,10 @@ mod unit_tests {
                 did: signer_did,
                 key_id: key_id.clone(),
                 key_type: KeyType::Ed25519,
-                public_key: signer_pk.to_vec(),
-                purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod],
+                public_key: signer_pk.to_vec().try_into().unwrap(),
+                purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
+                    .try_into()
+                    .unwrap(),
                 expires_at_height: None,
             },
             signer_key_id: key_id,

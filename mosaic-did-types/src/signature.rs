@@ -5,7 +5,8 @@
 
 use alloc::vec::Vec;
 
-use serde::{Deserialize, Serialize};
+use parity_scale_codec::{Decode, Encode};
+use scale_info::TypeInfo;
 
 use crate::operation::KeyType;
 
@@ -15,12 +16,9 @@ use crate::operation::KeyType;
 /// post-quantum algorithms (e.g., Dilithium) without breaking changes.
 ///
 /// Signatures are stored as `Vec<u8>` with runtime length validation
-/// to support serde across all array sizes.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
-)]
+/// to support variable-length algorithm outputs.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MultiSignature {
     /// Ed25519 signature (64 bytes).
     Ed25519(Vec<u8>),
@@ -72,11 +70,8 @@ impl MultiSignature {
 /// Multi-algorithm public key for verification.
 ///
 /// Public keys are stored as `Vec<u8>` with runtime length validation.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
-)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Encode, Decode, TypeInfo)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum MultiPublicKey {
     /// Ed25519 public key (32 bytes).
     Ed25519(Vec<u8>),

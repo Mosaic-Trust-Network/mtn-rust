@@ -13,10 +13,9 @@ use frame_support::ensure;
 use parity_scale_codec::Encode;
 use sp_std::vec::Vec;
 
-use mosaic_did_types::{Did, DidOperation, KeyType, MultiPublicKey, Right, SignedDidOperation};
+use mosaic_did_types::{Did, DidOperation, DidState, KeyType, MultiPublicKey, Right, SignedDidOperation};
 
 use crate::pallet::{Config, DidStates, Error};
-use crate::state::OnChainDidState;
 
 /// Validate a signed DID operation before applying it.
 ///
@@ -39,7 +38,7 @@ pub fn validate_did_operation<T: Config>(
                     validate_nonce::<T>(state, signed_op)?;
                     ensure!(
                         state.has_right_at(
-                            signed_op.signer_key_id.as_bytes(),
+                            &signed_op.signer_key_id,
                             Right::Update,
                             height_u32,
                         ),
@@ -47,7 +46,7 @@ pub fn validate_did_operation<T: Config>(
                     );
                     // Reject duplicate key IDs
                     ensure!(
-                        state.find_key(key_id.as_bytes()).is_none(),
+                        state.find_key(key_id).is_none(),
                         Error::<T>::KeyAlreadyExists
                     );
                     // Verify signature against signer's key resolved from state
@@ -69,7 +68,7 @@ pub fn validate_did_operation<T: Config>(
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
             ensure!(
-                state.has_right_at(signed_op.signer_key_id.as_bytes(), Right::Update, height_u32,),
+                state.has_right_at(&signed_op.signer_key_id, Right::Update, height_u32),
                 Error::<T>::InsufficientRight
             );
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
@@ -80,8 +79,7 @@ pub fn validate_did_operation<T: Config>(
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
             ensure!(
-                state
-                    .has_right_at(signed_op.signer_key_id.as_bytes(), Right::Delegate, height_u32,),
+                state.has_right_at(&signed_op.signer_key_id, Right::Delegate, height_u32),
                 Error::<T>::InsufficientRight
             );
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
@@ -92,8 +90,7 @@ pub fn validate_did_operation<T: Config>(
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
             ensure!(
-                state
-                    .has_right_at(signed_op.signer_key_id.as_bytes(), Right::Delegate, height_u32,),
+                state.has_right_at(&signed_op.signer_key_id, Right::Delegate, height_u32),
                 Error::<T>::InsufficientRight
             );
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
@@ -104,7 +101,7 @@ pub fn validate_did_operation<T: Config>(
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
             ensure!(
-                state.has_right_at(signed_op.signer_key_id.as_bytes(), Right::Update, height_u32,),
+                state.has_right_at(&signed_op.signer_key_id, Right::Update, height_u32),
                 Error::<T>::InsufficientRight
             );
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
@@ -116,9 +113,9 @@ pub fn validate_did_operation<T: Config>(
 
 /// Validate nonce is strictly greater than stored nonce (replay protection).
 fn validate_nonce<T: Config>(
-    state: &OnChainDidState, signed_op: &SignedDidOperation,
+    state: &DidState, signed_op: &SignedDidOperation,
 ) -> Result<(), sp_runtime::DispatchError> {
-    let stored_nonce = state.nonce_for_key(signed_op.signer_key_id.as_bytes());
+    let stored_nonce = state.nonce_for_key(&signed_op.signer_key_id);
     ensure!(signed_op.nonce > stored_nonce, Error::<T>::InvalidNonce);
     Ok(())
 }
@@ -137,11 +134,11 @@ fn signable_payload(signed_op: &SignedDidOperation) -> Vec<u8> {
 /// then verifies the signature was produced by the corresponding private key.
 /// Rejects revoked or expired keys — a revoked key is cryptographically dead.
 fn validate_signature_from_state<T: Config>(
-    signed_op: &SignedDidOperation, state: &OnChainDidState, height: u32,
+    signed_op: &SignedDidOperation, state: &DidState, height: u32,
 ) -> Result<(), sp_runtime::DispatchError> {
     // Resolve the signer's verification method from on-chain state
     let signer_key =
-        state.find_key(signed_op.signer_key_id.as_bytes()).ok_or(Error::<T>::KeyNotFound)?;
+        state.find_key(&signed_op.signer_key_id).ok_or(Error::<T>::KeyNotFound)?;
 
     // A revoked or expired key MUST NOT be accepted for signing operations.
     ensure!(signer_key.is_valid_at(height), Error::<T>::SignerKeyInvalid);

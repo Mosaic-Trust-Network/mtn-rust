@@ -3,27 +3,24 @@
 //! All SSI state changes flow through signed operations submitted in atomic batches.
 //! Phase 1 (MVP) implements the 5 core DID operations + BeforeProof.
 
-use alloc::vec::Vec;
-
-use serde::{Deserialize, Serialize};
+use bounded_collections::{BoundedVec, ConstU32};
+use parity_scale_codec::{Decode, Encode};
+use scale_info::TypeInfo;
 
 use crate::did::{ContentId, Did, KeyRef};
 use crate::signature::MultiSignature;
+
+/// Maximum public key size in bytes.
+pub const MAX_PUBLIC_KEY_LEN: u32 = 64;
+/// Maximum number of key purposes per verification method.
+pub const MAX_PURPOSES_PER_KEY: u32 = 5;
 
 /// Rights that can be assigned to keys in a DID Document.
 ///
 /// The rights model extends IOP Morpheus (Update, Impersonate) with
 /// additional capabilities for enterprise and compliance use cases.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(
-        parity_scale_codec::Encode,
-        parity_scale_codec::Decode,
-        parity_scale_codec::MaxEncodedLen,
-        scale_info::TypeInfo
-    )
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Encode, Decode, parity_scale_codec::MaxEncodedLen, TypeInfo)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Right {
     /// Can modify the DID Document (add/revoke keys, rights).
     Update,
@@ -67,38 +64,22 @@ impl core::fmt::Display for Right {
 }
 
 /// Supported key types for verification methods.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(
-        parity_scale_codec::Encode,
-        parity_scale_codec::Decode,
-        parity_scale_codec::MaxEncodedLen,
-        scale_info::TypeInfo
-    )
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Encode, Decode, parity_scale_codec::MaxEncodedLen, TypeInfo)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum KeyType {
-    /// Ed25519 — default, required.
+    /// Ed25519 -- default, required.
     Ed25519,
-    /// secp256k1 — Ethereum compatibility.
+    /// secp256k1 -- Ethereum compatibility.
     Secp256k1,
-    /// secp256r1 (P-256) — HSM compatibility (Phase 2).
+    /// secp256r1 (P-256) -- HSM compatibility (Phase 2).
     Secp256r1,
-    /// X25519 — key agreement only (Phase 2).
+    /// X25519 -- key agreement only (Phase 2).
     X25519,
 }
 
 /// Key purposes per W3C DID Core verification relationships.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(
-        parity_scale_codec::Encode,
-        parity_scale_codec::Decode,
-        parity_scale_codec::MaxEncodedLen,
-        scale_info::TypeInfo
-    )
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Encode, Decode, parity_scale_codec::MaxEncodedLen, TypeInfo)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum KeyPurpose {
     /// Prove control of DID (login, challenge-response).
     Authentication,
@@ -116,11 +97,8 @@ pub enum KeyPurpose {
 ///
 /// All operations are submitted inside `SignedOperation` bundles within an
 /// atomic `submit_did_operations` batch.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
-)]
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DidOperation {
     /// Add a new key to the DID document.
     ///
@@ -130,8 +108,8 @@ pub enum DidOperation {
         did: Did,
         key_id: KeyRef,
         key_type: KeyType,
-        public_key: Vec<u8>,
-        purposes: Vec<KeyPurpose>,
+        public_key: BoundedVec<u8, ConstU32<MAX_PUBLIC_KEY_LEN>>,
+        purposes: BoundedVec<KeyPurpose, ConstU32<MAX_PURPOSES_PER_KEY>>,
         /// Optional block height at which this key expires.
         expires_at_height: Option<u32>,
     },
@@ -185,11 +163,8 @@ impl DidOperation {
 }
 
 /// A top-level SSI operation: either a DID operation or a BeforeProof timestamp.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
-)]
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SsiOperation {
     /// A signed DID document operation.
     Did(SignedDidOperation),
@@ -201,11 +176,8 @@ pub enum SsiOperation {
 ///
 /// The signature proves the signer has authority over the operation.
 /// The nonce provides replay protection.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
-)]
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SignedDidOperation {
     /// The DID operation to execute.
     pub operation: DidOperation,
@@ -218,11 +190,8 @@ pub struct SignedDidOperation {
 }
 
 /// Type of DID operation (for events, without carrying full data).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
-)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum DidOperationType {
     AddKey,
     RevokeKey,
@@ -256,8 +225,10 @@ mod tests {
             did,
             key_id,
             key_type: KeyType::Ed25519,
-            public_key: b"test-key".to_vec(),
-            purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod],
+            public_key: b"test-key".to_vec().try_into().unwrap(),
+            purposes: alloc::vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
+                .try_into()
+                .unwrap(),
             expires_at_height: None,
         };
 
@@ -270,13 +241,13 @@ mod tests {
         let did = Did::alice();
         let key_id = KeyRef::from_str_id("key-1").unwrap();
 
-        let ops = vec![
+        let ops = alloc::vec![
             DidOperation::AddKey {
                 did,
                 key_id: key_id.clone(),
                 key_type: KeyType::Ed25519,
-                public_key: vec![],
-                purposes: vec![],
+                public_key: BoundedVec::default(),
+                purposes: BoundedVec::default(),
                 expires_at_height: None,
             },
             DidOperation::RevokeKey { did, key_id: key_id.clone() },
@@ -293,7 +264,7 @@ mod tests {
         let types: Vec<DidOperationType> = ops.iter().map(DidOperationType::from).collect();
         assert_eq!(
             types,
-            vec![
+            alloc::vec![
                 DidOperationType::AddKey,
                 DidOperationType::RevokeKey,
                 DidOperationType::AddRight,

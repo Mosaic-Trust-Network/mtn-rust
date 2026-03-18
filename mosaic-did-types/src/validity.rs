@@ -1,8 +1,7 @@
 //! Shared validity window logic for DID document elements.
 //!
-//! Both off-chain (`VerificationMethod`, `RightGrant`) and on-chain
-//! (`OnChainVerificationMethod`, `OnChainRightGrant`) types delegate
-//! their temporal validity checks to this single implementation.
+//! `VerificationMethod` and `RightGrant` delegate their temporal
+//! validity checks to this single implementation.
 
 /// Check whether a block `height` falls within an active validity window.
 ///

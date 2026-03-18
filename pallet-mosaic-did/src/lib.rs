@@ -5,7 +5,7 @@
 //!
 //! ## Architecture (v2 — Materialized State)
 //!
-//! DID document state is stored directly on-chain using `OnChainDidState`.
+//! DID document state is stored directly on-chain using `DidState`.
 //! No event-log replay is needed for validation — the pallet reads and
 //! mutates state in-place. Events carry full operation payloads for
 //! off-chain indexers to reconstruct history.
@@ -32,15 +32,11 @@ pub mod pallet {
     use sp_std::vec::Vec;
 
     use mosaic_did_types::{
-        ContentId, Did, DidOperation, KeyPurpose, KeyType, Right, SignedDidOperation,
-        SsiOperation,
+        ContentId, Did, DidOperation, DidState, KeyPurpose, KeyType, Right, RightGrant,
+        SignedDidOperation, SsiOperation, VerificationMethod,
     };
 
-    use mosaic_did_types::on_chain::{
-        key_ref_to_bounded, BeforeProofRecord, BoundedKeyId, MAX_PUBLIC_KEY_LEN,
-        MAX_PURPOSES_PER_KEY, OnChainDidState, OnChainRightGrant, OnChainVerificationMethod,
-    };
-
+    use crate::state::BeforeProofRecord;
     use crate::validation;
 
     #[pallet::config]
@@ -82,7 +78,7 @@ pub mod pallet {
     #[pallet::storage]
     #[pallet::getter(fn did_state)]
     pub type DidStates<T: Config> =
-        StorageMap<_, Blake2_128Concat, Did, OnChainDidState, OptionQuery>;
+        StorageMap<_, Blake2_128Concat, Did, DidState, OptionQuery>;
 
     /// BeforeProof timestamps.
     #[pallet::storage]
@@ -235,19 +231,13 @@ pub mod pallet {
     // ========== INTERNAL METHODS ==========
 
     impl<T: Config> Pallet<T> {
-        /// Apply a single signed DID operation by mutating `OnChainDidState` in place.
+        /// Apply a single signed DID operation by mutating `DidState` in place.
         ///
-        /// The signer's key ID is converted to `BoundedKeyId` once and threaded
-        /// through to nonce updates -- no repeated `KeyRef -> BoundedVec` conversions.
+        /// Types are already bounded — no conversion needed at the pallet boundary.
         fn apply_did_operation(
             signed_op: &SignedDidOperation, height_u32: u32, block_height: BlockNumberFor<T>,
         ) -> DispatchResult {
             let did = *signed_op.operation.did();
-
-            // Convert signer key ID once -- reused for nonce update in every branch.
-            let signer_bounded: BoundedKeyId =
-                key_ref_to_bounded(&signed_op.signer_key_id)
-                    .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
 
             match &signed_op.operation {
                 DidOperation::AddKey {
@@ -258,38 +248,27 @@ pub mod pallet {
                     purposes,
                     expires_at_height,
                 } => {
-                    let key_id_bounded: BoundedKeyId =
-                        key_ref_to_bounded(key_id)
-                            .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
-                    let pk_bytes: BoundedVec<u8, ConstU32<MAX_PUBLIC_KEY_LEN>> =
-                        public_key.clone().try_into().map_err(|_| Error::<T>::InvalidPublicKey)?;
-                    let bounded_purposes: BoundedVec<KeyPurpose, ConstU32<MAX_PURPOSES_PER_KEY>> =
-                        purposes
-                            .clone()
-                            .try_into()
-                            .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
-
-                    let vm = OnChainVerificationMethod {
-                        id: key_id_bounded,
+                    let vm = VerificationMethod {
+                        id: key_id.clone(),
                         key_type: *key_type,
                         controller: did,
-                        public_key: pk_bytes,
-                        purposes: bounded_purposes,
+                        public_key: public_key.clone(),
+                        purposes: purposes.clone(),
                         added_at_height: height_u32,
                         expires_at_height: *expires_at_height,
                         revoked_at_height: None,
                     };
 
                     DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
-                        let state = maybe_state.get_or_insert_with(|| OnChainDidState::new(did));
+                        let state = maybe_state.get_or_insert_with(|| DidState::new(did));
 
                         ensure!(
-                            state.find_key(key_id.as_bytes()).is_none(),
+                            state.find_key(key_id).is_none(),
                             Error::<T>::KeyAlreadyExists
                         );
 
                         state.keys.try_push(vm).map_err(|_| Error::<T>::StorageBoundsExceeded)?;
-                        state.update_nonce(&signer_bounded, signed_op.nonce)
+                        state.update_nonce(&signed_op.signer_key_id, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;
@@ -298,8 +277,8 @@ pub mod pallet {
                         did,
                         key_id: key_id.as_bytes().to_vec(),
                         key_type: *key_type,
-                        public_key: public_key.clone(),
-                        purposes: purposes.clone(),
+                        public_key: public_key.to_vec(),
+                        purposes: purposes.to_vec(),
                         expires_at_height: *expires_at_height,
                         block_height,
                     });
@@ -309,9 +288,9 @@ pub mod pallet {
                     DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
                         let key =
-                            state.find_key_mut(key_id.as_bytes()).ok_or(Error::<T>::KeyNotFound)?;
+                            state.find_key_mut(key_id).ok_or(Error::<T>::KeyNotFound)?;
                         key.revoked_at_height = Some(height_u32);
-                        state.update_nonce(&signer_bounded, signed_op.nonce)
+                        state.update_nonce(&signed_op.signer_key_id, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;
@@ -324,12 +303,8 @@ pub mod pallet {
                 }
 
                 DidOperation::AddRight { did: _, key_id, right, expires_at_height } => {
-                    let key_id_bounded: BoundedKeyId =
-                        key_ref_to_bounded(key_id)
-                            .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
-
-                    let grant = OnChainRightGrant {
-                        key_id: key_id_bounded,
+                    let grant = RightGrant {
+                        key_id: key_id.clone(),
                         right: *right,
                         granted_at_height: height_u32,
                         expires_at_height: *expires_at_height,
@@ -342,7 +317,7 @@ pub mod pallet {
                             .rights
                             .try_push(grant)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
-                        state.update_nonce(&signer_bounded, signed_op.nonce)
+                        state.update_nonce(&signed_op.signer_key_id, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;
@@ -364,13 +339,13 @@ pub mod pallet {
                             .iter_mut()
                             .rev()
                             .find(|rg| {
-                                rg.key_id.as_slice() == key_id.as_bytes()
+                                rg.key_id == *key_id
                                     && rg.right == *right
                                     && rg.revoked_at_height.is_none()
                             })
                             .ok_or(Error::<T>::RightNotFound)?;
                         grant.revoked_at_height = Some(height_u32);
-                        state.update_nonce(&signer_bounded, signed_op.nonce)
+                        state.update_nonce(&signed_op.signer_key_id, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;
@@ -387,7 +362,7 @@ pub mod pallet {
                     DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
                         state.tombstoned_at_height = Some(height_u32);
-                        state.update_nonce(&signer_bounded, signed_op.nonce)
+                        state.update_nonce(&signed_op.signer_key_id, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;

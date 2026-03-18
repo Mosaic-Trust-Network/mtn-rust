@@ -12,34 +12,33 @@ repository.workspace = true
 blake3 = { workspace = true }
 bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
 hex = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
 
-# Substrate SCALE codec — optional, enabled with "substrate" feature
-parity-scale-codec = { workspace = true, optional = true }
-scale-info = { workspace = true, optional = true }
+# Bounded collections — always present, lightweight.
+# Transitively brings parity-scale-codec + scale-info.
+# Same crate that frame-support / sp-runtime re-export.
+bounded-collections = { version = "0.2.4", default-features = false }
+parity-scale-codec = { workspace = true }
+scale-info = { workspace = true }
 
-# Bounded collections for on-chain types — optional, enabled with "substrate" feature.
-# This is the same crate that frame-support/sp-runtime re-export, so types are
-# fully compatible with pallet code without any adapters.
-bounded-collections = { version = "0.2.4", default-features = false, optional = true }
+# Optional serialization
+serde = { workspace = true, optional = true }
 
 # IOP reuse (keyvault crypto is blockchain-agnostic)
 iop-keyvault.workspace = true
 
 [dev-dependencies]
-anyhow ={ workspace = true }
+anyhow = { workspace = true }
+serde_json = { workspace = true }
 
 [features]
-default = ["std"]
+default = ["std", "serde"]
 std = [
     "blake3/std",
     "bs58/std",
     "hex/std",
-    "serde/std",
-    "serde_json/std",
-    "parity-scale-codec?/std",
-    "scale-info?/std",
-    "bounded-collections?/std",
+    "bounded-collections/std",
+    "parity-scale-codec/std",
+    "scale-info/std",
+    "serde?/std",
 ]
-substrate = ["parity-scale-codec", "scale-info", "bounded-collections"]
+serde = ["dep:serde", "bounded-collections/serde"]

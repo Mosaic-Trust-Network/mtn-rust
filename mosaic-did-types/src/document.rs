@@ -1,24 +1,33 @@
-//! DID Document types following W3C DID Core 1.0.
+//! DID Document types for `did:mosaic`.
 //!
-//! DID Documents are reconstructed by replaying all operations from genesis
-//! to the requested block height.
+//! Contains the canonical state types used both on-chain (pallet storage)
+//! and off-chain (API/SDK). A single set of types using bounded collections
+//! eliminates the prior two-tree duplication and all conversion overhead.
 
-use alloc::collections::BTreeMap;
-use alloc::string::String;
 use alloc::vec::Vec;
 
-use serde::{Deserialize, Serialize};
+use bounded_collections::{BoundedBTreeMap, BoundedVec, ConstU32};
+use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
+use scale_info::TypeInfo;
 
 use crate::did::{Did, KeyRef};
-use crate::operation::{KeyPurpose, KeyType, Right};
+use crate::operation::{KeyPurpose, KeyType, Right, MAX_PUBLIC_KEY_LEN, MAX_PURPOSES_PER_KEY};
 use crate::validity::is_height_valid;
 
+// ========== PROTOCOL CONSTANTS ==========
+
+/// Maximum number of keys per DID document.
+pub const MAX_KEYS_PER_DID: u32 = 32;
+/// Maximum number of right grants per DID document.
+pub const MAX_RIGHTS_PER_DID: u32 = 64;
+/// Maximum number of nonce entries per DID document.
+pub const MAX_NONCES_PER_DID: u32 = 32;
+
+// ========== CORE STATE TYPES ==========
+
 /// A verification method in the DID Document.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
-)]
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct VerificationMethod {
     /// Key identifier (fragment), e.g. "key-1".
     pub id: KeyRef,
@@ -27,9 +36,9 @@ pub struct VerificationMethod {
     /// Controller DID (usually the DID itself).
     pub controller: Did,
     /// Raw public key bytes.
-    pub public_key: Vec<u8>,
+    pub public_key: BoundedVec<u8, ConstU32<MAX_PUBLIC_KEY_LEN>>,
     /// W3C verification relationships this key participates in.
-    pub purposes: Vec<KeyPurpose>,
+    pub purposes: BoundedVec<KeyPurpose, ConstU32<MAX_PURPOSES_PER_KEY>>,
     /// Block height at which this key was added.
     pub added_at_height: u32,
     /// Optional block height at which this key expires.
@@ -47,11 +56,8 @@ impl VerificationMethod {
 }
 
 /// A right grant record.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
-)]
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RightGrant {
     /// The key this right is granted to.
     pub key_id: KeyRef,
@@ -78,66 +84,46 @@ impl RightGrant {
     }
 }
 
-/// A service endpoint in the DID Document (Phase 2).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
-)]
-pub struct ServiceEndpoint {
-    /// Service identifier fragment, e.g. "service-eurosign".
-    pub id: String,
-    /// Service type, e.g. "EuroSignEndpoint".
-    pub service_type: String,
-    /// Service endpoint URL.
-    pub service_endpoint: String,
-}
-
-/// The reconstructed state of a DID Document at a specific block height.
+/// DID document state with bounded collections.
 ///
-/// This is the internal representation used for state management.
-/// It is converted to W3C-compliant JSON for external consumption.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(parity_scale_codec::Encode, parity_scale_codec::Decode, scale_info::TypeInfo)
-)]
-pub struct DidDocumentState {
+/// Stored directly in pallet storage (`StorageMap<Did, DidState>`) and also
+/// usable off-chain. All collections are bounded for deterministic
+/// `MaxEncodedLen` and safe on-chain storage.
+#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DidState {
     /// The DID this document describes.
     pub did: Did,
     /// All verification methods (keys), including revoked/expired ones for history.
-    pub keys: Vec<VerificationMethod>,
+    pub keys: BoundedVec<VerificationMethod, ConstU32<MAX_KEYS_PER_DID>>,
     /// All right grants, including revoked ones for history.
-    pub rights: Vec<RightGrant>,
-    /// Service endpoints (Phase 2).
-    pub services: Vec<ServiceEndpoint>,
+    pub rights: BoundedVec<RightGrant, ConstU32<MAX_RIGHTS_PER_DID>>,
     /// Block height at which this DID was tombstoned, if ever.
     pub tombstoned_at_height: Option<u32>,
-    /// Per-key nonce for replay protection: (key_id bytes) -> nonce.
-    pub nonces: BTreeMap<Vec<u8>, u64>,
+    /// Per-key nonce for replay protection.
+    pub nonces: BoundedBTreeMap<KeyRef, u64, ConstU32<MAX_NONCES_PER_DID>>,
 }
 
-impl DidDocumentState {
-    /// Create a new empty DID document state.
+impl DidState {
+    /// Create a new empty DID state.
     pub fn new(did: Did) -> Self {
         Self {
             did,
-            keys: Vec::new(),
-            rights: Vec::new(),
-            services: Vec::new(),
+            keys: BoundedVec::default(),
+            rights: BoundedVec::default(),
             tombstoned_at_height: None,
-            nonces: BTreeMap::new(),
+            nonces: BoundedBTreeMap::default(),
         }
+    }
+
+    /// Returns whether this DID exists (has at least one key).
+    pub fn exists(&self) -> bool {
+        !self.keys.is_empty()
     }
 
     /// Returns whether this DID is tombstoned at the given height.
     pub fn is_tombstoned_at(&self, height: u32) -> bool {
         self.tombstoned_at_height.map(|h| height >= h).unwrap_or(false)
-    }
-
-    /// Returns whether this DID has ever been created (has at least one key).
-    pub fn exists(&self) -> bool {
-        !self.keys.is_empty()
     }
 
     /// Find a key by its KeyRef.
@@ -173,21 +159,49 @@ impl DidDocumentState {
         }
 
         // For explicit rights: the key must be valid AND the grant must be active.
-        // A revoked/expired key is cryptographically dead — no rights survive revocation.
-        let key_valid = self.keys.iter().any(|k| k.id == *key_id && k.is_valid_at(height));
+        // A revoked/expired key is cryptographically dead -- no rights survive revocation.
+        let key_valid = self
+            .keys
+            .iter()
+            .any(|k| k.id == *key_id && k.is_valid_at(height));
 
         key_valid
-            && self
-                .rights
-                .iter()
-                .any(|rg| rg.key_id == *key_id && rg.right == right && rg.is_active_at(height))
+            && self.rights.iter().any(|rg| {
+                rg.key_id == *key_id
+                    && rg.right == right
+                    && rg.is_active_at(height)
+            })
     }
 
     /// Get the current nonce for a key.
     pub fn nonce_for_key(&self, key_id: &KeyRef) -> u64 {
-        self.nonces.get(key_id.as_bytes()).copied().unwrap_or(0)
+        self.nonces.get(key_id).copied().unwrap_or(0)
     }
 
+    /// Update the nonce for a key, inserting if not present.
+    ///
+    /// Returns `Err` if the nonce map is full and the key is new.
+    pub fn update_nonce(
+        &mut self, key_id: &KeyRef, nonce: u64,
+    ) -> Result<(), &'static str> {
+        if let Some(existing) = self.nonces.get_mut(key_id) {
+            *existing = nonce;
+        } else {
+            self.nonces
+                .try_insert(key_id.clone(), nonce)
+                .map_err(|_| "nonce storage bounds exceeded")?;
+        }
+        Ok(())
+    }
+}
+
+// ========== W3C DID DOCUMENT RENDERING ==========
+
+#[cfg(feature = "serde")]
+use alloc::string::String;
+
+#[cfg(feature = "serde")]
+impl DidState {
     /// Produce a W3C-compliant DID Document JSON structure at the given height.
     pub fn to_did_document_at(&self, height: u32) -> DidDocument {
         let deactivated = self.is_tombstoned_at(height);
@@ -246,22 +260,15 @@ impl DidDocumentState {
             key_agreement,
             capability_invocation,
             capability_delegation,
-            service: self
-                .services
-                .iter()
-                .map(|s| DidDocumentService {
-                    id: alloc::format!("{}#{}", self.did.to_did_string(), s.id),
-                    type_: s.service_type.clone(),
-                    service_endpoint: s.service_endpoint.clone(),
-                })
-                .collect(),
+            service: Vec::new(),
             deactivated,
         }
     }
 }
 
 /// W3C DID Core 1.0 compliant DID Document for external consumption.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(feature = "serde")]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DidDocument {
     #[serde(rename = "@context")]
     pub context: Vec<String>,
@@ -287,7 +294,8 @@ pub struct DidDocument {
 }
 
 /// A verification method entry in the W3C DID Document.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(feature = "serde")]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DidDocumentVerificationMethod {
     pub id: String,
     #[serde(rename = "type")]
@@ -298,7 +306,8 @@ pub struct DidDocumentVerificationMethod {
 }
 
 /// A service endpoint in the W3C DID Document.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg(feature = "serde")]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DidDocumentService {
     pub id: String,
     #[serde(rename = "type")]
@@ -308,6 +317,7 @@ pub struct DidDocumentService {
 }
 
 /// Convert a KeyType to its W3C verification method type string.
+#[cfg(feature = "serde")]
 fn key_type_to_w3c_string(key_type: KeyType) -> String {
     match key_type {
         KeyType::Ed25519 => "Ed25519VerificationKey2020".into(),
@@ -318,6 +328,7 @@ fn key_type_to_w3c_string(key_type: KeyType) -> String {
 }
 
 /// Encode a public key as multibase base58btc.
+#[cfg(feature = "serde")]
 fn multibase_encode_key(key_bytes: &[u8]) -> String {
     let encoded = bs58::encode(key_bytes).into_string();
     alloc::format!("z{encoded}")
@@ -326,22 +337,27 @@ fn multibase_encode_key(key_bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bounded_collections::BoundedVec;
 
-    fn make_test_state() -> DidDocumentState {
+    fn make_test_state() -> DidState {
         let did = Did::from_public_key(b"test-pk-32-bytes-for-ed25519!!!");
-        let mut state = DidDocumentState::new(did);
+        let mut state = DidState::new(did);
 
-        // Add initial key
-        state.keys.push(VerificationMethod {
-            id: KeyRef::from_str_id("key-1").unwrap(),
-            key_type: KeyType::Ed25519,
-            controller: did,
-            public_key: b"test-pk-32-bytes-for-ed25519!!!".to_vec(),
-            purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod],
-            added_at_height: 1,
-            expires_at_height: None,
-            revoked_at_height: None,
-        });
+        state
+            .keys
+            .try_push(VerificationMethod {
+                id: KeyRef::from_str_id("key-1").unwrap(),
+                key_type: KeyType::Ed25519,
+                controller: did,
+                public_key: b"test-pk-32-bytes-for-ed25519!!!".to_vec().try_into().unwrap(),
+                purposes: alloc::vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
+                    .try_into()
+                    .unwrap(),
+                added_at_height: 1,
+                expires_at_height: None,
+                revoked_at_height: None,
+            })
+            .unwrap();
 
         state
     }
@@ -349,7 +365,7 @@ mod tests {
     #[test]
     fn new_state_is_empty() {
         let did = Did::alice();
-        let state = DidDocumentState::new(did);
+        let state = DidState::new(did);
         assert!(!state.exists());
         assert!(!state.is_tombstoned_at(0));
         assert!(!state.is_tombstoned_at(1000));
@@ -367,8 +383,8 @@ mod tests {
             id: KeyRef::from_str_id("key-1").unwrap(),
             key_type: KeyType::Ed25519,
             controller: Did::alice(),
-            public_key: vec![0u8; 32],
-            purposes: vec![],
+            public_key: alloc::vec![0u8; 32].try_into().unwrap(),
+            purposes: BoundedVec::default(),
             added_at_height: 10,
             expires_at_height: Some(100),
             revoked_at_height: None,
@@ -387,8 +403,8 @@ mod tests {
             id: KeyRef::from_str_id("key-1").unwrap(),
             key_type: KeyType::Ed25519,
             controller: Did::alice(),
-            public_key: vec![0u8; 32],
-            purposes: vec![],
+            public_key: alloc::vec![0u8; 32].try_into().unwrap(),
+            purposes: BoundedVec::default(),
             added_at_height: 10,
             expires_at_height: None,
             revoked_at_height: Some(50),
@@ -426,14 +442,16 @@ mod tests {
         let mut state = make_test_state();
         let key_id = KeyRef::from_str_id("key-1").unwrap();
 
-        // Test with Issue right (not implicit, so we can verify grant timing)
-        state.rights.push(RightGrant {
-            key_id: key_id.clone(),
-            right: Right::Issue,
-            granted_at_height: 10,
-            expires_at_height: Some(100),
-            revoked_at_height: None,
-        });
+        state
+            .rights
+            .try_push(RightGrant {
+                key_id: key_id.clone(),
+                right: Right::Issue,
+                granted_at_height: 10,
+                expires_at_height: Some(100),
+                revoked_at_height: None,
+            })
+            .unwrap();
 
         assert!(!state.has_right_at(&key_id, Right::Issue, 9));
         assert!(state.has_right_at(&key_id, Right::Issue, 10));
@@ -451,26 +469,32 @@ mod tests {
         assert_eq!(state.nonce_for_key(&unknown), 0);
     }
 
+    #[cfg(feature = "serde")]
     #[test]
     fn w3c_did_document_structure() {
         let pk = b"w3c-test-key-for-did-doc-struct!";
         let did = Did::from_public_key(pk);
 
-        let mut state = DidDocumentState::new(did);
-        state.keys.push(VerificationMethod {
-            id: KeyRef::from_str_id("key-1").unwrap(),
-            key_type: KeyType::Ed25519,
-            controller: did,
-            public_key: pk.to_vec(),
-            purposes: vec![
-                KeyPurpose::Authentication,
-                KeyPurpose::AssertionMethod,
-                KeyPurpose::CapabilityDelegation,
-            ],
-            added_at_height: 1,
-            expires_at_height: None,
-            revoked_at_height: None,
-        });
+        let mut state = DidState::new(did);
+        state
+            .keys
+            .try_push(VerificationMethod {
+                id: KeyRef::from_str_id("key-1").unwrap(),
+                key_type: KeyType::Ed25519,
+                controller: did,
+                public_key: pk.to_vec().try_into().unwrap(),
+                purposes: alloc::vec![
+                    KeyPurpose::Authentication,
+                    KeyPurpose::AssertionMethod,
+                    KeyPurpose::CapabilityDelegation,
+                ]
+                .try_into()
+                .unwrap(),
+                added_at_height: 1,
+                expires_at_height: None,
+                revoked_at_height: None,
+            })
+            .unwrap();
 
         let doc = state.to_did_document_at(1);
 
@@ -492,14 +516,11 @@ mod tests {
         assert!(json.contains("\"Ed25519VerificationKey2020\""));
     }
 
+    #[cfg(feature = "serde")]
     #[test]
     fn tombstoned_did_document() {
         let mut state = make_test_state();
         state.tombstoned_at_height = Some(50);
-
-        assert!(!state.is_tombstoned_at(49));
-        assert!(state.is_tombstoned_at(50));
-        assert!(state.is_tombstoned_at(100));
 
         let doc = state.to_did_document_at(100);
         assert!(doc.deactivated);

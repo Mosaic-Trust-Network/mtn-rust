@@ -9,7 +9,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-mosaic-did-types = { workspace = true, features = ["substrate"] }
+mosaic-did-types = { workspace = true }
 
 # Substrate dependencies (polkadot-stable2503 / polkadot-sdk 2.0)
 frame-support = { version = "38", default-features = false }
