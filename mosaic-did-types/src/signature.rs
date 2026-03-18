@@ -1,219 +1,252 @@
-//! Multi-algorithm signature types for `did:mosaic`.
+//! Multi-algorithm signature and public key types for `did:mosaic`.
 //!
-//! Supports Ed25519 (required) and secp256k1 (Ethereum compatibility).
-//! Algorithm agility enables future post-quantum additions (Dilithium).
+//! Thin wrappers around keyvault's [`MSignature`] and [`MPublicKey`] multicipher types.
+//! `MultiSignature` provides SCALE codec compatibility for Substrate extrinsics.
+//! `MultiPublicKey` provides signature verification with [`KeyType`] mapping.
+//!
+//! ## Cipher Suite
+//!
+//! `did:mosaic` uses the Ed25519Blake3 cipher suite: Ed25519 cryptography with
+//! BLAKE3-256 key ID derivation. The `ed25519()` constructor produces Ed25519Blake3
+//! signatures, and `from_key_type_and_bytes(Ed25519, ..)` produces Ed25519Blake3 keys.
 
-use alloc::vec::Vec;
-
-use parity_scale_codec::{Decode, Encode};
-use scale_info::TypeInfo;
+use iop_keyvault::ed25519::{EdPublicKey, EdSignature};
+use iop_keyvault::multicipher::{MPublicKey, MSignature};
+use iop_keyvault::PublicKey;
 
 use crate::operation::KeyType;
 
-/// Multi-algorithm signature supporting Ed25519 and secp256k1.
+// ========== MultiSignature ==========
+
+/// Multi-algorithm cryptographic signature wrapping keyvault's [`MSignature`].
 ///
-/// Designed for algorithm agility — new variants can be added for
-/// post-quantum algorithms (e.g., Dilithium) without breaking changes.
+/// Uses Ed25519Blake3 cipher suite for Ed25519 signatures (matching the
+/// `did:mosaic` key derivation scheme) and Secp256k1 for Ethereum compat.
 ///
-/// Signatures are stored as `Vec<u8>` with runtime length validation
-/// to support variable-length algorithm outputs.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum MultiSignature {
-    /// Ed25519 signature (64 bytes).
-    Ed25519(Vec<u8>),
-    /// secp256k1 signature (65 bytes, recoverable).
-    Secp256k1(Vec<u8>),
-}
+/// SCALE encoding uses keyvault's UTF-8 string-based byte representation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MultiSignature(pub MSignature);
 
 impl MultiSignature {
-    /// Create an Ed25519 signature from a 64-byte array.
+    /// Create an Ed25519Blake3 signature from raw 64 Ed25519 signature bytes.
+    ///
+    /// Always succeeds – `ed25519_dalek` accepts any 64-byte array as a
+    /// `Signature` (mathematical validity is only checked during `verify()`).
     pub fn ed25519(sig: [u8; 64]) -> Self {
-        MultiSignature::Ed25519(sig.to_vec())
+        let mut versioned = [0u8; 65];
+        versioned[0] = 0x01; // Ed25519 SIGNATURE_VERSION1
+        versioned[1..].copy_from_slice(&sig);
+        let ed_sig = EdSignature::from_bytes(&versioned[..])
+            .expect("64 bytes + version byte is always accepted by EdSignature");
+        MultiSignature(MSignature::Ed25519Blake3(ed_sig))
     }
 
-    /// Create a secp256k1 signature from a 65-byte array.
-    pub fn secp256k1(sig: [u8; 65]) -> Self {
-        MultiSignature::Secp256k1(sig.to_vec())
+    /// Create a secp256k1 signature from raw 64 signature bytes (r ‖ s).
+    ///
+    /// Panics if `r` or `s` are zero or ≥ the secp256k1 curve order.
+    pub fn secp256k1(sig: [u8; 64]) -> Self {
+        use iop_keyvault::secp256k1::SecpSignature;
+        let mut versioned = [0u8; 65];
+        versioned[0] = 0x01; // Secp256k1 SIGNATURE_VERSION1
+        versioned[1..].copy_from_slice(&sig);
+        let secp_sig = SecpSignature::from_bytes(&versioned[..])
+            .expect("valid secp256k1 r‖s bytes with version prefix");
+        MultiSignature(MSignature::Secp256k1(secp_sig))
     }
 
-    /// Returns the raw signature bytes.
-    pub fn as_bytes(&self) -> &[u8] {
-        match self {
-            MultiSignature::Ed25519(sig) => sig,
-            MultiSignature::Secp256k1(sig) => sig,
-        }
-    }
-
-    /// Returns the algorithm name.
+    /// Returns the cipher suite algorithm name.
     pub fn algorithm(&self) -> &'static str {
-        match self {
-            MultiSignature::Ed25519(_) => "Ed25519",
-            MultiSignature::Secp256k1(_) => "secp256k1",
+        match &self.0 {
+            MSignature::Ed25519(_) => "Ed25519",
+            MSignature::Secp256k1(_) => "secp256k1",
+            MSignature::Ed25519Blake3(_) => "Ed25519Blake3",
         }
     }
 
-    /// Returns the expected signature length for this variant.
-    pub fn expected_len(&self) -> usize {
-        match self {
-            MultiSignature::Ed25519(_) => 64,
-            MultiSignature::Secp256k1(_) => 65,
-        }
-    }
-
-    /// Validate that the signature bytes have the correct length.
-    pub fn is_valid_length(&self) -> bool {
-        self.as_bytes().len() == self.expected_len()
+    /// Access the inner keyvault [`MSignature`].
+    pub fn inner(&self) -> &MSignature {
+        &self.0
     }
 }
 
-/// Multi-algorithm public key for verification.
+impl From<MSignature> for MultiSignature {
+    fn from(sig: MSignature) -> Self {
+        MultiSignature(sig)
+    }
+}
+
+// ========== SCALE codec (Substrate) ==========
+
+#[cfg(feature = "substrate")]
+mod sig_scale_impls {
+    use super::*;
+    use parity_scale_codec::{Decode, Encode, EncodeLike};
+    use scale_info::TypeInfo;
+
+    impl EncodeLike for MultiSignature {}
+
+    impl Encode for MultiSignature {
+        fn encode_to<W: parity_scale_codec::Output + ?Sized>(&self, dest: &mut W) {
+            let bytes = self.0.to_bytes();
+            Encode::encode_to(&bytes, dest);
+        }
+    }
+
+    impl Decode for MultiSignature {
+        fn decode<I: parity_scale_codec::Input>(
+            input: &mut I,
+        ) -> Result<Self, parity_scale_codec::Error> {
+            let bytes = Vec::<u8>::decode(input)?;
+            let sig = MSignature::from_bytes(bytes)
+                .map_err(|_| parity_scale_codec::Error::from("invalid MSignature encoding"))?;
+            Ok(MultiSignature(sig))
+        }
+    }
+
+    impl TypeInfo for MultiSignature {
+        type Identity = Self;
+        fn type_info() -> scale_info::Type {
+            scale_info::Type::builder()
+                .path(scale_info::Path::new(
+                    "MultiSignature",
+                    "mosaic_did_types::signature",
+                ))
+                .composite(
+                    scale_info::build::Fields::unnamed()
+                        .field(|f| f.ty::<Vec<u8>>().type_name("MSignature")),
+                )
+        }
+    }
+}
+
+// ========== Serde ==========
+
+#[cfg(feature = "serde")]
+mod sig_serde_impls {
+    use super::*;
+
+    impl serde::Serialize for MultiSignature {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            self.0.serialize(serializer)
+        }
+    }
+
+    impl<'de> serde::Deserialize<'de> for MultiSignature {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            MSignature::deserialize(deserializer).map(MultiSignature)
+        }
+    }
+}
+
+// ========== MultiPublicKey ==========
+
+/// Multi-algorithm public key wrapping keyvault's [`MPublicKey`].
 ///
-/// Public keys are stored as `Vec<u8>` with runtime length validation.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Encode, Decode, TypeInfo)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub enum MultiPublicKey {
-    /// Ed25519 public key (32 bytes).
-    Ed25519(Vec<u8>),
-    /// secp256k1 compressed public key (33 bytes).
-    Secp256k1(Vec<u8>),
-}
+/// Used ephemerally during signature verification – not stored on-chain.
+/// Maps the pallet's [`KeyType`] enum to the correct keyvault cipher suite.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MultiPublicKey(pub MPublicKey);
 
 impl MultiPublicKey {
-    /// Create an Ed25519 public key from a 32-byte array.
-    pub fn ed25519(pk: [u8; 32]) -> Self {
-        MultiPublicKey::Ed25519(pk.to_vec())
-    }
-
-    /// Create a secp256k1 public key from a 33-byte array.
-    pub fn secp256k1(pk: [u8; 33]) -> Self {
-        MultiPublicKey::Secp256k1(pk.to_vec())
-    }
-
-    /// Returns the raw public key bytes.
-    pub fn as_bytes(&self) -> &[u8] {
-        match self {
-            MultiPublicKey::Ed25519(pk) => pk,
-            MultiPublicKey::Secp256k1(pk) => pk,
-        }
-    }
-
-    /// Returns the algorithm name.
-    pub fn algorithm(&self) -> &'static str {
-        match self {
-            MultiPublicKey::Ed25519(_) => "Ed25519",
-            MultiPublicKey::Secp256k1(_) => "secp256k1",
-        }
-    }
-
-    /// Returns the expected key length for this variant.
-    pub fn expected_len(&self) -> usize {
-        match self {
-            MultiPublicKey::Ed25519(_) => 32,
-            MultiPublicKey::Secp256k1(_) => 33,
-        }
-    }
-
-    /// Validate that the key bytes have the correct length.
-    pub fn is_valid_length(&self) -> bool {
-        self.as_bytes().len() == self.expected_len()
-    }
-
-    /// Construct a MultiPublicKey from a KeyType and raw public key bytes.
+    /// Construct from a [`KeyType`] and raw public key bytes.
     ///
+    /// Maps `KeyType::Ed25519` → `MPublicKey::Ed25519Blake3` (the `did:mosaic`
+    /// cipher suite) and `KeyType::Secp256k1` → `MPublicKey::Secp256k1`.
     /// Returns `None` for key types that don't support signature verification
-    /// (e.g. X25519 key agreement only, or Secp256r1 not yet implemented).
+    /// (e.g. X25519 key agreement, Secp256r1 not yet implemented).
     pub fn from_key_type_and_bytes(key_type: KeyType, bytes: &[u8]) -> Option<Self> {
         match key_type {
-            KeyType::Ed25519 => Some(MultiPublicKey::Ed25519(bytes.to_vec())),
-            KeyType::Secp256k1 => Some(MultiPublicKey::Secp256k1(bytes.to_vec())),
+            KeyType::Ed25519 => {
+                let pk = EdPublicKey::from_bytes(bytes).ok()?;
+                Some(MultiPublicKey(MPublicKey::Ed25519Blake3(pk)))
+            }
+            KeyType::Secp256k1 => {
+                use iop_keyvault::secp256k1::SecpPublicKey;
+                let pk = SecpPublicKey::from_bytes(bytes).ok()?;
+                Some(MultiPublicKey(MPublicKey::Secp256k1(pk)))
+            }
             _ => None,
         }
     }
 
     /// Verify a signature against this public key and message.
     ///
-    /// Returns `true` if the signature is valid for the given message.
+    /// Delegates to keyvault's [`PublicKey::verify()`] which handles cipher suite
+    /// matching internally (rejects cross-suite signature/key pairs).
     pub fn verify(&self, message: &[u8], signature: &MultiSignature) -> bool {
-        match (self, signature) {
-            (MultiPublicKey::Ed25519(pk), MultiSignature::Ed25519(sig)) => {
-                if pk.len() != 32 || sig.len() != 64 {
-                    return false;
-                }
-                let mut pk_arr = [0u8; 32];
-                pk_arr.copy_from_slice(pk);
-                let mut sig_arr = [0u8; 64];
-                sig_arr.copy_from_slice(sig);
-                verify_ed25519(&pk_arr, message, &sig_arr)
-            }
-            (MultiPublicKey::Secp256k1(_pk), MultiSignature::Secp256k1(_sig)) => {
-                // secp256k1 verification requires external crate — stubbed for now
-                // Will be implemented when integrating with iop-keyvault's secp256k1 support
-                false
-            }
-            _ => false, // Algorithm mismatch
-        }
+        self.0.verify(message, &signature.0)
     }
 }
 
-/// Ed25519 signature verification using iop-keyvault's implementation.
-fn verify_ed25519(public_key: &[u8; 32], message: &[u8], signature: &[u8; 64]) -> bool {
-    use iop_keyvault::ed25519;
-
-    let pk = match ed25519::EdPublicKey::from_bytes(public_key) {
-        Ok(pk) => pk,
-        Err(_) => return false,
-    };
-    let sig = match ed25519::EdSignature::from_bytes(signature) {
-        Ok(sig) => sig,
-        Err(_) => return false,
-    };
-
-    use iop_keyvault::PublicKey;
-    pk.verify(message, &sig)
+impl From<MPublicKey> for MultiPublicKey {
+    fn from(pk: MPublicKey) -> Self {
+        MultiPublicKey(pk)
+    }
 }
+
+// ========== Tests ==========
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn multi_signature_ed25519() {
-        let sig = MultiSignature::ed25519([0u8; 64]);
-        assert_eq!(sig.algorithm(), "Ed25519");
-        assert_eq!(sig.as_bytes().len(), 64);
-        assert!(sig.is_valid_length());
+    fn ed25519_signature_construction() {
+        let sig = MultiSignature::ed25519([42u8; 64]);
+        assert_eq!(sig.algorithm(), "Ed25519Blake3");
     }
 
     #[test]
-    fn multi_signature_secp256k1() {
-        let sig = MultiSignature::secp256k1([0u8; 65]);
+    fn secp256k1_signature_construction() {
+        // r=1, s=1 are valid non-zero secp256k1 scalars
+        let mut sig_bytes = [0u8; 64];
+        sig_bytes[31] = 1;
+        sig_bytes[63] = 1;
+        let sig = MultiSignature::secp256k1(sig_bytes);
         assert_eq!(sig.algorithm(), "secp256k1");
-        assert_eq!(sig.as_bytes().len(), 65);
-        assert!(sig.is_valid_length());
     }
 
     #[test]
-    fn multi_public_key_algorithm() {
-        let pk_ed = MultiPublicKey::ed25519([0u8; 32]);
-        assert_eq!(pk_ed.algorithm(), "Ed25519");
-        assert!(pk_ed.is_valid_length());
-
-        let pk_secp = MultiPublicKey::secp256k1([0u8; 33]);
-        assert_eq!(pk_secp.algorithm(), "secp256k1");
-        assert!(pk_secp.is_valid_length());
+    fn from_msignature_conversion() {
+        let sig = MultiSignature::ed25519([0u8; 64]);
+        let inner = sig.inner().clone();
+        let converted = MultiSignature::from(inner);
+        assert_eq!(sig, converted);
     }
 
     #[test]
-    fn algorithm_mismatch_returns_false() {
-        let pk = MultiPublicKey::ed25519([0u8; 32]);
-        let sig = MultiSignature::secp256k1([0u8; 65]);
+    fn ed25519_public_key_from_valid_bytes() {
+        // RFC 8032 test vector 1 public key
+        let pk_bytes = hex::decode(
+            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+        )
+        .unwrap();
+        let pk = MultiPublicKey::from_key_type_and_bytes(KeyType::Ed25519, &pk_bytes);
+        assert!(pk.is_some());
+    }
+
+    #[test]
+    fn unsupported_key_type_returns_none() {
+        let pk = MultiPublicKey::from_key_type_and_bytes(KeyType::X25519, &[0u8; 32]);
+        assert!(pk.is_none());
+
+        let pk = MultiPublicKey::from_key_type_and_bytes(KeyType::Secp256r1, &[0u8; 33]);
+        assert!(pk.is_none());
+    }
+
+    #[test]
+    fn cross_suite_verify_returns_false() {
+        // Ed25519Blake3 key cannot verify a secp256k1 signature
+        let pk_bytes = hex::decode(
+            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+        )
+        .unwrap();
+        let pk = MultiPublicKey::from_key_type_and_bytes(KeyType::Ed25519, &pk_bytes).unwrap();
+
+        let mut sig_bytes = [0u8; 64];
+        sig_bytes[31] = 1;
+        sig_bytes[63] = 1;
+        let sig = MultiSignature::secp256k1(sig_bytes);
         assert!(!pk.verify(b"test", &sig));
-    }
-
-    #[test]
-    fn invalid_length_signature() {
-        let sig = MultiSignature::Ed25519(vec![0u8; 32]); // Too short
-        assert!(!sig.is_valid_length());
     }
 }

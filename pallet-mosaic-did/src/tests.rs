@@ -114,12 +114,14 @@ mod unit_tests {
     #[test]
     fn multi_signature_types() {
         let ed_sig = MultiSignature::ed25519([42u8; 64]);
-        assert_eq!(ed_sig.algorithm(), "Ed25519");
-        assert_eq!(ed_sig.as_bytes().len(), 64);
+        assert_eq!(ed_sig.algorithm(), "Ed25519Blake3");
 
-        let secp_sig = MultiSignature::secp256k1([43u8; 65]);
+        // r=1, s=1 are valid non-zero secp256k1 scalars
+        let mut secp_bytes = [0u8; 64];
+        secp_bytes[31] = 1;
+        secp_bytes[63] = 1;
+        let secp_sig = MultiSignature::secp256k1(secp_bytes);
         assert_eq!(secp_sig.algorithm(), "secp256k1");
-        assert_eq!(secp_sig.as_bytes().len(), 65);
     }
 
     #[test]

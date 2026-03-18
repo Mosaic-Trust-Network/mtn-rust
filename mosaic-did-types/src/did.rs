@@ -8,7 +8,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::{fmt, str::FromStr};
+use core::fmt;
 
 use bounded_collections::{BoundedVec, ConstU32};
 use iop_keyvault::ed25519::{Blake3, EdKeyId, EdPublicKey};
@@ -338,6 +338,7 @@ impl fmt::Display for ContentId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::str::FromStr;
 
     /// Pinned: Alice = RFC 8032 test vector 1 pk → Blake3 MKeyId
     const DID_ALICE: &str = "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb";
