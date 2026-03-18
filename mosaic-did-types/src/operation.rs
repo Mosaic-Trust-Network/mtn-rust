@@ -12,6 +12,7 @@ use scale_info::TypeInfo;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
+use crate::auth::Authentication;
 use crate::did::{ContentId, Did, KeyRef};
 use crate::signature::MultiSignature;
 
@@ -113,11 +114,13 @@ pub enum DidOperation {
     ///
     /// Implicit creation: the first `AddKey` for a DID creates that DID.
     /// The DID identifier MUST equal `BLAKE3-256(public_key)` for the initial key.
+    ///
+    /// The `auth` field must be the `PublicKey` variant – the chain needs the actual
+    /// key bytes for signature verification. The key's document ID (`KeyRef`) and
+    /// `KeyType` are derived from the [`Authentication`] value.
     AddKey {
         did: Did,
-        key_id: KeyRef,
-        key_type: KeyType,
-        public_key: BoundedVec<u8, ConstU32<MAX_PUBLIC_KEY_LEN>>,
+        auth: Authentication,
         purposes: BoundedVec<KeyPurpose, ConstU32<MAX_PURPOSES_PER_KEY>>,
         /// Optional block height at which this key expires.
         expires_at_height: Option<u32>,
@@ -228,16 +231,24 @@ impl From<&DidOperation> for DidOperationType {
 mod tests {
     use super::*;
 
+    // RFC 8032 test vector 1 public key
+    const TEST_PK: [u8; 32] = [
+        0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64,
+        0x07, 0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68,
+        0xf7, 0x07, 0x51, 0x1a,
+    ];
+
+    fn test_auth() -> Authentication {
+        Authentication::from_key_type_and_bytes(KeyType::Ed25519, &TEST_PK).unwrap()
+    }
+
     #[test]
     fn operation_did_accessor() {
         let did = Did::alice();
-        let key_id = "key-1".parse().unwrap();
 
         let op = DidOperation::AddKey {
             did: did.clone(),
-            key_id,
-            key_type: KeyType::Ed25519,
-            public_key: b"test-key".to_vec().try_into().unwrap(),
+            auth: test_auth(),
             purposes: alloc::vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
                 .try_into()
                 .unwrap(),
@@ -256,9 +267,7 @@ mod tests {
         let ops = alloc::vec![
             DidOperation::AddKey {
                 did: did.clone(),
-                key_id: key_id.clone(),
-                key_type: KeyType::Ed25519,
-                public_key: BoundedVec::default(),
+                auth: test_auth(),
                 purposes: BoundedVec::default(),
                 expires_at_height: None,
             },

@@ -30,6 +30,10 @@ mod unit_tests {
         Did::from_public_key(&PK_2).unwrap()
     }
 
+    fn auth_1() -> Authentication {
+        Authentication::from_key_type_and_bytes(KeyType::Ed25519, &PK_1).unwrap()
+    }
+
     // ===== Type-level tests (no runtime needed) =====
 
     #[test]
@@ -62,13 +66,10 @@ mod unit_tests {
     #[test]
     fn operation_creates_correct_types() {
         let did = did_1();
-        let key_id = "key-1".parse().unwrap();
 
         let add_key = DidOperation::AddKey {
             did: did.clone(),
-            key_id,
-            key_type: KeyType::Ed25519,
-            public_key: PK_1.to_vec().try_into().unwrap(),
+            auth: auth_1(),
             purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
                 .try_into()
                 .unwrap(),
@@ -127,18 +128,17 @@ mod unit_tests {
     #[test]
     fn signed_operation_construction() {
         let did = did_1();
-        let key_id: KeyRef = "key-1".parse().unwrap();
+        let auth = auth_1();
+        let signer_key_id = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
 
         let signed_op = SignedDidOperation {
             operation: DidOperation::AddKey {
                 did: did.clone(),
-                key_id: key_id.clone(),
-                key_type: KeyType::Ed25519,
-                public_key: PK_1.to_vec().try_into().unwrap(),
+                auth,
                 purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
                 expires_at_height: None,
             },
-            signer_key_id: key_id,
+            signer_key_id,
             signature: MultiSignature::ed25519([1u8; 64]),
             nonce: 1,
         };
@@ -150,18 +150,17 @@ mod unit_tests {
     #[test]
     fn ssi_operation_variants() {
         let did = did_1();
-        let key_id: KeyRef = "key-1".parse().unwrap();
+        let auth = auth_1();
+        let signer_key_id = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
 
         let did_op = SsiOperation::Did(SignedDidOperation {
             operation: DidOperation::AddKey {
                 did: did.clone(),
-                key_id: key_id.clone(),
-                key_type: KeyType::Ed25519,
-                public_key: PK_1.to_vec().try_into().unwrap(),
+                auth,
                 purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
                 expires_at_height: None,
             },
-            signer_key_id: key_id,
+            signer_key_id,
             signature: MultiSignature::ed25519([1u8; 64]),
             nonce: 1,
         });
@@ -363,20 +362,19 @@ mod unit_tests {
     #[test]
     fn eurosign_workflow_types() {
         let signer_did = did_1();
-        let key_id: KeyRef = "key-signing".parse().unwrap();
+        let auth = auth_1();
+        let signer_key_id = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
 
         let create_op = SsiOperation::Did(SignedDidOperation {
             operation: DidOperation::AddKey {
                 did: signer_did,
-                key_id: key_id.clone(),
-                key_type: KeyType::Ed25519,
-                public_key: PK_1.to_vec().try_into().unwrap(),
+                auth,
                 purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
                     .try_into()
                     .unwrap(),
                 expires_at_height: None,
             },
-            signer_key_id: key_id,
+            signer_key_id,
             signature: MultiSignature::ed25519([1u8; 64]),
             nonce: 1,
         });

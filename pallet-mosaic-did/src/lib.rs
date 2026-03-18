@@ -32,7 +32,7 @@ pub mod pallet {
     use sp_std::vec::Vec;
 
     use mosaic_did_types::{
-        ContentId, Did, DidOperation, DidState, KeyPurpose, KeyType, Right, RightGrant,
+        ContentId, Did, DidOperation, DidState, KeyPurpose, KeyRef, KeyType, Right, RightGrant,
         SignedDidOperation, SsiOperation, VerificationMethod,
     };
 
@@ -239,19 +239,24 @@ pub mod pallet {
             let did = signed_op.operation.did().clone();
 
             match &signed_op.operation {
-                DidOperation::AddKey {
-                    did: _,
-                    key_id,
-                    key_type,
-                    public_key,
-                    purposes,
-                    expires_at_height,
-                } => {
+                DidOperation::AddKey { did: _, auth, purposes, expires_at_height } => {
+                    // Extract key material from Authentication (validated as PublicKey variant
+                    // by validation::validate_did_operation before we reach here).
+                    let mpk = auth.to_multi_public_key().ok_or(Error::<T>::InvalidPublicKey)?;
+                    let key_type =
+                        mpk.key_type().ok_or(Error::<T>::InvalidPublicKey)?;
+                    let raw_bytes: Vec<u8> = mpk.raw_bytes();
+                    let key_ref =
+                        KeyRef::new(auth.key_id().to_string().into_bytes())
+                            .map_err(|_| Error::<T>::InvalidPublicKey)?;
+
                     let vm = VerificationMethod {
-                        id: key_id.clone(),
-                        key_type: *key_type,
+                        id: key_ref.clone(),
+                        key_type,
                         controller: did.clone(),
-                        public_key: public_key.clone(),
+                        public_key: raw_bytes
+                            .try_into()
+                            .map_err(|_| Error::<T>::InvalidPublicKey)?,
                         purposes: purposes.clone(),
                         added_at_height: height_u32,
                         expires_at_height: *expires_at_height,
@@ -262,7 +267,10 @@ pub mod pallet {
                         let state =
                             maybe_state.get_or_insert_with(|| DidState::new(did.clone()));
 
-                        ensure!(state.find_key(key_id).is_none(), Error::<T>::KeyAlreadyExists);
+                        ensure!(
+                            state.find_key(&key_ref).is_none(),
+                            Error::<T>::KeyAlreadyExists
+                        );
 
                         state.keys.try_push(vm).map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         state
@@ -273,9 +281,9 @@ pub mod pallet {
 
                     Self::deposit_event(Event::KeyAdded {
                         did,
-                        key_id: key_id.as_bytes().to_vec(),
-                        key_type: *key_type,
-                        public_key: public_key.to_vec(),
+                        key_id: key_ref.as_bytes().to_vec(),
+                        key_type,
+                        public_key: mpk.raw_bytes(),
                         purposes: purposes.to_vec(),
                         expires_at_height: *expires_at_height,
                         block_height,

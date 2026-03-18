@@ -180,6 +180,26 @@ impl MultiPublicKey {
         self.0.key_id()
     }
 
+    /// Returns the [`KeyType`] corresponding to this public key's cipher suite.
+    ///
+    /// Maps `Ed25519Blake3` → `Ed25519`, `Secp256k1` → `Secp256k1`.
+    /// Returns `None` for legacy `Ed25519` (not used in `did:mosaic`).
+    pub fn key_type(&self) -> Option<KeyType> {
+        match &self.0 {
+            MPublicKey::Ed25519Blake3(_) => Some(KeyType::Ed25519),
+            MPublicKey::Secp256k1(_) => Some(KeyType::Secp256k1),
+            _ => None,
+        }
+    }
+
+    /// Extract the raw public key bytes (32 bytes Ed25519, 33 bytes secp256k1 compressed).
+    pub fn raw_bytes(&self) -> alloc::vec::Vec<u8> {
+        match &self.0 {
+            MPublicKey::Ed25519Blake3(pk) | MPublicKey::Ed25519(pk) => pk.to_bytes(),
+            MPublicKey::Secp256k1(pk) => pk.to_bytes(),
+        }
+    }
+
     /// Verify a signature against this public key and message.
     ///
     /// Delegates to keyvault's [`PublicKey::verify()`] which handles cipher suite

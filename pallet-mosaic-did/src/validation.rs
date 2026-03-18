@@ -32,7 +32,18 @@ pub fn validate_did_operation<T: Config>(
     let maybe_state = DidStates::<T>::get(did);
 
     match &signed_op.operation {
-        DidOperation::AddKey { did, key_id, public_key, key_type, .. } => {
+        DidOperation::AddKey { did, auth, .. } => {
+            // AddKey requires the PublicKey variant — the chain needs actual key bytes.
+            let mpk = auth
+                .to_multi_public_key()
+                .ok_or(Error::<T>::InvalidPublicKey)?;
+            let key_type = mpk.key_type().ok_or(Error::<T>::InvalidPublicKey)?;
+            let raw_bytes = mpk.raw_bytes();
+
+            // Derive the KeyRef from the Authentication's key ID string
+            let key_ref = mosaic_did_types::KeyRef::new(auth.key_id().to_string().into_bytes())
+                .map_err(|_| Error::<T>::InvalidPublicKey)?;
+
             match &maybe_state {
                 Some(state) => {
                     // DID exists: check not tombstoned, check nonce, check Update right
@@ -43,21 +54,24 @@ pub fn validate_did_operation<T: Config>(
                         Error::<T>::InsufficientRight
                     );
                     // Reject duplicate key IDs
-                    ensure!(state.find_key(key_id).is_none(), Error::<T>::KeyAlreadyExists);
+                    ensure!(
+                        state.find_key(&key_ref).is_none(),
+                        Error::<T>::KeyAlreadyExists
+                    );
                     // Verify signature against signer's key resolved from state
                     validate_signature_from_state::<T>(signed_op, state, height_u32)?;
                 }
                 None => {
                     // Implicit DID creation requires Ed25519 — the DID identifier
                     // is derived via Ed25519Blake3, so the initial key must match.
-                    ensure!(*key_type == KeyType::Ed25519, Error::<T>::InvalidPublicKey);
+                    ensure!(key_type == KeyType::Ed25519, Error::<T>::InvalidPublicKey);
 
-                    let derived_did = Did::from_public_key(public_key)
+                    let derived_did = Did::from_public_key(&raw_bytes)
                         .map_err(|_| Error::<T>::InvalidPublicKey)?;
                     ensure!(did == &derived_did, Error::<T>::DidMismatch);
                     // Verify signature against the public key being registered
                     // (proves the submitter controls the private key)
-                    validate_signature_for_creation::<T>(signed_op, public_key, *key_type)?;
+                    validate_signature_for_creation::<T>(signed_op, &mpk)?;
                 }
             }
         }
@@ -157,11 +171,8 @@ fn validate_signature_from_state<T: Config>(
 /// registered in the AddKey operation itself. This proves the submitter controls
 /// the private key corresponding to the DID identifier.
 fn validate_signature_for_creation<T: Config>(
-    signed_op: &SignedDidOperation, public_key_bytes: &[u8], key_type: KeyType,
+    signed_op: &SignedDidOperation, public_key: &MultiPublicKey,
 ) -> Result<(), sp_runtime::DispatchError> {
-    let public_key = MultiPublicKey::from_key_type_and_bytes(key_type, public_key_bytes)
-        .ok_or(Error::<T>::InvalidPublicKey)?;
-
     let message = signable_payload(signed_op);
     ensure!(public_key.verify(&message, &signed_op.signature), Error::<T>::InvalidSignature);
     Ok(())
