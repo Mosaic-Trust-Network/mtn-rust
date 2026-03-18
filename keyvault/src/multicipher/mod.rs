@@ -43,6 +43,7 @@ pub use sk::MPrivateKey;
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub enum CipherSuite {
     /// The object tagged with this variant belongs to the [`ed25519`] module
+    /// using the legacy Blake2b-MAC key ID derivation.
     ///
     /// [`ed25519`]: ../ed25519/index.html
     Ed25519,
@@ -50,6 +51,10 @@ pub enum CipherSuite {
     ///
     /// [`secp256k1`]: ../secp256k1/index.html
     Secp256k1,
+    /// Ed25519 cryptography with Blake3 key ID derivation.
+    /// Same signing/verification as [`Ed25519`], but key IDs use BLAKE3-256
+    /// instead of the legacy salted Blake2b-MAC. Produces `ioz…` / `poz…` / `soz…` strings.
+    Ed25519Blake3,
 }
 
 impl CipherSuite {
@@ -57,6 +62,7 @@ impl CipherSuite {
         match self {
             Self::Ed25519 => b'e',
             Self::Secp256k1 => b's',
+            Self::Ed25519Blake3 => b'o',
         }
     }
 
@@ -68,6 +74,7 @@ impl CipherSuite {
         match c {
             'e' => Ok(Self::Ed25519),
             's' => Ok(Self::Secp256k1),
+            'o' => Ok(Self::Ed25519Blake3),
             _ => bail!("Unknown crypto suite '{c}'"),
         }
     }

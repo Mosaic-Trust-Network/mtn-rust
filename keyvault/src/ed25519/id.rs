@@ -13,13 +13,18 @@ type HashSize = U16;
 /// hash of the public key with the same algorithm.
 pub const KEY_ID_SALT: &[u8; 17] = b"open social graph";
 
-/// The size of the key identifier in bytes. Since a version byte is prepended to the
-/// hash result, it is not a standard size.
+/// The size of the legacy key identifier in bytes (version byte + 128-bit Blake2b MAC).
 pub const KEY_ID_SIZE: usize = <HashSize as Unsigned>::USIZE + VERSION_SIZE;
 
 /// The serialized byte representation for the legacy morpheus non-multihash algorithm
 /// applied on the public key to obtain the key identifier
 pub const KEY_ID_VERSION1: u8 = b'\x01';
+
+/// Version byte for Blake3-derived key identifiers (multihash prefix for blake3).
+pub const KEY_ID_VERSION_BLAKE3: u8 = b'\x1e';
+
+/// The size of a Blake3 key identifier in bytes (version byte + 256-bit Blake3 hash).
+pub const BLAKE3_KEY_ID_SIZE: usize = 32 + VERSION_SIZE;
 
 /// A trait that makes it possible to use different hashing strategies for calculating key ids from public keys
 pub trait IdHasher {
@@ -56,7 +61,7 @@ impl IdHasher for LegacyV1 {
 pub struct Blake3;
 
 impl IdHasher for Blake3 {
-    const VERSION_BYTE: u8 = b'\x1e';
+    const VERSION_BYTE: u8 = KEY_ID_VERSION_BLAKE3;
 
     fn hash(pk: &EdPublicKey) -> Vec<u8> {
         let hash = blake3::hash(&pk.to_bytes());
@@ -78,19 +83,25 @@ impl EdKeyId {
 
     /// Creates a key id from a byte slice possibly returned by the [`to_bytes`] method.
     ///
-    /// # Error
-    /// If `bytes` is not [`KEY_ID_SIZE`] long
+    /// Accepts both legacy V1 key IDs (17 bytes, version `0x01`) and
+    /// Blake3 key IDs (33 bytes, version `0x1e`).
     ///
-    /// [`to_bytes`]: #method.to_bytes
-    /// [`KEY_ID_SIZE`]: ../constant.KEY_ID_SIZE
+    /// # Error
+    /// If `bytes` has an unrecognised version byte or wrong length for its version.
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
         let bytes = bytes.as_ref();
-        ensure!(bytes.len() == KEY_ID_SIZE, "Identifier length is not {KEY_ID_SIZE}");
-        ensure!(
-            bytes[0] == KEY_ID_VERSION1,
-            "Only identifier version {KEY_ID_VERSION1:x} is supported"
-        );
-        Ok(Self(bytes.to_owned()))
+        match bytes.first() {
+            Some(&KEY_ID_VERSION1) => {
+                ensure!(bytes.len() == KEY_ID_SIZE, "Legacy key id must be {KEY_ID_SIZE} bytes");
+                Ok(Self(bytes.to_owned()))
+            }
+            Some(&KEY_ID_VERSION_BLAKE3) => {
+                ensure!(bytes.len() == BLAKE3_KEY_ID_SIZE, "Blake3 key id must be {BLAKE3_KEY_ID_SIZE} bytes");
+                Ok(Self(bytes.to_owned()))
+            }
+            Some(v) => bail!("Unknown key id version byte 0x{v:02x}"),
+            None => bail!("Empty key id bytes"),
+        }
     }
 
     /// Creates a key id from a public key using a hashing strategy.

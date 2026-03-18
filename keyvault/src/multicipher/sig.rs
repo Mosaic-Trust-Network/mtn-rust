@@ -6,6 +6,7 @@ use super::*;
 #[derive(Clone, Eq, PartialEq)]
 pub enum MSignature {
     /// The signature tagged with this variant belongs to the [`ed25519`] module
+    /// using the legacy Blake2b-MAC key ID derivation.
     ///
     /// [`ed25519`]: ../ed25519/index.html
     Ed25519(EdSignature),
@@ -13,6 +14,8 @@ pub enum MSignature {
     ///
     /// [`secp256k1`]: ../secp256k1/index.html
     Secp256k1(SecpSignature),
+    /// Ed25519 signature produced under the Blake3 cipher suite.
+    Ed25519Blake3(EdSignature),
 }
 
 impl MSignature {
@@ -24,6 +27,7 @@ impl MSignature {
         match self {
             Self::Ed25519(_) => CipherSuite::Ed25519,
             Self::Secp256k1(_) => CipherSuite::Secp256k1,
+            Self::Ed25519Blake3(_) => CipherSuite::Ed25519Blake3,
         }
     }
 
@@ -44,6 +48,7 @@ impl MSignature {
         match self {
             Self::Ed25519(edsig) => edsig.to_bytes(),
             Self::Secp256k1(secpsig) => secpsig.to_bytes(),
+            Self::Ed25519Blake3(edsig) => edsig.to_bytes(),
         }
     }
 
@@ -51,6 +56,7 @@ impl MSignature {
         match CipherSuite::from_char(suite)? {
             CipherSuite::Ed25519 => Ok(Self::Ed25519(EdSignature::from_bytes(inner_bytes)?)),
             CipherSuite::Secp256k1 => Ok(Self::Secp256k1(SecpSignature::from_bytes(inner_bytes)?)),
+            CipherSuite::Ed25519Blake3 => Ok(Self::Ed25519Blake3(EdSignature::from_bytes(inner_bytes)?)),
         }
     }
 }
@@ -311,6 +317,93 @@ mod test {
                 "af82",
                 "sez86ALkZRspsufndsFkaT3GS5m4FHxUTGhBPRpdqqgfdgCMPWzDvxHjVAZXQNVPH8vHohuRkLtEWtT9guyscG2WsZB",
             );
+        }
+    }
+
+    /// Pinned test vectors for `CipherSuite::Ed25519Blake3` (`'o'`).
+    /// Uses the same RFC 8032 secret keys as the legacy Ed25519 tests above.
+    /// Signatures are identical (same Ed25519 crypto), but key IDs differ
+    /// because Blake3-256 replaces the legacy salted Blake2b-MAC.
+    mod blake3_sign_verify {
+        use crate::ed25519::EdPrivateKey;
+        use crate::multicipher::MPrivateKey;
+        use crate::{PrivateKey, PublicKey};
+
+        fn test(sk_hex: &str, mpk_str: &str, mkid_str: &str, msg_hex: &str, msig_str: &str) {
+            let sk_bytes = hex::decode(sk_hex).unwrap();
+            let ed_sk = EdPrivateKey::from_bytes(sk_bytes.as_slice()).unwrap();
+            let msk = MPrivateKey::Ed25519Blake3(ed_sk);
+
+            let mpk = msk.public_key();
+            assert_eq!(mpk.to_string(), mpk_str);
+
+            let mkid = mpk.key_id();
+            assert_eq!(mkid.to_string(), mkid_str);
+            assert!(mpk.validate_id(&mkid));
+
+            let msg = hex::decode(msg_hex.replace(' ', "")).unwrap();
+            let msig = msk.sign(msg.as_slice());
+            assert_eq!(msig.to_string(), msig_str);
+
+            assert!(mpk.verify(msg, &msig));
+        }
+
+        #[test]
+        fn char_0() {
+            test(
+                "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+                "pozFVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z",
+                "iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb",
+                "",
+                "sozAhoNep8B9HTRCAYaJFPL1hNgqxfjM72UD4B75s258aF6pPCtDf5trXm7mppZVzT6ynpC3jyH6h3Li7r9Rw4yjeG2",
+            );
+        }
+
+        #[test]
+        fn char_1() {
+            test(
+                "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+                "poz586Z7H2vpX9qNhN2T4e9Utugie3ogjbxzGaMtM3E6HR5",
+                "ioz9vyZuggU6zUfTpssvhYTy9Sd8NrhJ8ftrBATa3GsS4cf6",
+                "72",
+                "soz93tR11WBTZjw25Ht3CgaiSaC5rb3GnkAcaAUznjomtVj6Ac4rzQ4df9Fvy1uitGe8ZSBiG4Q5ukaVo5sjMpAwkxX",
+            );
+        }
+
+        #[test]
+        fn char_2() {
+            test(
+                "c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7",
+                "pozHyx62wPQGyvXCoihZq1BrbUjBRh2LuNxWiiqMkfAuSZr",
+                "iozA4oFDGCmB6bFcdQcQ54pXDKL2VUBtBx5ny5dUpbQRFpwX",
+                "af82",
+                "soz86ALkZRspsufndsFkaT3GS5m4FHxUTGhBPRpdqqgfdgCMPWzDvxHjVAZXQNVPH8vHohuRkLtEWtT9guyscG2WsZB",
+            );
+        }
+
+        #[test]
+        fn cross_suite_verification_fails() {
+            let sk_hex = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+            let sk_bytes = hex::decode(sk_hex).unwrap();
+            let ed_sk = EdPrivateKey::from_bytes(sk_bytes.as_slice()).unwrap();
+
+            let legacy_sk = MPrivateKey::from(ed_sk.clone());
+            let blake3_sk = MPrivateKey::Ed25519Blake3(ed_sk);
+
+            let msg = b"cross suite test";
+            let legacy_sig = legacy_sk.sign(msg.as_ref());
+            let blake3_sig = blake3_sk.sign(msg.as_ref());
+
+            let legacy_pk = legacy_sk.public_key();
+            let blake3_pk = blake3_sk.public_key();
+
+            // Same suite verification works
+            assert!(legacy_pk.verify(msg.as_ref(), &legacy_sig));
+            assert!(blake3_pk.verify(msg.as_ref(), &blake3_sig));
+
+            // Cross-suite verification fails (type mismatch)
+            assert!(!legacy_pk.verify(msg.as_ref(), &blake3_sig));
+            assert!(!blake3_pk.verify(msg.as_ref(), &legacy_sig));
         }
     }
 }

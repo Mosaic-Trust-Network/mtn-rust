@@ -6,6 +6,7 @@ use super::*;
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MKeyId {
     /// The key id tagged with this variant belongs to the [`ed25519`] module
+    /// using the legacy Blake2b-MAC key ID derivation.
     ///
     /// [`ed25519`]: ../ed25519/index.html
     Ed25519(EdKeyId),
@@ -13,6 +14,8 @@ pub enum MKeyId {
     ///
     /// [`secp256k1`]: ../secp256k1/index.html
     Secp256k1(SecpKeyId),
+    /// Ed25519 key id derived via Blake3 hashing. Same inner type, different derivation.
+    Ed25519Blake3(EdKeyId),
 }
 
 impl MKeyId {
@@ -24,6 +27,7 @@ impl MKeyId {
         match self {
             Self::Ed25519(_) => CipherSuite::Ed25519,
             Self::Secp256k1(_) => CipherSuite::Secp256k1,
+            Self::Ed25519Blake3(_) => CipherSuite::Ed25519Blake3,
         }
     }
 
@@ -44,6 +48,7 @@ impl MKeyId {
         match self {
             Self::Ed25519(edid) => edid.to_bytes(),
             Self::Secp256k1(secpid) => secpid.to_bytes(),
+            Self::Ed25519Blake3(edid) => edid.to_bytes(),
         }
     }
 
@@ -51,6 +56,7 @@ impl MKeyId {
         match CipherSuite::from_char(suite)? {
             CipherSuite::Ed25519 => Ok(Self::Ed25519(EdKeyId::from_bytes(inner_bytes)?)),
             CipherSuite::Secp256k1 => Ok(Self::Secp256k1(SecpKeyId::from_bytes(inner_bytes)?)),
+            CipherSuite::Ed25519Blake3 => Ok(Self::Ed25519Blake3(EdKeyId::from_bytes(inner_bytes)?)),
         }
     }
 }
@@ -205,6 +211,88 @@ mod test {
         #[should_panic(expected = "Identifiers must start with 'i'")]
         fn empty() {
             let _id = "".parse::<MKeyId>().unwrap();
+        }
+    }
+
+    /// Pinned test vectors for Blake3-derived key IDs.
+    /// If Blake3 output changes, these tests break immediately.
+    mod blake3_key_id {
+        use crate::ed25519::{Blake3, EdKeyId, EdPublicKey};
+        use crate::multicipher::{CipherSuite, MKeyId};
+        use crate::PublicKey;
+
+        /// Pinned: pk 8fe969... → Blake3 key id
+        #[test]
+        fn case_1() {
+            let pk_bytes = hex::decode(
+                "8fe9693f8fa62a4305a140b9764c5ee01e455963744fe18204b4fb948249308a",
+            ).unwrap();
+            let pk = EdPublicKey::from_bytes(&pk_bytes).unwrap();
+            let blake3_id = EdKeyId::from_pk::<Blake3>(&pk);
+            let m_id = MKeyId::Ed25519Blake3(blake3_id.clone());
+
+            // Pinned string representation
+            assert_eq!(m_id.to_string(), "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH");
+
+            // Pinned inner bytes (version 0x1e + 32-byte Blake3 hash)
+            assert_eq!(
+                hex::encode(blake3_id.to_bytes()),
+                "1e09031c1f8bf271dad54c2e1ebad9c9b4cc6f729ed5aea61e73c2c185a3067394",
+            );
+
+            // String roundtrip
+            let parsed = "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH".parse::<MKeyId>().unwrap();
+            assert_eq!(parsed, m_id);
+            assert_eq!(parsed.suite(), CipherSuite::Ed25519Blake3);
+
+            // Must differ from legacy Blake2b key id for the same public key
+            let legacy_id = MKeyId::from(pk.key_id());
+            assert_eq!(legacy_id.to_string(), "iezpmXKKc2QRZpXbzGV62MgKe");
+            assert_ne!(legacy_id, m_id);
+        }
+
+        /// Pinned: pk d75a98... → Blake3 key id
+        #[test]
+        fn case_2() {
+            let pk_bytes = hex::decode(
+                "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+            ).unwrap();
+            let pk = EdPublicKey::from_bytes(&pk_bytes).unwrap();
+            let blake3_id = EdKeyId::from_pk::<Blake3>(&pk);
+            let m_id = MKeyId::Ed25519Blake3(blake3_id.clone());
+
+            assert_eq!(m_id.to_string(), "iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb");
+            assert_eq!(
+                hex::encode(blake3_id.to_bytes()),
+                "1e6c31041268f471609c79f5f2dbcc38e4a4ab2f4d416109a4e09fcf50fd0f0062",
+            );
+
+            // Bytes roundtrip: 33 bytes = version(1) + blake3(32)
+            let id_bytes = blake3_id.to_bytes();
+            assert_eq!(id_bytes.len(), 33);
+            assert_eq!(id_bytes[0], 0x1e);
+            let roundtripped = EdKeyId::from_bytes(&id_bytes).unwrap();
+            assert_eq!(roundtripped, blake3_id);
+
+            // Legacy comparison
+            let legacy_id = MKeyId::from(pk.key_id());
+            assert_eq!(legacy_id.to_string(), "iezZH3E9fRxfv1a1iPiK6gXxu");
+            assert_ne!(legacy_id, m_id);
+        }
+
+        #[test]
+        fn blake3_serde_roundtrip() {
+            let pk_bytes = hex::decode(
+                "8fe9693f8fa62a4305a140b9764c5ee01e455963744fe18204b4fb948249308a",
+            )
+            .unwrap();
+            let pk = EdPublicKey::from_bytes(&pk_bytes).unwrap();
+            let m_id = MKeyId::Ed25519Blake3(EdKeyId::from_pk::<Blake3>(&pk));
+
+            let bin = rmp_serde::to_vec(&m_id).unwrap();
+            let deser: MKeyId = rmp_serde::from_slice(&bin).unwrap();
+            assert_eq!(deser, m_id);
+            assert_eq!(deser.to_string(), m_id.to_string());
         }
     }
 

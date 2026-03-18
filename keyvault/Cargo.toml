@@ -20,7 +20,7 @@ digest = { workspace = true }
 ed25519-dalek = { workspace = true }
 rand = { workspace = true }
 getrandom = { workspace = true }
-hex = { workspace = true }
+hex = { workspace = true, features = ["std"] }
 hmac = { workspace = true }
 # Unfortunately the crate name of the libsecp256k1 collides with the perfect module name
 # for the cipher, so we rename the dependency here:

@@ -6,6 +6,7 @@ use super::*;
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MPublicKey {
     /// The public key tagged with this variant belongs to the [`ed25519`] module
+    /// using the legacy Blake2b-MAC key ID derivation.
     ///
     /// [`ed25519`]: ../ed25519/index.html
     Ed25519(EdPublicKey),
@@ -13,6 +14,8 @@ pub enum MPublicKey {
     ///
     /// [`secp256k1`]: ../secp256k1/index.html
     Secp256k1(SecpPublicKey),
+    /// Ed25519 public key with Blake3 key ID derivation.
+    Ed25519Blake3(EdPublicKey),
 }
 
 impl MPublicKey {
@@ -24,6 +27,7 @@ impl MPublicKey {
         match self {
             Self::Ed25519(_) => CipherSuite::Ed25519,
             Self::Secp256k1(_) => CipherSuite::Secp256k1,
+            Self::Ed25519Blake3(_) => CipherSuite::Ed25519Blake3,
         }
     }
 
@@ -44,6 +48,7 @@ impl MPublicKey {
         match self {
             Self::Ed25519(edpk) => edpk.to_bytes(),
             Self::Secp256k1(secppk) => secppk.to_bytes(),
+            Self::Ed25519Blake3(edpk) => edpk.to_bytes(),
         }
     }
 
@@ -51,6 +56,7 @@ impl MPublicKey {
         match CipherSuite::from_char(suite)? {
             CipherSuite::Ed25519 => Ok(Self::Ed25519(EdPublicKey::from_bytes(inner_bytes)?)),
             CipherSuite::Secp256k1 => Ok(Self::Secp256k1(SecpPublicKey::from_bytes(inner_bytes)?)),
+            CipherSuite::Ed25519Blake3 => Ok(Self::Ed25519Blake3(EdPublicKey::from_bytes(inner_bytes)?)),
         }
     }
 }
@@ -60,6 +66,10 @@ impl PublicKey<MultiCipher> for MPublicKey {
         match self {
             Self::Ed25519(edpk) => MKeyId::from(edpk.key_id()),
             Self::Secp256k1(secppk) => MKeyId::from(secppk.key_id()),
+            Self::Ed25519Blake3(edpk) => {
+                use crate::ed25519::Blake3;
+                MKeyId::Ed25519Blake3(EdKeyId::from_pk::<Blake3>(edpk))
+            }
         }
     }
 
@@ -73,6 +83,13 @@ impl PublicKey<MultiCipher> for MPublicKey {
             Self::Secp256k1(secppk) => {
                 if let MKeyId::Secp256k1(secpid) = key_id {
                     return secppk.validate_id(secpid);
+                }
+            }
+            Self::Ed25519Blake3(edpk) => {
+                if let MKeyId::Ed25519Blake3(edid) = key_id {
+                    use crate::ed25519::Blake3;
+                    let derived = EdKeyId::from_pk::<Blake3>(edpk);
+                    return &derived == edid;
                 }
             }
         };
@@ -90,6 +107,11 @@ impl PublicKey<MultiCipher> for MPublicKey {
             Self::Secp256k1(secppk) => {
                 if let MSignature::Secp256k1(secpsig) = sig {
                     return secppk.verify(data, secpsig);
+                }
+            }
+            Self::Ed25519Blake3(edpk) => {
+                if let MSignature::Ed25519Blake3(edsig) = sig {
+                    return edpk.verify(data, edsig);
                 }
             }
         };
