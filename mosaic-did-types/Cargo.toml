@@ -19,6 +19,11 @@ serde_json = { workspace = true }
 parity-scale-codec = { workspace = true, optional = true }
 scale-info = { workspace = true, optional = true }
 
+# Bounded collections for on-chain types — optional, enabled with "substrate" feature.
+# This is the same crate that frame-support/sp-runtime re-export, so types are
+# fully compatible with pallet code without any adapters.
+bounded-collections = { version = "0.2.4", default-features = false, optional = true }
+
 # IOP reuse (keyvault crypto is blockchain-agnostic)
 iop-keyvault.workspace = true
 
@@ -35,5 +40,6 @@ std = [
     "serde_json/std",
     "parity-scale-codec?/std",
     "scale-info?/std",
+    "bounded-collections?/std",
 ]
-substrate = ["parity-scale-codec", "scale-info"]
+substrate = ["parity-scale-codec", "scale-info", "bounded-collections"]

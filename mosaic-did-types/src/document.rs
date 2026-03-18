@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::did::{Did, KeyRef};
 use crate::operation::{KeyPurpose, KeyType, Right};
+use crate::validity::is_height_valid;
 
 /// A verification method in the DID Document.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,21 +40,9 @@ pub struct VerificationMethod {
 
 impl VerificationMethod {
     /// Returns whether this key is valid (not expired, not revoked) at the given height.
+    #[inline]
     pub fn is_valid_at(&self, height: u32) -> bool {
-        if height < self.added_at_height {
-            return false;
-        }
-        if let Some(expires) = self.expires_at_height {
-            if height >= expires {
-                return false;
-            }
-        }
-        if let Some(revoked) = self.revoked_at_height {
-            if height >= revoked {
-                return false;
-            }
-        }
-        true
+        is_height_valid(height, self.added_at_height, self.expires_at_height, self.revoked_at_height)
     }
 }
 
@@ -78,21 +67,14 @@ pub struct RightGrant {
 
 impl RightGrant {
     /// Returns whether this right grant is active at the given height.
+    #[inline]
     pub fn is_active_at(&self, height: u32) -> bool {
-        if height < self.granted_at_height {
-            return false;
-        }
-        if let Some(expires) = self.expires_at_height {
-            if height >= expires {
-                return false;
-            }
-        }
-        if let Some(revoked) = self.revoked_at_height {
-            if height >= revoked {
-                return false;
-            }
-        }
-        true
+        is_height_valid(
+            height,
+            self.granted_at_height,
+            self.expires_at_height,
+            self.revoked_at_height,
+        )
     }
 }
 

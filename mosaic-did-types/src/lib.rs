@@ -27,8 +27,16 @@ pub mod did;
 pub mod document;
 pub mod operation;
 pub mod signature;
+pub mod validity;
+
+#[cfg(feature = "substrate")]
+pub mod on_chain;
 
 pub use did::*;
 pub use document::*;
 pub use operation::*;
 pub use signature::*;
+pub use validity::is_height_valid;
+
+#[cfg(feature = "substrate")]
+pub use on_chain::*;
