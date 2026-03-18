@@ -100,7 +100,7 @@ pub mod pallet {
         /// A key was added to a DID document.
         KeyAdded {
             did: Did,
-            key_id: Vec<u8>,
+            key_ref: Vec<u8>,
             key_type: KeyType,
             public_key: Vec<u8>,
             purposes: Vec<KeyPurpose>,
@@ -109,19 +109,19 @@ pub mod pallet {
         },
 
         /// A key was revoked from a DID document.
-        KeyRevoked { did: Did, key_id: Vec<u8>, block_height: BlockNumberFor<T> },
+        KeyRevoked { did: Did, key_ref: Vec<u8>, block_height: BlockNumberFor<T> },
 
         /// A right was granted to a key.
         RightAdded {
             did: Did,
-            key_id: Vec<u8>,
+            key_ref: Vec<u8>,
             right: Right,
             expires_at_height: Option<u32>,
             block_height: BlockNumberFor<T>,
         },
 
         /// A right was revoked from a key.
-        RightRevoked { did: Did, key_id: Vec<u8>, right: Right, block_height: BlockNumberFor<T> },
+        RightRevoked { did: Did, key_ref: Vec<u8>, right: Right, block_height: BlockNumberFor<T> },
 
         /// DID permanently deactivated.
         DidTombstoned { did: Did, block_height: BlockNumberFor<T> },
@@ -274,14 +274,14 @@ pub mod pallet {
 
                         state.keys.try_push(vm).map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         state
-                            .update_nonce(&signed_op.signer_key_id, signed_op.nonce)
+                            .update_nonce(&signed_op.signer_key_ref, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;
 
                     Self::deposit_event(Event::KeyAdded {
                         did,
-                        key_id: key_ref.as_bytes().to_vec(),
+                        key_ref: key_ref.as_bytes().to_vec(),
                         key_type,
                         public_key: mpk.raw_bytes(),
                         purposes: purposes.to_vec(),
@@ -290,27 +290,27 @@ pub mod pallet {
                     });
                 }
 
-                DidOperation::RevokeKey { did: _, key_id } => {
+                DidOperation::RevokeKey { did: _, key_ref } => {
                     DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                        let key = state.find_key_mut(key_id).ok_or(Error::<T>::KeyNotFound)?;
+                        let key = state.find_key_mut(key_ref).ok_or(Error::<T>::KeyNotFound)?;
                         key.revoked_at_height = Some(height_u32);
                         state
-                            .update_nonce(&signed_op.signer_key_id, signed_op.nonce)
+                            .update_nonce(&signed_op.signer_key_ref, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;
 
                     Self::deposit_event(Event::KeyRevoked {
                         did: did.clone(),
-                        key_id: key_id.as_bytes().to_vec(),
+                        key_ref: key_ref.as_bytes().to_vec(),
                         block_height,
                     });
                 }
 
-                DidOperation::AddRight { did: _, key_id, right, expires_at_height } => {
+                DidOperation::AddRight { did: _, key_ref, right, expires_at_height } => {
                     let grant = RightGrant {
-                        key_id: key_id.clone(),
+                        key_ref: key_ref.clone(),
                         right: *right,
                         granted_at_height: height_u32,
                         expires_at_height: *expires_at_height,
@@ -324,21 +324,21 @@ pub mod pallet {
                             .try_push(grant)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         state
-                            .update_nonce(&signed_op.signer_key_id, signed_op.nonce)
+                            .update_nonce(&signed_op.signer_key_ref, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;
 
                     Self::deposit_event(Event::RightAdded {
                         did: did.clone(),
-                        key_id: key_id.as_bytes().to_vec(),
+                        key_ref: key_ref.as_bytes().to_vec(),
                         right: *right,
                         expires_at_height: *expires_at_height,
                         block_height,
                     });
                 }
 
-                DidOperation::RevokeRight { did: _, key_id, right } => {
+                DidOperation::RevokeRight { did: _, key_ref, right } => {
                     DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
                         let grant = state
@@ -346,21 +346,21 @@ pub mod pallet {
                             .iter_mut()
                             .rev()
                             .find(|rg| {
-                                rg.key_id == *key_id
+                                rg.key_ref == *key_ref
                                     && rg.right == *right
                                     && rg.revoked_at_height.is_none()
                             })
                             .ok_or(Error::<T>::RightNotFound)?;
                         grant.revoked_at_height = Some(height_u32);
                         state
-                            .update_nonce(&signed_op.signer_key_id, signed_op.nonce)
+                            .update_nonce(&signed_op.signer_key_ref, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;
 
                     Self::deposit_event(Event::RightRevoked {
                         did: did.clone(),
-                        key_id: key_id.as_bytes().to_vec(),
+                        key_ref: key_ref.as_bytes().to_vec(),
                         right: *right,
                         block_height,
                     });
@@ -371,7 +371,7 @@ pub mod pallet {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
                         state.tombstoned_at_height = Some(height_u32);
                         state
-                            .update_nonce(&signed_op.signer_key_id, signed_op.nonce)
+                            .update_nonce(&signed_op.signer_key_ref, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;

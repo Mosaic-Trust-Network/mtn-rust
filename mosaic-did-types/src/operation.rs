@@ -127,19 +127,19 @@ pub enum DidOperation {
     },
 
     /// Revoke an existing key from the DID document.
-    RevokeKey { did: Did, key_id: KeyRef },
+    RevokeKey { did: Did, key_ref: KeyRef },
 
     /// Grant a right to a key.
     AddRight {
         did: Did,
-        key_id: KeyRef,
+        key_ref: KeyRef,
         right: Right,
         /// Optional block height at which this right grant expires.
         expires_at_height: Option<u32>,
     },
 
     /// Revoke a right from a key.
-    RevokeRight { did: Did, key_id: KeyRef, right: Right },
+    RevokeRight { did: Did, key_ref: KeyRef, right: Right },
 
     /// Permanently deactivate the DID. Irreversible.
     ///
@@ -195,8 +195,8 @@ pub enum SsiOperation {
 pub struct SignedDidOperation {
     /// The DID operation to execute.
     pub operation: DidOperation,
-    /// The key identifier of the signer within the target DID document.
-    pub signer_key_id: KeyRef,
+    /// The key reference of the signer within the target DID document.
+    pub signer_key_ref: KeyRef,
     /// Cryptographic signature over the operation.
     pub signature: MultiSignature,
     /// Monotonic nonce for replay protection (per-DID, per-key).
@@ -262,7 +262,7 @@ mod tests {
     #[test]
     fn operation_type_conversion() {
         let did = Did::alice();
-        let key_id: KeyRef = "key-1".parse().unwrap();
+        let key_ref: KeyRef = "key-1".parse().unwrap();
 
         let ops = alloc::vec![
             DidOperation::AddKey {
@@ -271,14 +271,14 @@ mod tests {
                 purposes: BoundedVec::default(),
                 expires_at_height: None,
             },
-            DidOperation::RevokeKey { did: did.clone(), key_id: key_id.clone() },
+            DidOperation::RevokeKey { did: did.clone(), key_ref: key_ref.clone() },
             DidOperation::AddRight {
                 did: did.clone(),
-                key_id: key_id.clone(),
+                key_ref: key_ref.clone(),
                 right: Right::Update,
                 expires_at_height: None,
             },
-            DidOperation::RevokeRight { did: did.clone(), key_id: key_id.clone(), right: Right::Update },
+            DidOperation::RevokeRight { did: did.clone(), key_ref: key_ref.clone(), right: Right::Update },
             DidOperation::TombstoneDid { did },
         ];
 

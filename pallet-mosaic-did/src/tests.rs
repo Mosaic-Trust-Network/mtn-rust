@@ -84,17 +84,17 @@ mod unit_tests {
     #[test]
     fn rights_system() {
         let did = did_1();
-        let key_id: KeyRef = "key-1".parse().unwrap();
+        let key_ref: KeyRef = "key-1".parse().unwrap();
 
         let add_right = DidOperation::AddRight {
             did: did.clone(),
-            key_id: key_id.clone(),
+            key_ref: key_ref.clone(),
             right: Right::Issue,
             expires_at_height: None,
         };
         assert_eq!(add_right.required_right(), Right::Delegate);
 
-        let revoke_right = DidOperation::RevokeRight { did, key_id, right: Right::Issue };
+        let revoke_right = DidOperation::RevokeRight { did, key_ref, right: Right::Issue };
         assert_eq!(revoke_right.required_right(), Right::Delegate);
     }
 
@@ -129,7 +129,7 @@ mod unit_tests {
     fn signed_operation_construction() {
         let did = did_1();
         let auth = auth_1();
-        let signer_key_id = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
+        let signer_key_ref = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
 
         let signed_op = SignedDidOperation {
             operation: DidOperation::AddKey {
@@ -138,7 +138,7 @@ mod unit_tests {
                 purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
                 expires_at_height: None,
             },
-            signer_key_id,
+            signer_key_ref,
             signature: MultiSignature::ed25519([1u8; 64]),
             nonce: 1,
         };
@@ -151,7 +151,7 @@ mod unit_tests {
     fn ssi_operation_variants() {
         let did = did_1();
         let auth = auth_1();
-        let signer_key_id = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
+        let signer_key_ref = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
 
         let did_op = SsiOperation::Did(SignedDidOperation {
             operation: DidOperation::AddKey {
@@ -160,7 +160,7 @@ mod unit_tests {
                 purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
                 expires_at_height: None,
             },
-            signer_key_id,
+            signer_key_ref,
             signature: MultiSignature::ed25519([1u8; 64]),
             nonce: 1,
         });
@@ -270,21 +270,21 @@ mod unit_tests {
         #[test]
         fn initial_key_has_implicit_rights() {
             let state = make_test_state();
-            let key_id = "key-1".parse().unwrap();
+            let key_ref = "key-1".parse().unwrap();
 
-            assert!(state.has_right_at(&key_id, Right::Update, 1));
-            assert!(state.has_right_at(&key_id, Right::Impersonate, 1));
-            assert!(state.has_right_at(&key_id, Right::Delegate, 1));
-            assert!(!state.has_right_at(&key_id, Right::Issue, 1));
+            assert!(state.has_right_at(&key_ref, Right::Update, 1));
+            assert!(state.has_right_at(&key_ref, Right::Impersonate, 1));
+            assert!(state.has_right_at(&key_ref, Right::Delegate, 1));
+            assert!(!state.has_right_at(&key_ref, Right::Issue, 1));
         }
 
         #[test]
         fn explicit_right_grant() {
             let mut state = make_test_state();
-            let key_id: KeyRef = "key-1".parse().unwrap();
+            let key_ref: KeyRef = "key-1".parse().unwrap();
 
             let grant = RightGrant {
-                key_id: key_id.clone(),
+                key_ref: key_ref.clone(),
                 right: Right::Issue,
                 granted_at_height: 10,
                 expires_at_height: Some(100),
@@ -292,18 +292,18 @@ mod unit_tests {
             };
             state.rights.try_push(grant).unwrap();
 
-            assert!(!state.has_right_at(&key_id, Right::Issue, 9));
-            assert!(state.has_right_at(&key_id, Right::Issue, 10));
-            assert!(state.has_right_at(&key_id, Right::Issue, 99));
-            assert!(!state.has_right_at(&key_id, Right::Issue, 100));
+            assert!(!state.has_right_at(&key_ref, Right::Issue, 9));
+            assert!(state.has_right_at(&key_ref, Right::Issue, 10));
+            assert!(state.has_right_at(&key_ref, Right::Issue, 99));
+            assert!(!state.has_right_at(&key_ref, Right::Issue, 100));
         }
 
         #[test]
         fn nonce_management() {
             let state = make_test_state();
-            let key_id = "key-1".parse().unwrap();
+            let key_ref = "key-1".parse().unwrap();
             let unknown = "key-nonexistent".parse().unwrap();
-            assert_eq!(state.nonce_for_key(&key_id), 0);
+            assert_eq!(state.nonce_for_key(&key_ref), 0);
             assert_eq!(state.nonce_for_key(&unknown), 0);
         }
 
@@ -363,7 +363,7 @@ mod unit_tests {
     fn eurosign_workflow_types() {
         let signer_did = did_1();
         let auth = auth_1();
-        let signer_key_id = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
+        let signer_key_ref = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
 
         let create_op = SsiOperation::Did(SignedDidOperation {
             operation: DidOperation::AddKey {
@@ -374,7 +374,7 @@ mod unit_tests {
                     .unwrap(),
                 expires_at_height: None,
             },
-            signer_key_id,
+            signer_key_ref,
             signature: MultiSignature::ed25519([1u8; 64]),
             nonce: 1,
         });

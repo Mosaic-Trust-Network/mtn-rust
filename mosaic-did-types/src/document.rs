@@ -72,7 +72,7 @@ impl VerificationMethod {
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct RightGrant {
     /// The key this right is granted to.
-    pub key_id: KeyRef,
+    pub key_ref: KeyRef,
     /// The right granted.
     pub right: Right,
     /// Block height at which the right was granted.
@@ -140,13 +140,13 @@ impl DidState {
     }
 
     /// Find a key by its KeyRef.
-    pub fn find_key(&self, key_id: &KeyRef) -> Option<&VerificationMethod> {
-        self.keys.iter().find(|k| k.id == *key_id)
+    pub fn find_key(&self, key_ref: &KeyRef) -> Option<&VerificationMethod> {
+        self.keys.iter().find(|k| k.id == *key_ref)
     }
 
     /// Find a key by its KeyRef (mutable).
-    pub fn find_key_mut(&mut self, key_id: &KeyRef) -> Option<&mut VerificationMethod> {
-        self.keys.iter_mut().find(|k| k.id == *key_id)
+    pub fn find_key_mut(&mut self, key_ref: &KeyRef) -> Option<&mut VerificationMethod> {
+        self.keys.iter_mut().find(|k| k.id == *key_ref)
     }
 
     /// Returns all currently valid keys at the given height.
@@ -158,12 +158,12 @@ impl DidState {
     ///
     /// Both the key itself and the right grant must be valid at the given height.
     /// A revoked or expired key has no rights, even if the grant is still active.
-    pub fn has_right_at(&self, key_id: &KeyRef, right: Right, height: u32) -> bool {
+    pub fn has_right_at(&self, key_ref: &KeyRef, right: Right, height: u32) -> bool {
         // The initial key (first key added) implicitly has Update, Impersonate, and
         // Delegate rights. Delegate is required to bootstrap the rights system (grant
         // rights to other keys). Without it, AddRight/RevokeRight are unreachable.
         if let Some(first_key) = self.keys.first() {
-            if first_key.id == *key_id && first_key.is_valid_at(height) {
+            if first_key.id == *key_ref && first_key.is_valid_at(height) {
                 match right {
                     Right::Update | Right::Impersonate | Right::Delegate => return true,
                     _ => {}
@@ -173,29 +173,29 @@ impl DidState {
 
         // For explicit rights: the key must be valid AND the grant must be active.
         // A revoked/expired key is cryptographically dead -- no rights survive revocation.
-        let key_valid = self.keys.iter().any(|k| k.id == *key_id && k.is_valid_at(height));
+        let key_valid = self.keys.iter().any(|k| k.id == *key_ref && k.is_valid_at(height));
 
         key_valid
             && self
                 .rights
                 .iter()
-                .any(|rg| rg.key_id == *key_id && rg.right == right && rg.is_active_at(height))
+                .any(|rg| rg.key_ref == *key_ref && rg.right == right && rg.is_active_at(height))
     }
 
     /// Get the current nonce for a key.
-    pub fn nonce_for_key(&self, key_id: &KeyRef) -> u64 {
-        self.nonces.get(key_id).copied().unwrap_or(0)
+    pub fn nonce_for_key(&self, key_ref: &KeyRef) -> u64 {
+        self.nonces.get(key_ref).copied().unwrap_or(0)
     }
 
     /// Update the nonce for a key, inserting if not present.
     ///
     /// Returns `Err` if the nonce map is full and the key is new.
-    pub fn update_nonce(&mut self, key_id: &KeyRef, nonce: u64) -> Result<(), &'static str> {
-        if let Some(existing) = self.nonces.get_mut(key_id) {
+    pub fn update_nonce(&mut self, key_ref: &KeyRef, nonce: u64) -> Result<(), &'static str> {
+        if let Some(existing) = self.nonces.get_mut(key_ref) {
             *existing = nonce;
         } else {
             self.nonces
-                .try_insert(key_id.clone(), nonce)
+                .try_insert(key_ref.clone(), nonce)
                 .map_err(|_| "nonce storage bounds exceeded")?;
         }
         Ok(())
@@ -440,23 +440,23 @@ mod tests {
     #[test]
     fn initial_key_has_implicit_rights() {
         let state = make_test_state();
-        let key_id = "key-1".parse().unwrap();
+        let key_ref = "key-1".parse().unwrap();
 
-        assert!(state.has_right_at(&key_id, Right::Update, 1));
-        assert!(state.has_right_at(&key_id, Right::Impersonate, 1));
-        assert!(state.has_right_at(&key_id, Right::Delegate, 1));
-        assert!(!state.has_right_at(&key_id, Right::Issue, 1));
+        assert!(state.has_right_at(&key_ref, Right::Update, 1));
+        assert!(state.has_right_at(&key_ref, Right::Impersonate, 1));
+        assert!(state.has_right_at(&key_ref, Right::Delegate, 1));
+        assert!(!state.has_right_at(&key_ref, Right::Issue, 1));
     }
 
     #[test]
     fn explicit_right_grant() {
         let mut state = make_test_state();
-        let key_id: KeyRef = "key-1".parse().unwrap();
+        let key_ref: KeyRef = "key-1".parse().unwrap();
 
         state
             .rights
             .try_push(RightGrant {
-                key_id: key_id.clone(),
+                key_ref: key_ref.clone(),
                 right: Right::Issue,
                 granted_at_height: 10,
                 expires_at_height: Some(100),
@@ -464,17 +464,17 @@ mod tests {
             })
             .unwrap();
 
-        assert!(!state.has_right_at(&key_id, Right::Issue, 9));
-        assert!(state.has_right_at(&key_id, Right::Issue, 10));
-        assert!(state.has_right_at(&key_id, Right::Issue, 99));
-        assert!(!state.has_right_at(&key_id, Right::Issue, 100));
+        assert!(!state.has_right_at(&key_ref, Right::Issue, 9));
+        assert!(state.has_right_at(&key_ref, Right::Issue, 10));
+        assert!(state.has_right_at(&key_ref, Right::Issue, 99));
+        assert!(!state.has_right_at(&key_ref, Right::Issue, 100));
     }
 
     #[test]
     fn nonce_defaults_to_zero() {
         let state = make_test_state();
-        let key_id = "key-1".parse().unwrap();
-        assert_eq!(state.nonce_for_key(&key_id), 0);
+        let key_ref = "key-1".parse().unwrap();
+        assert_eq!(state.nonce_for_key(&key_ref), 0);
 
         let unknown = "key-nonexistent".parse().unwrap();
         assert_eq!(state.nonce_for_key(&unknown), 0);
