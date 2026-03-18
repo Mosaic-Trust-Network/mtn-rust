@@ -236,7 +236,7 @@ pub mod pallet {
         fn apply_did_operation(
             signed_op: &SignedDidOperation, height_u32: u32, block_height: BlockNumberFor<T>,
         ) -> DispatchResult {
-            let did = *signed_op.operation.did();
+            let did = signed_op.operation.did().clone();
 
             match &signed_op.operation {
                 DidOperation::AddKey {
@@ -250,7 +250,7 @@ pub mod pallet {
                     let vm = VerificationMethod {
                         id: key_id.clone(),
                         key_type: *key_type,
-                        controller: did,
+                        controller: did.clone(),
                         public_key: public_key.clone(),
                         purposes: purposes.clone(),
                         added_at_height: height_u32,
@@ -258,8 +258,9 @@ pub mod pallet {
                         revoked_at_height: None,
                     };
 
-                    DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
-                        let state = maybe_state.get_or_insert_with(|| DidState::new(did));
+                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
+                        let state =
+                            maybe_state.get_or_insert_with(|| DidState::new(did.clone()));
 
                         ensure!(state.find_key(key_id).is_none(), Error::<T>::KeyAlreadyExists);
 
@@ -282,7 +283,7 @@ pub mod pallet {
                 }
 
                 DidOperation::RevokeKey { did: _, key_id } => {
-                    DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
+                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
                         let key = state.find_key_mut(key_id).ok_or(Error::<T>::KeyNotFound)?;
                         key.revoked_at_height = Some(height_u32);
@@ -293,7 +294,7 @@ pub mod pallet {
                     })?;
 
                     Self::deposit_event(Event::KeyRevoked {
-                        did,
+                        did: did.clone(),
                         key_id: key_id.as_bytes().to_vec(),
                         block_height,
                     });
@@ -308,7 +309,7 @@ pub mod pallet {
                         revoked_at_height: None,
                     };
 
-                    DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
+                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
                         state
                             .rights
@@ -321,7 +322,7 @@ pub mod pallet {
                     })?;
 
                     Self::deposit_event(Event::RightAdded {
-                        did,
+                        did: did.clone(),
                         key_id: key_id.as_bytes().to_vec(),
                         right: *right,
                         expires_at_height: *expires_at_height,
@@ -330,7 +331,7 @@ pub mod pallet {
                 }
 
                 DidOperation::RevokeRight { did: _, key_id, right } => {
-                    DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
+                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
                         let grant = state
                             .rights
@@ -350,7 +351,7 @@ pub mod pallet {
                     })?;
 
                     Self::deposit_event(Event::RightRevoked {
-                        did,
+                        did: did.clone(),
                         key_id: key_id.as_bytes().to_vec(),
                         right: *right,
                         block_height,
@@ -358,7 +359,7 @@ pub mod pallet {
                 }
 
                 DidOperation::TombstoneDid { did: _ } => {
-                    DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
+                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
                         state.tombstoned_at_height = Some(height_u32);
                         state

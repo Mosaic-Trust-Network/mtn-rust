@@ -230,11 +230,11 @@ mod tests {
 
     #[test]
     fn operation_did_accessor() {
-        let did = Did::from_public_key(b"test-key");
+        let did = Did::alice();
         let key_id = "key-1".parse().unwrap();
 
         let op = DidOperation::AddKey {
-            did,
+            did: did.clone(),
             key_id,
             key_type: KeyType::Ed25519,
             public_key: b"test-key".to_vec().try_into().unwrap(),
@@ -244,7 +244,7 @@ mod tests {
             expires_at_height: None,
         };
 
-        assert_eq!(*op.did(), did);
+        assert_eq!(op.did(), &did);
         assert_eq!(op.required_right(), Right::Update);
     }
 
@@ -255,21 +255,21 @@ mod tests {
 
         let ops = alloc::vec![
             DidOperation::AddKey {
-                did,
+                did: did.clone(),
                 key_id: key_id.clone(),
                 key_type: KeyType::Ed25519,
                 public_key: BoundedVec::default(),
                 purposes: BoundedVec::default(),
                 expires_at_height: None,
             },
-            DidOperation::RevokeKey { did, key_id: key_id.clone() },
+            DidOperation::RevokeKey { did: did.clone(), key_id: key_id.clone() },
             DidOperation::AddRight {
-                did,
+                did: did.clone(),
                 key_id: key_id.clone(),
                 right: Right::Update,
                 expires_at_height: None,
             },
-            DidOperation::RevokeRight { did, key_id: key_id.clone(), right: Right::Update },
+            DidOperation::RevokeRight { did: did.clone(), key_id: key_id.clone(), right: Right::Update },
             DidOperation::TombstoneDid { did },
         ];
 

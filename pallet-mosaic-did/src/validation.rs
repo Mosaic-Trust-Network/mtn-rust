@@ -48,9 +48,10 @@ pub fn validate_did_operation<T: Config>(
                     validate_signature_from_state::<T>(signed_op, state, height_u32)?;
                 }
                 None => {
-                    // Implicit DID creation: DID must equal BLAKE3-256(public_key)
-                    let derived_did = Did::from_public_key(public_key);
-                    ensure!(*did == derived_did, Error::<T>::DidMismatch);
+                    // Implicit DID creation: DID must match MKeyId derived from the public key
+                    let derived_did = Did::from_public_key(public_key)
+                        .map_err(|_| Error::<T>::InvalidPublicKey)?;
+                    ensure!(did == &derived_did, Error::<T>::DidMismatch);
                     // Verify signature against the public key being registered
                     // (proves the submitter controls the private key)
                     validate_signature_for_creation::<T>(signed_op, public_key, *key_type)?;

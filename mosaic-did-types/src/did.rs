@@ -1,84 +1,161 @@
 //! DID identifier types for `did:mosaic`.
 //!
-//! A Mosaic DID is derived from the initial public key:
+//! A Mosaic DID is derived from the initial public key's multicipher key ID:
 //! ```text
-//! did:mosaic:<multibase(base58btc, BLAKE3-256(initial-public-key))>
+//! did:mosaic:<MKeyId>
 //! ```
+//! where `<MKeyId>` is the Ed25519Blake3 multicipher key ID string (e.g., `iozABC...`).
 
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::{fmt, str::FromStr};
 
 use bounded_collections::{BoundedVec, ConstU32};
-#[cfg(feature = "substrate")]
-use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
-#[cfg(feature = "substrate")]
-use scale_info::TypeInfo;
-#[cfg(feature = "serde")]
-use serde::{Deserialize, Serialize};
+use iop_keyvault::ed25519::{Blake3, EdKeyId, EdPublicKey};
+use iop_keyvault::multicipher::MKeyId;
 
-/// Maximum key ID size in bytes.
+/// Maximum key ID size in bytes (for `KeyRef`).
 pub const MAX_KEY_REF_LEN: u32 = 64;
 
-/// A 32-byte Mosaic DID identifier, derived as `BLAKE3-256(initial_public_key)`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct Did(pub [u8; 32]);
+/// Maximum SCALE-encoded length of a DID.
+///
+/// MKeyId strings are at most ~49 UTF-8 bytes (for Ed25519Blake3).
+/// SCALE encodes as a length-prefixed `Vec<u8>`: compact(len) + bytes.
+/// We use 66 (2-byte compact prefix + 64 bytes) as a conservative bound.
+const MAX_DID_ENCODED_LEN: usize = 66;
+
+/// A Mosaic DID identifier, wrapping the multicipher key ID of the initial public key.
+///
+/// The DID is derived from the initial Ed25519 public key using Blake3 hashing,
+/// producing an `Ed25519Blake3` multicipher key ID. The DID string representation
+/// is `did:mosaic:<MKeyId>`, e.g. `did:mosaic:iozABC...`.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Did {
+    /// The multicipher key ID of the initial public key that created this DID.
+    pub default_key_id: MKeyId,
+}
+
+// ========== SCALE codec (Substrate) ==========
+
+#[cfg(feature = "substrate")]
+mod scale_impls {
+    use super::*;
+    use parity_scale_codec::{Decode, Encode, EncodeLike, MaxEncodedLen};
+    use scale_info::TypeInfo;
+
+    impl EncodeLike for Did {}
+
+    impl Encode for Did {
+        fn encode_to<W: parity_scale_codec::Output + ?Sized>(&self, dest: &mut W) {
+            let bytes = self.default_key_id.to_bytes();
+            Encode::encode_to(&bytes, dest);
+        }
+    }
+
+    impl Decode for Did {
+        fn decode<I: parity_scale_codec::Input>(
+            input: &mut I,
+        ) -> Result<Self, parity_scale_codec::Error> {
+            let bytes = Vec::<u8>::decode(input)?;
+            let key_id = MKeyId::from_bytes(bytes)
+                .map_err(|_| parity_scale_codec::Error::from("invalid MKeyId encoding"))?;
+            Ok(Did { default_key_id: key_id })
+        }
+    }
+
+    impl MaxEncodedLen for Did {
+        fn max_encoded_len() -> usize {
+            MAX_DID_ENCODED_LEN
+        }
+    }
+
+    impl TypeInfo for Did {
+        type Identity = Self;
+        fn type_info() -> scale_info::Type {
+            scale_info::Type::builder()
+                .path(scale_info::Path::new("Did", "mosaic_did_types::did"))
+                .composite(
+                    scale_info::build::Fields::unnamed()
+                        .field(|f| f.ty::<Vec<u8>>().type_name("MKeyId")),
+                )
+        }
+    }
+}
+
+// ========== Serde ==========
+
+#[cfg(feature = "serde")]
+mod serde_impls {
+    use super::*;
+
+    impl serde::Serialize for Did {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            serializer.serialize_str(&self.to_did_string())
+        }
+    }
+
+    impl<'de> serde::Deserialize<'de> for Did {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            let s = String::deserialize(deserializer)?;
+            Did::from_did_string(&s).map_err(serde::de::Error::custom)
+        }
+    }
+}
+
+// ========== Test helpers ==========
 
 #[cfg(test)]
 impl Did {
-    // Public key of Alice
-    const PK_ALICE: &[u8; 32] = b"\xd4\x35\x93\xc7\x15\xfd\xd3\x1c\x61\x14\x1a\xbd\x04\xa9\x9f\xd6\x82\x2c\x85\x58\x85\x4c\xcd\xe3\x9a\x56\x84\xe7\xa5\x6d\xa2\x7d";
-
     pub fn alice() -> Self {
-        Self::from_public_key(Self::PK_ALICE)
+        // RFC 8032 test vector 1: pk for secret key = all zeros
+        let pk_bytes = hex::decode(
+            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+        )
+        .unwrap();
+        Self::from_public_key(&pk_bytes).expect("Alice PK is a valid Ed25519 key")
+    }
+
+    pub fn bob() -> Self {
+        // RFC 8032 test vector 2
+        let pk_bytes = hex::decode(
+            "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+        )
+        .unwrap();
+        Self::from_public_key(&pk_bytes).expect("Bob PK is a valid Ed25519 key")
     }
 }
+
+// ========== Core API ==========
 
 impl Did {
     /// The DID method prefix.
     pub const METHOD_PREFIX: &'static str = "did:mosaic:";
 
-    /// Derive a DID identifier from a public key using BLAKE3-256.
-    pub fn from_public_key(public_key: &[u8]) -> Self {
-        let hash = blake3::hash(public_key);
-        Did(*hash.as_bytes())
+    /// Derive a DID identifier from a raw Ed25519 public key.
+    ///
+    /// The bytes must be a valid 32-byte Ed25519 public key on the curve.
+    /// Returns `Err` if the bytes are not a valid Ed25519 point.
+    pub fn from_public_key(public_key: &[u8]) -> Result<Self, DidCreationError> {
+        let pk = EdPublicKey::from_bytes(public_key)
+            .map_err(|_| DidCreationError::InvalidPublicKey)?;
+        let key_id = EdKeyId::from_pk::<Blake3>(&pk);
+        Ok(Did { default_key_id: MKeyId::Ed25519Blake3(key_id) })
     }
 
-    /// Return the raw 32-byte identifier.
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-
-    /// Encode the DID as a full `did:mosaic:z...` string using multibase base58btc.
+    /// Encode the DID as a full `did:mosaic:<MKeyId>` string.
     pub fn to_did_string(&self) -> String {
-        // Multibase base58btc prefix is 'z'
-        let encoded = bs58::encode(&self.0).into_string();
-        let mut s = String::with_capacity(Self::METHOD_PREFIX.len() + 1 + encoded.len());
+        let kid_str = self.default_key_id.to_string();
+        let mut s = String::with_capacity(Self::METHOD_PREFIX.len() + kid_str.len());
         s.push_str(Self::METHOD_PREFIX);
-        s.push('z');
-        s.push_str(&encoded);
+        s.push_str(&kid_str);
         s
     }
 
-    /// Parse a `did:mosaic:z...` string back into a Did.
+    /// Parse a `did:mosaic:<MKeyId>` string back into a Did.
     pub fn from_did_string(s: &str) -> Result<Self, DidParseError> {
         let rest = s.strip_prefix(Self::METHOD_PREFIX).ok_or(DidParseError::InvalidPrefix)?;
-
-        // Expect multibase base58btc prefix 'z'
-        let base58_str = rest.strip_prefix('z').ok_or(DidParseError::InvalidMultibase)?;
-
-        let bytes =
-            bs58::decode(base58_str).into_vec().map_err(|_| DidParseError::InvalidBase58)?;
-
-        if bytes.len() != 32 {
-            return Err(DidParseError::InvalidLength(bytes.len()));
-        }
-
-        let mut arr = [0u8; 32];
-        arr.copy_from_slice(&bytes);
-        Ok(Did(arr))
+        let key_id: MKeyId = rest.parse().map_err(|_| DidParseError::InvalidKeyId)?;
+        Ok(Did { default_key_id: key_id })
     }
 }
 
@@ -88,9 +165,18 @@ impl fmt::Display for Did {
     }
 }
 
-impl From<[u8; 32]> for Did {
-    fn from(bytes: [u8; 32]) -> Self {
-        Did(bytes)
+/// Errors that can occur when creating a DID from a public key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DidCreationError {
+    /// The public key bytes are not a valid Ed25519 curve point.
+    InvalidPublicKey,
+}
+
+impl fmt::Display for DidCreationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPublicKey => write!(f, "invalid Ed25519 public key"),
+        }
     }
 }
 
@@ -99,21 +185,15 @@ impl From<[u8; 32]> for Did {
 pub enum DidParseError {
     /// The string doesn't start with `did:mosaic:`.
     InvalidPrefix,
-    /// Missing or wrong multibase prefix (expected 'z' for base58btc).
-    InvalidMultibase,
-    /// Invalid base58 encoding.
-    InvalidBase58,
-    /// Decoded bytes are not 32 bytes long.
-    InvalidLength(usize),
+    /// The MKeyId portion could not be parsed.
+    InvalidKeyId,
 }
 
 impl fmt::Display for DidParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidPrefix => write!(f, "DID must start with '{}'", Did::METHOD_PREFIX),
-            Self::InvalidMultibase => write!(f, "expected multibase base58btc prefix 'z'"),
-            Self::InvalidBase58 => write!(f, "invalid base58 encoding"),
-            Self::InvalidLength(len) => write!(f, "expected 32 bytes, got {len}"),
+            Self::InvalidKeyId => write!(f, "invalid multicipher key ID"),
         }
     }
 }
@@ -123,7 +203,7 @@ impl fmt::Display for DidParseError {
 /// References a specific verification method, e.g. `"key-1"`, `"key-recovery"`.
 /// Stored as bounded bytes with a maximum length of 64.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, parity_scale_codec::MaxEncodedLen, scale_info::TypeInfo))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct KeyRef(BoundedVec<u8, ConstU32<MAX_KEY_REF_LEN>>);
 
@@ -151,7 +231,7 @@ impl KeyRef {
     }
 }
 
-impl FromStr for KeyRef {
+impl core::str::FromStr for KeyRef {
     type Err = &'static str;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -199,8 +279,8 @@ impl fmt::Display for KeyRef {
 /// Both variants store a fixed 32-byte hash. The enum discriminant captures
 /// *how* the hash was produced, which determines verifiability semantics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, parity_scale_codec::MaxEncodedLen, scale_info::TypeInfo))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ContentId {
     /// BLAKE3-256 hash of raw binary content.
     ByteHash([u8; 32]),
@@ -259,7 +339,8 @@ impl fmt::Display for ContentId {
 mod tests {
     use super::*;
 
-    const DID_ALICE: &str = "did:mosaic:zDmfekcjeeeZKwAgu5pAXS5ZxEZxmkCfKpTs7Upm2sjsN";
+    /// Pinned: Alice = RFC 8032 test vector 1 pk → Blake3 MKeyId
+    const DID_ALICE: &str = "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb";
 
     #[test]
     fn did_alice_to_string() {
@@ -276,35 +357,47 @@ mod tests {
 
     #[test]
     fn did_from_public_key_deterministic() {
-        let pk = b"test-public-key-ed25519-32bytes!";
-        let did1 = Did::from_public_key(pk);
-        let did2 = Did::from_public_key(pk);
+        let pk = hex::decode(
+            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+        )
+        .unwrap();
+        let did1 = Did::from_public_key(&pk).unwrap();
+        let did2 = Did::from_public_key(&pk).unwrap();
         assert_eq!(did1, did2);
     }
 
     #[test]
     fn did_different_keys_different_dids() {
-        let did1 = Did::from_public_key(b"key-alice");
-        let did2 = Did::from_public_key(b"key-bob");
+        let did1 = Did::alice();
+        let did2 = Did::bob();
         assert_ne!(did1, did2);
     }
 
     #[test]
+    fn did_from_invalid_public_key() {
+        // Not a valid Ed25519 curve point
+        let err = Did::from_public_key(b"this-is-not-an-ed25519-key-at!!");
+        assert!(err.is_err());
+    }
+
+    #[test]
     fn did_parse_invalid_prefix() {
-        let err = Did::from_did_string("did:morpheus:z123").unwrap_err();
+        let err = Did::from_did_string("did:morpheus:iozABC").unwrap_err();
         assert_eq!(err, DidParseError::InvalidPrefix);
     }
 
     #[test]
-    fn did_parse_invalid_multibase() {
-        let err = Did::from_did_string("did:mosaic:f123").unwrap_err();
-        assert_eq!(err, DidParseError::InvalidMultibase);
+    fn did_parse_invalid_key_id() {
+        let err = Did::from_did_string("did:mosaic:garbage").unwrap_err();
+        assert_eq!(err, DidParseError::InvalidKeyId);
     }
 
     #[test]
-    fn did_parse_invalid_length() {
-        let err = Did::from_did_string("did:mosaic:zqztJ6XX6GDxdSgdiySiT3J").unwrap_err();
-        assert!(matches!(err, DidParseError::InvalidLength(_)));
+    fn did_string_roundtrip() {
+        let did = Did::alice();
+        let s = did.to_did_string();
+        let parsed = Did::from_did_string(&s).unwrap();
+        assert_eq!(did, parsed);
     }
 
     #[test]

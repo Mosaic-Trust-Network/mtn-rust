@@ -347,8 +347,8 @@ mod tests {
     use bounded_collections::BoundedVec;
 
     fn make_test_state() -> DidState {
-        let did = Did::from_public_key(b"test-pk-32-bytes-for-ed25519!!!");
-        let mut state = DidState::new(did);
+        let did = Did::alice();
+        let mut state = DidState::new(did.clone());
 
         state
             .keys
@@ -356,7 +356,12 @@ mod tests {
                 id: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: did,
-                public_key: b"test-pk-32-bytes-for-ed25519!!!".to_vec().try_into().unwrap(),
+                public_key: hex::decode(
+                    "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+                )
+                .unwrap()
+                .try_into()
+                .unwrap(),
                 purposes: alloc::vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
                     .try_into()
                     .unwrap(),
@@ -371,8 +376,7 @@ mod tests {
 
     #[test]
     fn new_state_is_empty() {
-        let did = Did::alice();
-        let state = DidState::new(did);
+        let state = DidState::new(Did::alice());
         assert!(!state.exists());
         assert!(!state.is_tombstoned_at(0));
         assert!(!state.is_tombstoned_at(1000));
@@ -389,7 +393,7 @@ mod tests {
         let vm = VerificationMethod {
             id: "key-1".parse().unwrap(),
             key_type: KeyType::Ed25519,
-            controller: Did::alice(),
+            controller: Did::bob(),
             public_key: alloc::vec![0u8; 32].try_into().unwrap(),
             purposes: BoundedVec::default(),
             added_at_height: 10,
@@ -409,7 +413,7 @@ mod tests {
         let vm = VerificationMethod {
             id: "key-1".parse().unwrap(),
             key_type: KeyType::Ed25519,
-            controller: Did::alice(),
+            controller: Did::bob(),
             public_key: alloc::vec![0u8; 32].try_into().unwrap(),
             purposes: BoundedVec::default(),
             added_at_height: 10,
@@ -479,17 +483,18 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn w3c_did_document_structure() {
-        let pk = b"w3c-test-key-for-did-doc-struct!";
-        let did = Did::from_public_key(pk);
+        let pk_hex = "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025";
+        let pk_bytes = hex::decode(pk_hex).unwrap();
+        let did = Did::from_public_key(&pk_bytes).unwrap();
 
-        let mut state = DidState::new(did);
+        let mut state = DidState::new(did.clone());
         state
             .keys
             .try_push(VerificationMethod {
                 id: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: did,
-                public_key: pk.to_vec().try_into().unwrap(),
+                public_key: pk_bytes.try_into().unwrap(),
                 purposes: alloc::vec![
                     KeyPurpose::Authentication,
                     KeyPurpose::AssertionMethod,
@@ -507,7 +512,7 @@ mod tests {
 
         assert_eq!(doc.context[0], "https://www.w3.org/ns/did/v1");
         assert_eq!(doc.context[1], "https://mosaic.network/ns/did/v1");
-        assert!(doc.id.starts_with("did:mosaic:z"));
+        assert!(doc.id.starts_with("did:mosaic:ioz"));
         assert_eq!(doc.verification_method.len(), 1);
         assert_eq!(doc.verification_method[0].type_, "Ed25519VerificationKey2020");
         assert!(doc.verification_method[0].public_key_multibase.starts_with('z'));

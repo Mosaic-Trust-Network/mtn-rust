@@ -5,25 +5,48 @@ mod unit_tests {
     use crate::state::BeforeProofRecord;
     use mosaic_did_types::*;
 
+    // Valid Ed25519 public keys from RFC 8032 test vectors.
+    // These are the only keys that can be used with Did::from_public_key.
+    const PK_1: [u8; 32] = [
+        0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64,
+        0x07, 0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68,
+        0xf7, 0x07, 0x51, 0x1a,
+    ];
+    const PK_2: [u8; 32] = [
+        0x3d, 0x40, 0x17, 0xc3, 0xe8, 0x43, 0x89, 0x5a, 0x92, 0xb7, 0x0a, 0xa7, 0x4d, 0x1b,
+        0x7e, 0xbc, 0x9c, 0x98, 0x2c, 0xcf, 0x2e, 0xc4, 0x96, 0x8c, 0xc0, 0xcd, 0x55, 0xf1,
+        0x2a, 0xf4, 0x66, 0x0c,
+    ];
+    const PK_3: [u8; 32] = [
+        0xfc, 0x51, 0xcd, 0x8e, 0x62, 0x18, 0xa1, 0xa3, 0x8d, 0xa4, 0x7e, 0xd0, 0x02, 0x30,
+        0xf0, 0x58, 0x08, 0x16, 0xed, 0x13, 0xba, 0x33, 0x03, 0xac, 0x5d, 0xeb, 0x91, 0x15,
+        0x48, 0x90, 0x80, 0x25,
+    ];
+
+    fn did_1() -> Did {
+        Did::from_public_key(&PK_1).unwrap()
+    }
+    fn did_2() -> Did {
+        Did::from_public_key(&PK_2).unwrap()
+    }
+
     // ===== Type-level tests (no runtime needed) =====
 
     #[test]
     fn did_creation_from_public_key() {
-        let pk = b"ed25519-public-key-32-bytes-long";
-        let did = Did::from_public_key(pk);
-        let did2 = Did::from_public_key(pk);
+        let did = Did::from_public_key(&PK_1).unwrap();
+        let did2 = Did::from_public_key(&PK_1).unwrap();
         assert_eq!(did, did2);
 
-        let did3 = Did::from_public_key(b"different-key-different-did-now!");
+        let did3 = Did::from_public_key(&PK_2).unwrap();
         assert_ne!(did, did3);
     }
 
     #[test]
     fn did_string_roundtrip() {
-        let pk = b"ed25519-public-key-32-bytes-long";
-        let did = Did::from_public_key(pk);
+        let did = did_1();
         let did_str = did.to_did_string();
-        assert!(did_str.starts_with("did:mosaic:z"));
+        assert!(did_str.starts_with("did:mosaic:ioz"));
         let parsed = Did::from_did_string(&did_str).unwrap();
         assert_eq!(did, parsed);
     }
@@ -38,34 +61,32 @@ mod unit_tests {
 
     #[test]
     fn operation_creates_correct_types() {
-        let pk = b"ed25519-public-key-32-bytes-long";
-        let did = Did::from_public_key(pk);
+        let did = did_1();
         let key_id = "key-1".parse().unwrap();
 
         let add_key = DidOperation::AddKey {
-            did,
+            did: did.clone(),
             key_id,
             key_type: KeyType::Ed25519,
-            public_key: pk.to_vec().try_into().unwrap(),
+            public_key: PK_1.to_vec().try_into().unwrap(),
             purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
                 .try_into()
                 .unwrap(),
             expires_at_height: None,
         };
 
-        assert_eq!(*add_key.did(), did);
+        assert_eq!(add_key.did(), &did);
         assert_eq!(add_key.required_right(), Right::Update);
         assert_eq!(DidOperationType::from(&add_key), DidOperationType::AddKey);
     }
 
     #[test]
     fn rights_system() {
-        let pk = b"ed25519-public-key-32-bytes-long";
-        let did = Did::from_public_key(pk);
+        let did = did_1();
         let key_id: KeyRef = "key-1".parse().unwrap();
 
         let add_right = DidOperation::AddRight {
-            did,
+            did: did.clone(),
             key_id: key_id.clone(),
             right: Right::Issue,
             expires_at_height: None,
@@ -78,7 +99,7 @@ mod unit_tests {
 
     #[test]
     fn tombstone_requires_update_right() {
-        let did = Did::from_public_key(b"test-key-for-tombstone-testing!!");
+        let did = did_2();
         let tombstone = DidOperation::TombstoneDid { did };
         assert_eq!(tombstone.required_right(), Right::Update);
     }
@@ -103,16 +124,15 @@ mod unit_tests {
 
     #[test]
     fn signed_operation_construction() {
-        let pk = b"ed25519-public-key-32-bytes-long";
-        let did = Did::from_public_key(pk);
+        let did = did_1();
         let key_id: KeyRef = "key-1".parse().unwrap();
 
         let signed_op = SignedDidOperation {
             operation: DidOperation::AddKey {
-                did,
+                did: did.clone(),
                 key_id: key_id.clone(),
                 key_type: KeyType::Ed25519,
-                public_key: pk.to_vec().try_into().unwrap(),
+                public_key: PK_1.to_vec().try_into().unwrap(),
                 purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
                 expires_at_height: None,
             },
@@ -121,22 +141,21 @@ mod unit_tests {
             nonce: 1,
         };
 
-        assert_eq!(*signed_op.operation.did(), did);
+        assert_eq!(signed_op.operation.did(), &did);
         assert_eq!(signed_op.nonce, 1);
     }
 
     #[test]
     fn ssi_operation_variants() {
-        let pk = b"ssi-op-test-key-32-bytes-long!!!";
-        let did = Did::from_public_key(pk);
+        let did = did_1();
         let key_id: KeyRef = "key-1".parse().unwrap();
 
         let did_op = SsiOperation::Did(SignedDidOperation {
             operation: DidOperation::AddKey {
-                did,
+                did: did.clone(),
                 key_id: key_id.clone(),
                 key_type: KeyType::Ed25519,
-                public_key: pk.to_vec().try_into().unwrap(),
+                public_key: PK_1.to_vec().try_into().unwrap(),
                 purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
                 expires_at_height: None,
             },
@@ -149,7 +168,7 @@ mod unit_tests {
             SsiOperation::BeforeProof(ContentId::from_bytes(b"test document content"));
 
         match &did_op {
-            SsiOperation::Did(op) => assert_eq!(*op.operation.did(), did),
+            SsiOperation::Did(op) => assert_eq!(op.operation.did(), &did),
             _ => panic!("Expected Did variant"),
         }
 
@@ -162,24 +181,19 @@ mod unit_tests {
     // ===== State tests (using DidState directly) =====
 
     mod state_tests {
+        use super::*;
         use frame_support::BoundedVec;
         use mosaic_did_types::*;
 
-        fn some_did() -> Did {
-            Did::from_did_string("did:mosaic:zDmfekcjeeeZKwAgu5pAXS5ZxEZxmkCfKpTs7Upm2sjsN")
-                .expect("constant known to parse correctly")
-        }
-
         fn make_test_state() -> DidState {
-            let pk = b"ed25519-public-key-32-bytes-long";
-            let did = Did::from_public_key(pk);
-            let mut state = DidState::new(did);
+            let did = did_1();
+            let mut state = DidState::new(did.clone());
 
             let vm = VerificationMethod {
                 id: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: did,
-                public_key: pk.to_vec().try_into().unwrap(),
+                public_key: PK_1.to_vec().try_into().unwrap(),
                 purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
                     .try_into()
                     .unwrap(),
@@ -193,7 +207,7 @@ mod unit_tests {
 
         #[test]
         fn new_state_is_empty() {
-            let state = DidState::new(some_did());
+            let state = DidState::new(did_1());
             assert!(!state.exists());
             assert!(!state.is_tombstoned_at(0));
         }
@@ -209,7 +223,7 @@ mod unit_tests {
             let vm = VerificationMethod {
                 id: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
-                controller: some_did(),
+                controller: did_2(),
                 public_key: vec![0u8; 32].try_into().unwrap(),
                 purposes: BoundedVec::default(),
                 added_at_height: 10,
@@ -229,7 +243,7 @@ mod unit_tests {
             let vm = VerificationMethod {
                 id: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
-                controller: some_did(),
+                controller: did_2(),
                 public_key: vec![0u8; 32].try_into().unwrap(),
                 purposes: BoundedVec::default(),
                 added_at_height: 10,
@@ -294,8 +308,8 @@ mod unit_tests {
 
         #[test]
         fn key_rotation_flow() {
-            let did = Did::from_public_key(b"rotation-test-key-32-bytes!!!!!!");
-            let mut state = DidState::new(did);
+            let did = did_1();
+            let mut state = DidState::new(did.clone());
 
             // Add old key at height 1
             state
@@ -303,7 +317,7 @@ mod unit_tests {
                 .try_push(VerificationMethod {
                     id: "key-old".parse().unwrap(),
                     key_type: KeyType::Ed25519,
-                    controller: did,
+                    controller: did.clone(),
                     public_key: vec![1u8; 32].try_into().unwrap(),
                     purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
                         .try_into()
@@ -346,8 +360,7 @@ mod unit_tests {
 
     #[test]
     fn eurosign_workflow_types() {
-        let signer_pk = b"eurosign-signer-pk-32-bytes-ed25";
-        let signer_did = Did::from_public_key(signer_pk);
+        let signer_did = did_1();
         let key_id: KeyRef = "key-signing".parse().unwrap();
 
         let create_op = SsiOperation::Did(SignedDidOperation {
@@ -355,7 +368,7 @@ mod unit_tests {
                 did: signer_did,
                 key_id: key_id.clone(),
                 key_type: KeyType::Ed25519,
-                public_key: signer_pk.to_vec().try_into().unwrap(),
+                public_key: PK_1.to_vec().try_into().unwrap(),
                 purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
                     .try_into()
                     .unwrap(),
