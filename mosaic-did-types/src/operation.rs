@@ -4,8 +4,13 @@
 //! Phase 1 (MVP) implements the 5 core DID operations + BeforeProof.
 
 use bounded_collections::{BoundedVec, ConstU32};
-use parity_scale_codec::{Decode, Encode};
+
+#[cfg(feature = "substrate")]
+use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
+#[cfg(feature = "substrate")]
 use scale_info::TypeInfo;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::did::{ContentId, Did, KeyRef};
 use crate::signature::MultiSignature;
@@ -19,8 +24,9 @@ pub const MAX_PURPOSES_PER_KEY: u32 = 5;
 ///
 /// The rights model extends IOP Morpheus (Update, Impersonate) with
 /// additional capabilities for enterprise and compliance use cases.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Encode, Decode, parity_scale_codec::MaxEncodedLen, TypeInfo)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Right {
     /// Can modify the DID Document (add/revoke keys, rights).
     Update,
@@ -64,8 +70,9 @@ impl core::fmt::Display for Right {
 }
 
 /// Supported key types for verification methods.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Encode, Decode, parity_scale_codec::MaxEncodedLen, TypeInfo)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum KeyType {
     /// Ed25519 -- default, required.
     Ed25519,
@@ -78,8 +85,9 @@ pub enum KeyType {
 }
 
 /// Key purposes per W3C DID Core verification relationships.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Encode, Decode, parity_scale_codec::MaxEncodedLen, TypeInfo)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum KeyPurpose {
     /// Prove control of DID (login, challenge-response).
     Authentication,
@@ -97,8 +105,9 @@ pub enum KeyPurpose {
 ///
 /// All operations are submitted inside `SignedOperation` bundles within an
 /// atomic `submit_did_operations` batch.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum DidOperation {
     /// Add a new key to the DID document.
     ///
@@ -163,8 +172,9 @@ impl DidOperation {
 }
 
 /// A top-level SSI operation: either a DID operation or a BeforeProof timestamp.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, TypeInfo))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum SsiOperation {
     /// A signed DID document operation.
     Did(SignedDidOperation),
@@ -176,8 +186,9 @@ pub enum SsiOperation {
 ///
 /// The signature proves the signer has authority over the operation.
 /// The nonce provides replay protection.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, TypeInfo))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SignedDidOperation {
     /// The DID operation to execute.
     pub operation: DidOperation,
@@ -190,8 +201,9 @@ pub struct SignedDidOperation {
 }
 
 /// Type of DID operation (for events, without carrying full data).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Encode, Decode, TypeInfo)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum DidOperationType {
     AddKey,
     RevokeKey,
@@ -219,7 +231,7 @@ mod tests {
     #[test]
     fn operation_did_accessor() {
         let did = Did::from_public_key(b"test-key");
-        let key_id = KeyRef::from_str_id("key-1").unwrap();
+        let key_id = "key-1".parse().unwrap();
 
         let op = DidOperation::AddKey {
             did,
@@ -239,7 +251,7 @@ mod tests {
     #[test]
     fn operation_type_conversion() {
         let did = Did::alice();
-        let key_id = KeyRef::from_str_id("key-1").unwrap();
+        let key_id: KeyRef = "key-1".parse().unwrap();
 
         let ops = alloc::vec![
             DidOperation::AddKey {

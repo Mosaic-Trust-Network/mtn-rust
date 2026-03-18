@@ -31,8 +31,8 @@ mod unit_tests {
     #[test]
     fn content_id_deterministic() {
         let content = b"Invoice #2026-001 from ELMU";
-        let cid1 = ContentId::from_content(content);
-        let cid2 = ContentId::from_content(content);
+        let cid1 = ContentId::from_bytes(content);
+        let cid2 = ContentId::from_bytes(content);
         assert_eq!(cid1, cid2);
     }
 
@@ -40,7 +40,7 @@ mod unit_tests {
     fn operation_creates_correct_types() {
         let pk = b"ed25519-public-key-32-bytes-long";
         let did = Did::from_public_key(pk);
-        let key_id = KeyRef::from_str_id("key-1").unwrap();
+        let key_id = "key-1".parse().unwrap();
 
         let add_key = DidOperation::AddKey {
             did,
@@ -62,7 +62,7 @@ mod unit_tests {
     fn rights_system() {
         let pk = b"ed25519-public-key-32-bytes-long";
         let did = Did::from_public_key(pk);
-        let key_id = KeyRef::from_str_id("key-1").unwrap();
+        let key_id: KeyRef = "key-1".parse().unwrap();
 
         let add_right = DidOperation::AddRight {
             did,
@@ -105,7 +105,7 @@ mod unit_tests {
     fn signed_operation_construction() {
         let pk = b"ed25519-public-key-32-bytes-long";
         let did = Did::from_public_key(pk);
-        let key_id = KeyRef::from_str_id("key-1").unwrap();
+        let key_id: KeyRef = "key-1".parse().unwrap();
 
         let signed_op = SignedDidOperation {
             operation: DidOperation::AddKey {
@@ -129,7 +129,7 @@ mod unit_tests {
     fn ssi_operation_variants() {
         let pk = b"ssi-op-test-key-32-bytes-long!!!";
         let did = Did::from_public_key(pk);
-        let key_id = KeyRef::from_str_id("key-1").unwrap();
+        let key_id: KeyRef = "key-1".parse().unwrap();
 
         let did_op = SsiOperation::Did(SignedDidOperation {
             operation: DidOperation::AddKey {
@@ -146,7 +146,7 @@ mod unit_tests {
         });
 
         let before_proof_op =
-            SsiOperation::BeforeProof(ContentId::from_content(b"test document content"));
+            SsiOperation::BeforeProof(ContentId::from_bytes(b"test document content"));
 
         match &did_op {
             SsiOperation::Did(op) => assert_eq!(*op.operation.did(), did),
@@ -162,7 +162,6 @@ mod unit_tests {
     // ===== State tests (using DidState directly) =====
 
     mod state_tests {
-        use crate::state::*;
         use frame_support::BoundedVec;
         use mosaic_did_types::*;
 
@@ -177,7 +176,7 @@ mod unit_tests {
             let mut state = DidState::new(did);
 
             let vm = VerificationMethod {
-                id: KeyRef::from_str_id("key-1").unwrap(),
+                id: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: did,
                 public_key: pk.to_vec().try_into().unwrap(),
@@ -208,7 +207,7 @@ mod unit_tests {
         #[test]
         fn key_validity_at_height() {
             let vm = VerificationMethod {
-                id: KeyRef::from_str_id("key-1").unwrap(),
+                id: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: some_did(),
                 public_key: vec![0u8; 32].try_into().unwrap(),
@@ -228,7 +227,7 @@ mod unit_tests {
         #[test]
         fn key_revoked_at_height() {
             let vm = VerificationMethod {
-                id: KeyRef::from_str_id("key-1").unwrap(),
+                id: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: some_did(),
                 public_key: vec![0u8; 32].try_into().unwrap(),
@@ -256,7 +255,7 @@ mod unit_tests {
         #[test]
         fn initial_key_has_implicit_rights() {
             let state = make_test_state();
-            let key_id = KeyRef::from_str_id("key-1").unwrap();
+            let key_id = "key-1".parse().unwrap();
 
             assert!(state.has_right_at(&key_id, Right::Update, 1));
             assert!(state.has_right_at(&key_id, Right::Impersonate, 1));
@@ -267,7 +266,7 @@ mod unit_tests {
         #[test]
         fn explicit_right_grant() {
             let mut state = make_test_state();
-            let key_id = KeyRef::from_str_id("key-1").unwrap();
+            let key_id: KeyRef = "key-1".parse().unwrap();
 
             let grant = RightGrant {
                 key_id: key_id.clone(),
@@ -287,8 +286,8 @@ mod unit_tests {
         #[test]
         fn nonce_management() {
             let state = make_test_state();
-            let key_id = KeyRef::from_str_id("key-1").unwrap();
-            let unknown = KeyRef::from_str_id("key-nonexistent").unwrap();
+            let key_id = "key-1".parse().unwrap();
+            let unknown = "key-nonexistent".parse().unwrap();
             assert_eq!(state.nonce_for_key(&key_id), 0);
             assert_eq!(state.nonce_for_key(&unknown), 0);
         }
@@ -302,7 +301,7 @@ mod unit_tests {
             state
                 .keys
                 .try_push(VerificationMethod {
-                    id: KeyRef::from_str_id("key-old").unwrap(),
+                    id: "key-old".parse().unwrap(),
                     key_type: KeyType::Ed25519,
                     controller: did,
                     public_key: vec![1u8; 32].try_into().unwrap(),
@@ -319,7 +318,7 @@ mod unit_tests {
             state
                 .keys
                 .try_push(VerificationMethod {
-                    id: KeyRef::from_str_id("key-new").unwrap(),
+                    id: "key-new".parse().unwrap(),
                     key_type: KeyType::Ed25519,
                     controller: did,
                     public_key: vec![2u8; 32].try_into().unwrap(),
@@ -349,7 +348,7 @@ mod unit_tests {
     fn eurosign_workflow_types() {
         let signer_pk = b"eurosign-signer-pk-32-bytes-ed25";
         let signer_did = Did::from_public_key(signer_pk);
-        let key_id = KeyRef::from_str_id("key-signing").unwrap();
+        let key_id: KeyRef = "key-signing".parse().unwrap();
 
         let create_op = SsiOperation::Did(SignedDidOperation {
             operation: DidOperation::AddKey {
@@ -367,7 +366,7 @@ mod unit_tests {
             nonce: 1,
         });
 
-        let document_hash = ContentId::from_content(b"Signed contract PDF content...");
+        let document_hash = ContentId::from_bytes(b"Signed contract PDF content...");
         let before_proof_op = SsiOperation::BeforeProof(document_hash);
 
         let batch = vec![create_op, before_proof_op];

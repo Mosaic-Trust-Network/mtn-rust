@@ -77,8 +77,7 @@ pub mod pallet {
     /// This is the single source of truth — read and mutated in place.
     #[pallet::storage]
     #[pallet::getter(fn did_state)]
-    pub type DidStates<T: Config> =
-        StorageMap<_, Blake2_128Concat, Did, DidState, OptionQuery>;
+    pub type DidStates<T: Config> = StorageMap<_, Blake2_128Concat, Did, DidState, OptionQuery>;
 
     /// BeforeProof timestamps.
     #[pallet::storage]
@@ -262,13 +261,11 @@ pub mod pallet {
                     DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.get_or_insert_with(|| DidState::new(did));
 
-                        ensure!(
-                            state.find_key(key_id).is_none(),
-                            Error::<T>::KeyAlreadyExists
-                        );
+                        ensure!(state.find_key(key_id).is_none(), Error::<T>::KeyAlreadyExists);
 
                         state.keys.try_push(vm).map_err(|_| Error::<T>::StorageBoundsExceeded)?;
-                        state.update_nonce(&signed_op.signer_key_id, signed_op.nonce)
+                        state
+                            .update_nonce(&signed_op.signer_key_id, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;
@@ -287,10 +284,10 @@ pub mod pallet {
                 DidOperation::RevokeKey { did: _, key_id } => {
                     DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                        let key =
-                            state.find_key_mut(key_id).ok_or(Error::<T>::KeyNotFound)?;
+                        let key = state.find_key_mut(key_id).ok_or(Error::<T>::KeyNotFound)?;
                         key.revoked_at_height = Some(height_u32);
-                        state.update_nonce(&signed_op.signer_key_id, signed_op.nonce)
+                        state
+                            .update_nonce(&signed_op.signer_key_id, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;
@@ -317,7 +314,8 @@ pub mod pallet {
                             .rights
                             .try_push(grant)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
-                        state.update_nonce(&signed_op.signer_key_id, signed_op.nonce)
+                        state
+                            .update_nonce(&signed_op.signer_key_id, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;
@@ -345,7 +343,8 @@ pub mod pallet {
                             })
                             .ok_or(Error::<T>::RightNotFound)?;
                         grant.revoked_at_height = Some(height_u32);
-                        state.update_nonce(&signed_op.signer_key_id, signed_op.nonce)
+                        state
+                            .update_nonce(&signed_op.signer_key_id, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;
@@ -362,7 +361,8 @@ pub mod pallet {
                     DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
                         state.tombstoned_at_height = Some(height_u32);
-                        state.update_nonce(&signed_op.signer_key_id, signed_op.nonce)
+                        state
+                            .update_nonce(&signed_op.signer_key_id, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         Ok(())
                     })?;

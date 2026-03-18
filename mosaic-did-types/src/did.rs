@@ -7,21 +7,23 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::fmt;
+use core::{fmt, str::FromStr};
 
 use bounded_collections::{BoundedVec, ConstU32};
+#[cfg(feature = "substrate")]
 use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
+#[cfg(feature = "substrate")]
 use scale_info::TypeInfo;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 /// Maximum key ID size in bytes.
-pub const MAX_KEY_ID_LEN: u32 = 64;
+pub const MAX_KEY_REF_LEN: u32 = 64;
 
 /// A 32-byte Mosaic DID identifier, derived as `BLAKE3-256(initial_public_key)`.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode, MaxEncodedLen,
-    TypeInfo,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Did(pub [u8; 32]);
 
 #[cfg(test)]
@@ -37,9 +39,6 @@ impl Did {
 impl Did {
     /// The DID method prefix.
     pub const METHOD_PREFIX: &'static str = "did:mosaic:";
-
-    /// The legacy IOP Morpheus prefix (for migration support).
-    pub const LEGACY_MORPHEUS_PREFIX: &'static str = "did:morpheus:";
 
     /// Derive a DID identifier from a public key using BLAKE3-256.
     pub fn from_public_key(public_key: &[u8]) -> Self {
@@ -123,21 +122,17 @@ impl fmt::Display for DidParseError {
 ///
 /// References a specific verification method, e.g. `"key-1"`, `"key-recovery"`.
 /// Stored as bounded bytes with a maximum length of 64.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct KeyRef(BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>>);
+pub struct KeyRef(BoundedVec<u8, ConstU32<MAX_KEY_REF_LEN>>);
 
 impl KeyRef {
     /// Create a new KeyRef from bytes.
     pub fn new(bytes: Vec<u8>) -> Result<Self, &'static str> {
-        let bounded = BoundedVec::try_from(bytes)
-            .map_err(|_| "KeyRef exceeds maximum length of 64 bytes")?;
+        let bounded =
+            BoundedVec::try_from(bytes).map_err(|_| "KeyRef exceeds maximum length of 64 bytes")?;
         Ok(KeyRef(bounded))
-    }
-
-    /// Create a KeyRef from a string identifier (e.g. "key-1").
-    pub fn from_str_id(s: &str) -> Result<Self, &'static str> {
-        Self::new(s.as_bytes().to_vec())
     }
 
     /// Return the raw bytes.
@@ -151,8 +146,16 @@ impl KeyRef {
     }
 
     /// Access the inner BoundedVec directly.
-    pub fn as_bounded(&self) -> &BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>> {
+    pub fn as_bounded(&self) -> &BoundedVec<u8, ConstU32<MAX_KEY_REF_LEN>> {
         &self.0
+    }
+}
+
+impl FromStr for KeyRef {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s.as_bytes().to_vec())
     }
 }
 
@@ -195,11 +198,9 @@ impl fmt::Display for KeyRef {
 ///
 /// Both variants store a fixed 32-byte hash. The enum discriminant captures
 /// *how* the hash was produced, which determines verifiability semantics.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Encode, Decode, MaxEncodedLen,
-    TypeInfo,
-)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum ContentId {
     /// BLAKE3-256 hash of raw binary content.
     ByteHash([u8; 32]),
@@ -210,7 +211,7 @@ pub enum ContentId {
 
 impl ContentId {
     /// Compute a ContentId from arbitrary content bytes using BLAKE3.
-    pub fn from_content(content: &[u8]) -> Self {
+    pub fn from_bytes(content: &[u8]) -> Self {
         let hash = blake3::hash(content);
         ContentId::ByteHash(*hash.as_bytes())
     }
@@ -309,12 +310,12 @@ mod tests {
     #[test]
     fn content_id_from_content() {
         let content = b"Hello, Mosaic Trust Network!";
-        let cid1 = ContentId::from_content(content);
-        let cid2 = ContentId::from_content(content);
+        let cid1 = ContentId::from_bytes(content);
+        let cid2 = ContentId::from_bytes(content);
         assert_eq!(cid1, cid2);
         assert!(!cid1.is_json_digest());
 
-        let cid3 = ContentId::from_content(b"Different content");
+        let cid3 = ContentId::from_bytes(b"Different content");
         assert_ne!(cid1, cid3);
     }
 
@@ -342,7 +343,7 @@ mod tests {
 
     #[test]
     fn key_id_from_str() {
-        let kid = KeyRef::from_str_id("key-1").unwrap();
+        let kid = KeyRef::from_str("key-1").unwrap();
         assert_eq!(kid.as_str(), Some("key-1"));
     }
 

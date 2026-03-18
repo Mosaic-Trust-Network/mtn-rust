@@ -7,11 +7,16 @@
 use alloc::vec::Vec;
 
 use bounded_collections::{BoundedBTreeMap, BoundedVec, ConstU32};
+
+#[cfg(feature = "substrate")]
 use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
+#[cfg(feature = "substrate")]
 use scale_info::TypeInfo;
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use crate::did::{Did, KeyRef};
-use crate::operation::{KeyPurpose, KeyType, Right, MAX_PUBLIC_KEY_LEN, MAX_PURPOSES_PER_KEY};
+use crate::operation::{KeyPurpose, KeyType, MAX_PUBLIC_KEY_LEN, MAX_PURPOSES_PER_KEY, Right};
 use crate::validity::is_height_valid;
 
 // ========== PROTOCOL CONSTANTS ==========
@@ -26,8 +31,9 @@ pub const MAX_NONCES_PER_DID: u32 = 32;
 // ========== CORE STATE TYPES ==========
 
 /// A verification method in the DID Document.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct VerificationMethod {
     /// Key identifier (fragment), e.g. "key-1".
     pub id: KeyRef,
@@ -51,13 +57,19 @@ impl VerificationMethod {
     /// Returns whether this key is valid (not expired, not revoked) at the given height.
     #[inline]
     pub fn is_valid_at(&self, height: u32) -> bool {
-        is_height_valid(height, self.added_at_height, self.expires_at_height, self.revoked_at_height)
+        is_height_valid(
+            height,
+            self.added_at_height,
+            self.expires_at_height,
+            self.revoked_at_height,
+        )
     }
 }
 
 /// A right grant record.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct RightGrant {
     /// The key this right is granted to.
     pub key_id: KeyRef,
@@ -89,8 +101,9 @@ impl RightGrant {
 /// Stored directly in pallet storage (`StorageMap<Did, DidState>`) and also
 /// usable off-chain. All collections are bounded for deterministic
 /// `MaxEncodedLen` and safe on-chain storage.
-#[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DidState {
     /// The DID this document describes.
     pub did: Did,
@@ -160,17 +173,13 @@ impl DidState {
 
         // For explicit rights: the key must be valid AND the grant must be active.
         // A revoked/expired key is cryptographically dead -- no rights survive revocation.
-        let key_valid = self
-            .keys
-            .iter()
-            .any(|k| k.id == *key_id && k.is_valid_at(height));
+        let key_valid = self.keys.iter().any(|k| k.id == *key_id && k.is_valid_at(height));
 
         key_valid
-            && self.rights.iter().any(|rg| {
-                rg.key_id == *key_id
-                    && rg.right == right
-                    && rg.is_active_at(height)
-            })
+            && self
+                .rights
+                .iter()
+                .any(|rg| rg.key_id == *key_id && rg.right == right && rg.is_active_at(height))
     }
 
     /// Get the current nonce for a key.
@@ -181,9 +190,7 @@ impl DidState {
     /// Update the nonce for a key, inserting if not present.
     ///
     /// Returns `Err` if the nonce map is full and the key is new.
-    pub fn update_nonce(
-        &mut self, key_id: &KeyRef, nonce: u64,
-    ) -> Result<(), &'static str> {
+    pub fn update_nonce(&mut self, key_id: &KeyRef, nonce: u64) -> Result<(), &'static str> {
         if let Some(existing) = self.nonces.get_mut(key_id) {
             *existing = nonce;
         } else {
@@ -346,7 +353,7 @@ mod tests {
         state
             .keys
             .try_push(VerificationMethod {
-                id: KeyRef::from_str_id("key-1").unwrap(),
+                id: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: did,
                 public_key: b"test-pk-32-bytes-for-ed25519!!!".to_vec().try_into().unwrap(),
@@ -380,7 +387,7 @@ mod tests {
     #[test]
     fn key_validity_at_height() {
         let vm = VerificationMethod {
-            id: KeyRef::from_str_id("key-1").unwrap(),
+            id: "key-1".parse().unwrap(),
             key_type: KeyType::Ed25519,
             controller: Did::alice(),
             public_key: alloc::vec![0u8; 32].try_into().unwrap(),
@@ -400,7 +407,7 @@ mod tests {
     #[test]
     fn key_revoked_at_height() {
         let vm = VerificationMethod {
-            id: KeyRef::from_str_id("key-1").unwrap(),
+            id: "key-1".parse().unwrap(),
             key_type: KeyType::Ed25519,
             controller: Did::alice(),
             public_key: alloc::vec![0u8; 32].try_into().unwrap(),
@@ -429,7 +436,7 @@ mod tests {
     #[test]
     fn initial_key_has_implicit_rights() {
         let state = make_test_state();
-        let key_id = KeyRef::from_str_id("key-1").unwrap();
+        let key_id = "key-1".parse().unwrap();
 
         assert!(state.has_right_at(&key_id, Right::Update, 1));
         assert!(state.has_right_at(&key_id, Right::Impersonate, 1));
@@ -440,7 +447,7 @@ mod tests {
     #[test]
     fn explicit_right_grant() {
         let mut state = make_test_state();
-        let key_id = KeyRef::from_str_id("key-1").unwrap();
+        let key_id: KeyRef = "key-1".parse().unwrap();
 
         state
             .rights
@@ -462,10 +469,10 @@ mod tests {
     #[test]
     fn nonce_defaults_to_zero() {
         let state = make_test_state();
-        let key_id = KeyRef::from_str_id("key-1").unwrap();
+        let key_id = "key-1".parse().unwrap();
         assert_eq!(state.nonce_for_key(&key_id), 0);
 
-        let unknown = KeyRef::from_str_id("key-nonexistent").unwrap();
+        let unknown = "key-nonexistent".parse().unwrap();
         assert_eq!(state.nonce_for_key(&unknown), 0);
     }
 
@@ -479,7 +486,7 @@ mod tests {
         state
             .keys
             .try_push(VerificationMethod {
-                id: KeyRef::from_str_id("key-1").unwrap(),
+                id: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: did,
                 public_key: pk.to_vec().try_into().unwrap(),
