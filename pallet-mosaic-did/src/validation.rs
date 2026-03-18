@@ -48,7 +48,10 @@ pub fn validate_did_operation<T: Config>(
                     validate_signature_from_state::<T>(signed_op, state, height_u32)?;
                 }
                 None => {
-                    // Implicit DID creation: DID must match MKeyId derived from the public key
+                    // Implicit DID creation requires Ed25519 — the DID identifier
+                    // is derived via Ed25519Blake3, so the initial key must match.
+                    ensure!(*key_type == KeyType::Ed25519, Error::<T>::InvalidPublicKey);
+
                     let derived_did = Did::from_public_key(public_key)
                         .map_err(|_| Error::<T>::InvalidPublicKey)?;
                     ensure!(did == &derived_did, Error::<T>::DidMismatch);
