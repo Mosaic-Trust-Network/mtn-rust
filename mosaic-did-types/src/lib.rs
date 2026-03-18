@@ -23,12 +23,14 @@
 
 extern crate alloc;
 
+pub mod auth;
 pub mod did;
 pub mod document;
 pub mod operation;
 pub mod signature;
 pub mod validity;
 
+pub use auth::*;
 pub use did::*;
 pub use document::*;
 pub use operation::*;

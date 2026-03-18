@@ -11,7 +11,7 @@
 //! signatures, and `from_key_type_and_bytes(Ed25519, ..)` produces Ed25519Blake3 keys.
 
 use iop_keyvault::ed25519::{EdPublicKey, EdSignature};
-use iop_keyvault::multicipher::{MPublicKey, MSignature};
+use iop_keyvault::multicipher::{MKeyId, MPublicKey, MSignature};
 use iop_keyvault::PublicKey;
 
 use crate::operation::KeyType;
@@ -142,10 +142,16 @@ mod sig_serde_impls {
 
 /// Multi-algorithm public key wrapping keyvault's [`MPublicKey`].
 ///
-/// Used ephemerally during signature verification – not stored on-chain.
 /// Maps the pallet's [`KeyType`] enum to the correct keyvault cipher suite.
+/// Provides signature verification and key ID derivation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MultiPublicKey(pub MPublicKey);
+
+/// Maximum SCALE-encoded length of a MultiPublicKey.
+///
+/// MPublicKey strings are at most ~56 UTF-8 bytes (secp256k1 compressed).
+/// SCALE encodes as a length-prefixed `Vec<u8>`: compact(len) + bytes.
+const MAX_PK_ENCODED_LEN: usize = 66;
 
 impl MultiPublicKey {
     /// Construct from a [`KeyType`] and raw public key bytes.
@@ -169,6 +175,11 @@ impl MultiPublicKey {
         }
     }
 
+    /// Derive the multicipher key ID from this public key.
+    pub fn key_id(&self) -> MKeyId {
+        self.0.key_id()
+    }
+
     /// Verify a signature against this public key and message.
     ///
     /// Delegates to keyvault's [`PublicKey::verify()`] which handles cipher suite
@@ -176,11 +187,85 @@ impl MultiPublicKey {
     pub fn verify(&self, message: &[u8], signature: &MultiSignature) -> bool {
         self.0.verify(message, &signature.0)
     }
+
+    /// Access the inner keyvault [`MPublicKey`].
+    pub fn inner(&self) -> &MPublicKey {
+        &self.0
+    }
 }
 
 impl From<MPublicKey> for MultiPublicKey {
     fn from(pk: MPublicKey) -> Self {
         MultiPublicKey(pk)
+    }
+}
+
+// ========== MultiPublicKey SCALE codec ==========
+
+#[cfg(feature = "substrate")]
+mod pk_scale_impls {
+    use super::*;
+    use parity_scale_codec::{Decode, Encode, EncodeLike, MaxEncodedLen};
+    use scale_info::TypeInfo;
+
+    impl EncodeLike for MultiPublicKey {}
+
+    impl Encode for MultiPublicKey {
+        fn encode_to<W: parity_scale_codec::Output + ?Sized>(&self, dest: &mut W) {
+            let bytes = self.0.to_bytes();
+            Encode::encode_to(&bytes, dest);
+        }
+    }
+
+    impl Decode for MultiPublicKey {
+        fn decode<I: parity_scale_codec::Input>(
+            input: &mut I,
+        ) -> Result<Self, parity_scale_codec::Error> {
+            let bytes = Vec::<u8>::decode(input)?;
+            let pk = MPublicKey::from_bytes(bytes)
+                .map_err(|_| parity_scale_codec::Error::from("invalid MPublicKey encoding"))?;
+            Ok(MultiPublicKey(pk))
+        }
+    }
+
+    impl MaxEncodedLen for MultiPublicKey {
+        fn max_encoded_len() -> usize {
+            MAX_PK_ENCODED_LEN
+        }
+    }
+
+    impl TypeInfo for MultiPublicKey {
+        type Identity = Self;
+        fn type_info() -> scale_info::Type {
+            scale_info::Type::builder()
+                .path(scale_info::Path::new(
+                    "MultiPublicKey",
+                    "mosaic_did_types::signature",
+                ))
+                .composite(
+                    scale_info::build::Fields::unnamed()
+                        .field(|f| f.ty::<Vec<u8>>().type_name("MPublicKey")),
+                )
+        }
+    }
+}
+
+// ========== MultiPublicKey Serde ==========
+
+#[cfg(feature = "serde")]
+mod pk_serde_impls {
+    use super::*;
+
+    impl serde::Serialize for MultiPublicKey {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            self.0.serialize(serializer)
+        }
+    }
+
+    impl<'de> serde::Deserialize<'de> for MultiPublicKey {
+        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+            MPublicKey::deserialize(deserializer).map(MultiPublicKey)
+        }
     }
 }
 
