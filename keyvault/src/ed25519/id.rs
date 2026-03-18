@@ -96,7 +96,10 @@ impl EdKeyId {
                 Ok(Self(bytes.to_owned()))
             }
             Some(&KEY_ID_VERSION_BLAKE3) => {
-                ensure!(bytes.len() == BLAKE3_KEY_ID_SIZE, "Blake3 key id must be {BLAKE3_KEY_ID_SIZE} bytes");
+                ensure!(
+                    bytes.len() == BLAKE3_KEY_ID_SIZE,
+                    "Blake3 key id must be {BLAKE3_KEY_ID_SIZE} bytes"
+                );
                 Ok(Self(bytes.to_owned()))
             }
             Some(v) => bail!("Unknown key id version byte 0x{v:02x}"),

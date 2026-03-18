@@ -34,9 +34,7 @@ pub fn validate_did_operation<T: Config>(
     match &signed_op.operation {
         DidOperation::AddKey { did, auth, .. } => {
             // AddKey requires the PublicKey variant — the chain needs actual key bytes.
-            let mpk = auth
-                .to_multi_public_key()
-                .ok_or(Error::<T>::InvalidPublicKey)?;
+            let mpk = auth.to_multi_public_key().ok_or(Error::<T>::InvalidPublicKey)?;
             let key_type = mpk.key_type().ok_or(Error::<T>::InvalidPublicKey)?;
             let raw_bytes = mpk.raw_bytes();
 
@@ -54,10 +52,7 @@ pub fn validate_did_operation<T: Config>(
                         Error::<T>::InsufficientRight
                     );
                     // Reject duplicate key IDs
-                    ensure!(
-                        state.find_key(&key_ref).is_none(),
-                        Error::<T>::KeyAlreadyExists
-                    );
+                    ensure!(state.find_key(&key_ref).is_none(), Error::<T>::KeyAlreadyExists);
                     // Verify signature against signer's key resolved from state
                     validate_signature_from_state::<T>(signed_op, state, height_u32)?;
                 }

@@ -14,8 +14,8 @@
 
 use core::fmt;
 
-use iop_keyvault::multicipher::{MKeyId, MPublicKey};
 use iop_keyvault::PublicKey;
+use iop_keyvault::multicipher::{MKeyId, MPublicKey};
 
 /// Identifies a key for authentication – either by key ID or full public key.
 ///
@@ -70,8 +70,7 @@ impl Authentication {
     ///
     /// [`MultiPublicKey`]: crate::signature::MultiPublicKey
     pub fn to_multi_public_key(&self) -> Option<crate::signature::MultiPublicKey> {
-        self.public_key()
-            .map(|pk| crate::signature::MultiPublicKey(pk.clone()))
+        self.public_key().map(|pk| crate::signature::MultiPublicKey(pk.clone()))
     }
 }
 
@@ -152,9 +151,8 @@ mod scale_impls {
             let bytes = Vec::<u8>::decode(input)?;
             match variant {
                 0 => {
-                    let kid = MKeyId::from_bytes(bytes).map_err(|_| {
-                        parity_scale_codec::Error::from("invalid MKeyId encoding")
-                    })?;
+                    let kid = MKeyId::from_bytes(bytes)
+                        .map_err(|_| parity_scale_codec::Error::from("invalid MKeyId encoding"))?;
                     Ok(Authentication::KeyId(kid))
                 }
                 1 => {
@@ -163,9 +161,7 @@ mod scale_impls {
                     })?;
                     Ok(Authentication::PublicKey(pk))
                 }
-                _ => Err(parity_scale_codec::Error::from(
-                    "invalid Authentication variant",
-                )),
+                _ => Err(parity_scale_codec::Error::from("invalid Authentication variant")),
             }
         }
     }
@@ -180,10 +176,7 @@ mod scale_impls {
         type Identity = Self;
         fn type_info() -> scale_info::Type {
             scale_info::Type::builder()
-                .path(scale_info::Path::new(
-                    "Authentication",
-                    "mosaic_did_types::auth",
-                ))
+                .path(scale_info::Path::new("Authentication", "mosaic_did_types::auth"))
                 .variant(
                     scale_info::build::Variants::new()
                         .variant("KeyId", |v| {
@@ -245,19 +238,17 @@ mod tests {
     use iop_keyvault::ed25519::{Blake3, EdKeyId, EdPublicKey};
 
     fn alice_pk() -> MPublicKey {
-        let pk_bytes = hex::decode(
-            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-        )
-        .unwrap();
+        let pk_bytes =
+            hex::decode("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+                .unwrap();
         let ed_pk = EdPublicKey::from_bytes(&pk_bytes).unwrap();
         MPublicKey::Ed25519Blake3(ed_pk)
     }
 
     fn alice_kid() -> MKeyId {
-        let pk_bytes = hex::decode(
-            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-        )
-        .unwrap();
+        let pk_bytes =
+            hex::decode("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+                .unwrap();
         let ed_pk = EdPublicKey::from_bytes(&pk_bytes).unwrap();
         MKeyId::Ed25519Blake3(EdKeyId::from_pk::<Blake3>(&ed_pk))
     }
@@ -281,22 +272,15 @@ mod tests {
 
     #[test]
     fn same_variant_equality() {
-        assert_eq!(
-            Authentication::KeyId(alice_kid()),
-            Authentication::KeyId(alice_kid()),
-        );
-        assert_eq!(
-            Authentication::PublicKey(alice_pk()),
-            Authentication::PublicKey(alice_pk()),
-        );
+        assert_eq!(Authentication::KeyId(alice_kid()), Authentication::KeyId(alice_kid()),);
+        assert_eq!(Authentication::PublicKey(alice_pk()), Authentication::PublicKey(alice_pk()),);
     }
 
     #[test]
     fn different_keys_not_equal() {
-        let bob_bytes = hex::decode(
-            "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
-        )
-        .unwrap();
+        let bob_bytes =
+            hex::decode("3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c")
+                .unwrap();
         let bob_pk = EdPublicKey::from_bytes(&bob_bytes).unwrap();
         let bob = Authentication::PublicKey(MPublicKey::Ed25519Blake3(bob_pk));
         let alice = Authentication::KeyId(alice_kid());

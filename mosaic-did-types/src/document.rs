@@ -35,8 +35,8 @@ pub const MAX_NONCES_PER_DID: u32 = 32;
 #[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct VerificationMethod {
-    /// Key identifier (fragment), e.g. "key-1".
-    pub id: KeyRef,
+    /// Key reference (document fragment), e.g. "key-1".
+    pub key_ref: KeyRef,
     /// Algorithm type.
     pub key_type: KeyType,
     /// Controller DID (usually the DID itself).
@@ -141,12 +141,12 @@ impl DidState {
 
     /// Find a key by its KeyRef.
     pub fn find_key(&self, key_ref: &KeyRef) -> Option<&VerificationMethod> {
-        self.keys.iter().find(|k| k.id == *key_ref)
+        self.keys.iter().find(|k| k.key_ref == *key_ref)
     }
 
     /// Find a key by its KeyRef (mutable).
     pub fn find_key_mut(&mut self, key_ref: &KeyRef) -> Option<&mut VerificationMethod> {
-        self.keys.iter_mut().find(|k| k.id == *key_ref)
+        self.keys.iter_mut().find(|k| k.key_ref == *key_ref)
     }
 
     /// Returns all currently valid keys at the given height.
@@ -163,7 +163,7 @@ impl DidState {
         // Delegate rights. Delegate is required to bootstrap the rights system (grant
         // rights to other keys). Without it, AddRight/RevokeRight are unreachable.
         if let Some(first_key) = self.keys.first() {
-            if first_key.id == *key_ref && first_key.is_valid_at(height) {
+            if first_key.key_ref == *key_ref && first_key.is_valid_at(height) {
                 match right {
                     Right::Update | Right::Impersonate | Right::Delegate => return true,
                     _ => {}
@@ -173,7 +173,7 @@ impl DidState {
 
         // For explicit rights: the key must be valid AND the grant must be active.
         // A revoked/expired key is cryptographically dead -- no rights survive revocation.
-        let key_valid = self.keys.iter().any(|k| k.id == *key_ref && k.is_valid_at(height));
+        let key_valid = self.keys.iter().any(|k| k.key_ref == *key_ref && k.is_valid_at(height));
 
         key_valid
             && self
@@ -217,7 +217,7 @@ impl DidState {
         let verification_methods: Vec<DidDocumentVerificationMethod> = valid_keys
             .iter()
             .map(|k| DidDocumentVerificationMethod {
-                id: alloc::format!("{}#{}", self.did.to_did_string(), k.id),
+                id: alloc::format!("{}#{}", self.did.to_did_string(), k.key_ref),
                 type_: key_type_to_w3c_string(k.key_type),
                 controller: self.did.to_did_string(),
                 public_key_multibase: multibase_encode_key(&k.public_key),
@@ -227,31 +227,31 @@ impl DidState {
         let authentication: Vec<String> = valid_keys
             .iter()
             .filter(|k| k.purposes.contains(&KeyPurpose::Authentication))
-            .map(|k| alloc::format!("{}#{}", self.did.to_did_string(), k.id))
+            .map(|k| alloc::format!("{}#{}", self.did.to_did_string(), k.key_ref))
             .collect();
 
         let assertion_method: Vec<String> = valid_keys
             .iter()
             .filter(|k| k.purposes.contains(&KeyPurpose::AssertionMethod))
-            .map(|k| alloc::format!("{}#{}", self.did.to_did_string(), k.id))
+            .map(|k| alloc::format!("{}#{}", self.did.to_did_string(), k.key_ref))
             .collect();
 
         let key_agreement: Vec<String> = valid_keys
             .iter()
             .filter(|k| k.purposes.contains(&KeyPurpose::KeyAgreement))
-            .map(|k| alloc::format!("{}#{}", self.did.to_did_string(), k.id))
+            .map(|k| alloc::format!("{}#{}", self.did.to_did_string(), k.key_ref))
             .collect();
 
         let capability_invocation: Vec<String> = valid_keys
             .iter()
             .filter(|k| k.purposes.contains(&KeyPurpose::CapabilityInvocation))
-            .map(|k| alloc::format!("{}#{}", self.did.to_did_string(), k.id))
+            .map(|k| alloc::format!("{}#{}", self.did.to_did_string(), k.key_ref))
             .collect();
 
         let capability_delegation: Vec<String> = valid_keys
             .iter()
             .filter(|k| k.purposes.contains(&KeyPurpose::CapabilityDelegation))
-            .map(|k| alloc::format!("{}#{}", self.did.to_did_string(), k.id))
+            .map(|k| alloc::format!("{}#{}", self.did.to_did_string(), k.key_ref))
             .collect();
 
         DidDocument {
@@ -353,7 +353,7 @@ mod tests {
         state
             .keys
             .try_push(VerificationMethod {
-                id: "key-1".parse().unwrap(),
+                key_ref: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: did,
                 public_key: hex::decode(
@@ -391,7 +391,7 @@ mod tests {
     #[test]
     fn key_validity_at_height() {
         let vm = VerificationMethod {
-            id: "key-1".parse().unwrap(),
+            key_ref: "key-1".parse().unwrap(),
             key_type: KeyType::Ed25519,
             controller: Did::bob(),
             public_key: alloc::vec![0u8; 32].try_into().unwrap(),
@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn key_revoked_at_height() {
         let vm = VerificationMethod {
-            id: "key-1".parse().unwrap(),
+            key_ref: "key-1".parse().unwrap(),
             key_type: KeyType::Ed25519,
             controller: Did::bob(),
             public_key: alloc::vec![0u8; 32].try_into().unwrap(),
@@ -491,7 +491,7 @@ mod tests {
         state
             .keys
             .try_push(VerificationMethod {
-                id: "key-1".parse().unwrap(),
+                key_ref: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: did,
                 public_key: pk_bytes.try_into().unwrap(),

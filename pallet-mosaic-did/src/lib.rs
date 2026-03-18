@@ -243,15 +243,13 @@ pub mod pallet {
                     // Extract key material from Authentication (validated as PublicKey variant
                     // by validation::validate_did_operation before we reach here).
                     let mpk = auth.to_multi_public_key().ok_or(Error::<T>::InvalidPublicKey)?;
-                    let key_type =
-                        mpk.key_type().ok_or(Error::<T>::InvalidPublicKey)?;
+                    let key_type = mpk.key_type().ok_or(Error::<T>::InvalidPublicKey)?;
                     let raw_bytes: Vec<u8> = mpk.raw_bytes();
-                    let key_ref =
-                        KeyRef::new(auth.key_id().to_string().into_bytes())
-                            .map_err(|_| Error::<T>::InvalidPublicKey)?;
+                    let key_ref = KeyRef::new(auth.key_id().to_string().into_bytes())
+                        .map_err(|_| Error::<T>::InvalidPublicKey)?;
 
                     let vm = VerificationMethod {
-                        id: key_ref.clone(),
+                        key_ref: key_ref.clone(),
                         key_type,
                         controller: did.clone(),
                         public_key: raw_bytes
@@ -264,13 +262,9 @@ pub mod pallet {
                     };
 
                     DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
-                        let state =
-                            maybe_state.get_or_insert_with(|| DidState::new(did.clone()));
+                        let state = maybe_state.get_or_insert_with(|| DidState::new(did.clone()));
 
-                        ensure!(
-                            state.find_key(&key_ref).is_none(),
-                            Error::<T>::KeyAlreadyExists
-                        );
+                        ensure!(state.find_key(&key_ref).is_none(), Error::<T>::KeyAlreadyExists);
 
                         state.keys.try_push(vm).map_err(|_| Error::<T>::StorageBoundsExceeded)?;
                         state

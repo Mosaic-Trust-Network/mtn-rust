@@ -10,9 +10,9 @@
 //! BLAKE3-256 key ID derivation. The `ed25519()` constructor produces Ed25519Blake3
 //! signatures, and `from_key_type_and_bytes(Ed25519, ..)` produces Ed25519Blake3 keys.
 
+use iop_keyvault::PublicKey;
 use iop_keyvault::ed25519::{EdPublicKey, EdSignature};
 use iop_keyvault::multicipher::{MKeyId, MPublicKey, MSignature};
-use iop_keyvault::PublicKey;
 
 use crate::operation::KeyType;
 
@@ -107,10 +107,7 @@ mod sig_scale_impls {
         type Identity = Self;
         fn type_info() -> scale_info::Type {
             scale_info::Type::builder()
-                .path(scale_info::Path::new(
-                    "MultiSignature",
-                    "mosaic_did_types::signature",
-                ))
+                .path(scale_info::Path::new("MultiSignature", "mosaic_did_types::signature"))
                 .composite(
                     scale_info::build::Fields::unnamed()
                         .field(|f| f.ty::<Vec<u8>>().type_name("MSignature")),
@@ -258,10 +255,7 @@ mod pk_scale_impls {
         type Identity = Self;
         fn type_info() -> scale_info::Type {
             scale_info::Type::builder()
-                .path(scale_info::Path::new(
-                    "MultiPublicKey",
-                    "mosaic_did_types::signature",
-                ))
+                .path(scale_info::Path::new("MultiPublicKey", "mosaic_did_types::signature"))
                 .composite(
                     scale_info::build::Fields::unnamed()
                         .field(|f| f.ty::<Vec<u8>>().type_name("MPublicKey")),
@@ -322,10 +316,9 @@ mod tests {
     #[test]
     fn ed25519_public_key_from_valid_bytes() {
         // RFC 8032 test vector 1 public key
-        let pk_bytes = hex::decode(
-            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-        )
-        .unwrap();
+        let pk_bytes =
+            hex::decode("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+                .unwrap();
         let pk = MultiPublicKey::from_key_type_and_bytes(KeyType::Ed25519, &pk_bytes);
         assert!(pk.is_some());
     }
@@ -342,10 +335,9 @@ mod tests {
     #[test]
     fn cross_suite_verify_returns_false() {
         // Ed25519Blake3 key cannot verify a secp256k1 signature
-        let pk_bytes = hex::decode(
-            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-        )
-        .unwrap();
+        let pk_bytes =
+            hex::decode("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+                .unwrap();
         let pk = MultiPublicKey::from_key_type_and_bytes(KeyType::Ed25519, &pk_bytes).unwrap();
 
         let mut sig_bytes = [0u8; 64];

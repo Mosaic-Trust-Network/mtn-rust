@@ -56,7 +56,9 @@ impl MKeyId {
         match CipherSuite::from_char(suite)? {
             CipherSuite::Ed25519 => Ok(Self::Ed25519(EdKeyId::from_bytes(inner_bytes)?)),
             CipherSuite::Secp256k1 => Ok(Self::Secp256k1(SecpKeyId::from_bytes(inner_bytes)?)),
-            CipherSuite::Ed25519Blake3 => Ok(Self::Ed25519Blake3(EdKeyId::from_bytes(inner_bytes)?)),
+            CipherSuite::Ed25519Blake3 => {
+                Ok(Self::Ed25519Blake3(EdKeyId::from_bytes(inner_bytes)?))
+            }
         }
     }
 }
@@ -217,16 +219,16 @@ mod test {
     /// Pinned test vectors for Blake3-derived key IDs.
     /// If Blake3 output changes, these tests break immediately.
     mod blake3_key_id {
+        use crate::PublicKey;
         use crate::ed25519::{Blake3, EdKeyId, EdPublicKey};
         use crate::multicipher::{CipherSuite, MKeyId};
-        use crate::PublicKey;
 
         /// Pinned: pk 8fe969... → Blake3 key id
         #[test]
         fn case_1() {
-            let pk_bytes = hex::decode(
-                "8fe9693f8fa62a4305a140b9764c5ee01e455963744fe18204b4fb948249308a",
-            ).unwrap();
+            let pk_bytes =
+                hex::decode("8fe9693f8fa62a4305a140b9764c5ee01e455963744fe18204b4fb948249308a")
+                    .unwrap();
             let pk = EdPublicKey::from_bytes(&pk_bytes).unwrap();
             let blake3_id = EdKeyId::from_pk::<Blake3>(&pk);
             let m_id = MKeyId::Ed25519Blake3(blake3_id.clone());
@@ -241,7 +243,8 @@ mod test {
             );
 
             // String roundtrip
-            let parsed = "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH".parse::<MKeyId>().unwrap();
+            let parsed =
+                "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH".parse::<MKeyId>().unwrap();
             assert_eq!(parsed, m_id);
             assert_eq!(parsed.suite(), CipherSuite::Ed25519Blake3);
 
@@ -254,9 +257,9 @@ mod test {
         /// Pinned: pk d75a98... → Blake3 key id
         #[test]
         fn case_2() {
-            let pk_bytes = hex::decode(
-                "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-            ).unwrap();
+            let pk_bytes =
+                hex::decode("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+                    .unwrap();
             let pk = EdPublicKey::from_bytes(&pk_bytes).unwrap();
             let blake3_id = EdKeyId::from_pk::<Blake3>(&pk);
             let m_id = MKeyId::Ed25519Blake3(blake3_id.clone());
@@ -282,10 +285,9 @@ mod test {
 
         #[test]
         fn blake3_serde_roundtrip() {
-            let pk_bytes = hex::decode(
-                "8fe9693f8fa62a4305a140b9764c5ee01e455963744fe18204b4fb948249308a",
-            )
-            .unwrap();
+            let pk_bytes =
+                hex::decode("8fe9693f8fa62a4305a140b9764c5ee01e455963744fe18204b4fb948249308a")
+                    .unwrap();
             let pk = EdPublicKey::from_bytes(&pk_bytes).unwrap();
             let m_id = MKeyId::Ed25519Blake3(EdKeyId::from_pk::<Blake3>(&pk));
 

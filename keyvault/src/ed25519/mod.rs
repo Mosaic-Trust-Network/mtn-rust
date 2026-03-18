@@ -21,7 +21,10 @@ pub struct Ed25519;
 
 pub use cc::{CHAIN_CODE_SIZE, ChainCode};
 pub use ext_sk::EdExtPrivateKey;
-pub use id::{Blake3, BLAKE3_KEY_ID_SIZE, EdKeyId, IdHasher, KEY_ID_SALT, KEY_ID_SIZE, KEY_ID_VERSION1, KEY_ID_VERSION_BLAKE3, LegacyV1};
+pub use id::{
+    BLAKE3_KEY_ID_SIZE, Blake3, EdKeyId, IdHasher, KEY_ID_SALT, KEY_ID_SIZE, KEY_ID_VERSION_BLAKE3,
+    KEY_ID_VERSION1, LegacyV1,
+};
 pub use morpheus::*;
 pub use pk::{EdPublicKey, PUBLIC_KEY_SIZE};
 pub use sig::{EdSignature, SIGNATURE_SIZE, SIGNATURE_VERSION1};

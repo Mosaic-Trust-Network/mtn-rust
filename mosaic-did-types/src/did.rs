@@ -108,19 +108,17 @@ mod serde_impls {
 impl Did {
     pub fn alice() -> Self {
         // RFC 8032 test vector 1: pk for secret key = all zeros
-        let pk_bytes = hex::decode(
-            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-        )
-        .unwrap();
+        let pk_bytes =
+            hex::decode("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+                .unwrap();
         Self::from_public_key(&pk_bytes).expect("Alice PK is a valid Ed25519 key")
     }
 
     pub fn bob() -> Self {
         // RFC 8032 test vector 2
-        let pk_bytes = hex::decode(
-            "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
-        )
-        .unwrap();
+        let pk_bytes =
+            hex::decode("3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c")
+                .unwrap();
         Self::from_public_key(&pk_bytes).expect("Bob PK is a valid Ed25519 key")
     }
 }
@@ -136,8 +134,8 @@ impl Did {
     /// The bytes must be a valid 32-byte Ed25519 public key on the curve.
     /// Returns `Err` if the bytes are not a valid Ed25519 point.
     pub fn from_public_key(public_key: &[u8]) -> Result<Self, DidCreationError> {
-        let pk = EdPublicKey::from_bytes(public_key)
-            .map_err(|_| DidCreationError::InvalidPublicKey)?;
+        let pk =
+            EdPublicKey::from_bytes(public_key).map_err(|_| DidCreationError::InvalidPublicKey)?;
         let key_id = EdKeyId::from_pk::<Blake3>(&pk);
         Ok(Did { default_key_id: MKeyId::Ed25519Blake3(key_id) })
     }
@@ -203,7 +201,15 @@ impl fmt::Display for DidParseError {
 /// References a specific verification method, e.g. `"key-1"`, `"key-recovery"`.
 /// Stored as bounded bytes with a maximum length of 64.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, parity_scale_codec::MaxEncodedLen, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(
+        parity_scale_codec::Encode,
+        parity_scale_codec::Decode,
+        parity_scale_codec::MaxEncodedLen,
+        scale_info::TypeInfo
+    )
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct KeyRef(BoundedVec<u8, ConstU32<MAX_KEY_REF_LEN>>);
 
@@ -279,7 +285,15 @@ impl fmt::Display for KeyRef {
 /// Both variants store a fixed 32-byte hash. The enum discriminant captures
 /// *how* the hash was produced, which determines verifiability semantics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "substrate", derive(parity_scale_codec::Encode, parity_scale_codec::Decode, parity_scale_codec::MaxEncodedLen, scale_info::TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(
+        parity_scale_codec::Encode,
+        parity_scale_codec::Decode,
+        parity_scale_codec::MaxEncodedLen,
+        scale_info::TypeInfo
+    )
+)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ContentId {
     /// BLAKE3-256 hash of raw binary content.
@@ -358,10 +372,8 @@ mod tests {
 
     #[test]
     fn did_from_public_key_deterministic() {
-        let pk = hex::decode(
-            "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-        )
-        .unwrap();
+        let pk = hex::decode("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+            .unwrap();
         let did1 = Did::from_public_key(&pk).unwrap();
         let did2 = Did::from_public_key(&pk).unwrap();
         assert_eq!(did1, did2);

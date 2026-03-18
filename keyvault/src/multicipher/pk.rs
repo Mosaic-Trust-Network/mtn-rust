@@ -56,7 +56,9 @@ impl MPublicKey {
         match CipherSuite::from_char(suite)? {
             CipherSuite::Ed25519 => Ok(Self::Ed25519(EdPublicKey::from_bytes(inner_bytes)?)),
             CipherSuite::Secp256k1 => Ok(Self::Secp256k1(SecpPublicKey::from_bytes(inner_bytes)?)),
-            CipherSuite::Ed25519Blake3 => Ok(Self::Ed25519Blake3(EdPublicKey::from_bytes(inner_bytes)?)),
+            CipherSuite::Ed25519Blake3 => {
+                Ok(Self::Ed25519Blake3(EdPublicKey::from_bytes(inner_bytes)?))
+            }
         }
     }
 }

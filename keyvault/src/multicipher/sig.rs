@@ -56,7 +56,9 @@ impl MSignature {
         match CipherSuite::from_char(suite)? {
             CipherSuite::Ed25519 => Ok(Self::Ed25519(EdSignature::from_bytes(inner_bytes)?)),
             CipherSuite::Secp256k1 => Ok(Self::Secp256k1(SecpSignature::from_bytes(inner_bytes)?)),
-            CipherSuite::Ed25519Blake3 => Ok(Self::Ed25519Blake3(EdSignature::from_bytes(inner_bytes)?)),
+            CipherSuite::Ed25519Blake3 => {
+                Ok(Self::Ed25519Blake3(EdSignature::from_bytes(inner_bytes)?))
+            }
         }
     }
 }

@@ -8,21 +8,15 @@ mod unit_tests {
     // Valid Ed25519 public keys from RFC 8032 test vectors.
     // These are the only keys that can be used with Did::from_public_key.
     const PK_1: [u8; 32] = [
-        0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64,
-        0x07, 0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68,
-        0xf7, 0x07, 0x51, 0x1a,
+        0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07,
+        0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07,
+        0x51, 0x1a,
     ];
     const PK_2: [u8; 32] = [
-        0x3d, 0x40, 0x17, 0xc3, 0xe8, 0x43, 0x89, 0x5a, 0x92, 0xb7, 0x0a, 0xa7, 0x4d, 0x1b,
-        0x7e, 0xbc, 0x9c, 0x98, 0x2c, 0xcf, 0x2e, 0xc4, 0x96, 0x8c, 0xc0, 0xcd, 0x55, 0xf1,
-        0x2a, 0xf4, 0x66, 0x0c,
+        0x3d, 0x40, 0x17, 0xc3, 0xe8, 0x43, 0x89, 0x5a, 0x92, 0xb7, 0x0a, 0xa7, 0x4d, 0x1b, 0x7e,
+        0xbc, 0x9c, 0x98, 0x2c, 0xcf, 0x2e, 0xc4, 0x96, 0x8c, 0xc0, 0xcd, 0x55, 0xf1, 0x2a, 0xf4,
+        0x66, 0x0c,
     ];
-    const PK_3: [u8; 32] = [
-        0xfc, 0x51, 0xcd, 0x8e, 0x62, 0x18, 0xa1, 0xa3, 0x8d, 0xa4, 0x7e, 0xd0, 0x02, 0x30,
-        0xf0, 0x58, 0x08, 0x16, 0xed, 0x13, 0xba, 0x33, 0x03, 0xac, 0x5d, 0xeb, 0x91, 0x15,
-        0x48, 0x90, 0x80, 0x25,
-    ];
-
     fn did_1() -> Did {
         Did::from_public_key(&PK_1).unwrap()
     }
@@ -184,14 +178,13 @@ mod unit_tests {
     mod state_tests {
         use super::*;
         use frame_support::BoundedVec;
-        use mosaic_did_types::*;
 
         fn make_test_state() -> DidState {
             let did = did_1();
             let mut state = DidState::new(did.clone());
 
             let vm = VerificationMethod {
-                id: "key-1".parse().unwrap(),
+                key_ref: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: did,
                 public_key: PK_1.to_vec().try_into().unwrap(),
@@ -222,7 +215,7 @@ mod unit_tests {
         #[test]
         fn key_validity_at_height() {
             let vm = VerificationMethod {
-                id: "key-1".parse().unwrap(),
+                key_ref: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: did_2(),
                 public_key: vec![0u8; 32].try_into().unwrap(),
@@ -242,7 +235,7 @@ mod unit_tests {
         #[test]
         fn key_revoked_at_height() {
             let vm = VerificationMethod {
-                id: "key-1".parse().unwrap(),
+                key_ref: "key-1".parse().unwrap(),
                 key_type: KeyType::Ed25519,
                 controller: did_2(),
                 public_key: vec![0u8; 32].try_into().unwrap(),
@@ -316,7 +309,7 @@ mod unit_tests {
             state
                 .keys
                 .try_push(VerificationMethod {
-                    id: "key-old".parse().unwrap(),
+                    key_ref: "key-old".parse().unwrap(),
                     key_type: KeyType::Ed25519,
                     controller: did.clone(),
                     public_key: vec![1u8; 32].try_into().unwrap(),
@@ -333,7 +326,7 @@ mod unit_tests {
             state
                 .keys
                 .try_push(VerificationMethod {
-                    id: "key-new".parse().unwrap(),
+                    key_ref: "key-new".parse().unwrap(),
                     key_type: KeyType::Ed25519,
                     controller: did,
                     public_key: vec![2u8; 32].try_into().unwrap(),
@@ -351,11 +344,11 @@ mod unit_tests {
 
             // Before rotation: only old key valid
             assert_eq!(state.valid_keys_at(49).len(), 1);
-            assert_eq!(state.valid_keys_at(49)[0].id.as_bytes(), b"key-old");
+            assert_eq!(state.valid_keys_at(49)[0].key_ref.as_bytes(), b"key-old");
 
             // After rotation: only new key valid
             assert_eq!(state.valid_keys_at(50).len(), 1);
-            assert_eq!(state.valid_keys_at(50)[0].id.as_bytes(), b"key-new");
+            assert_eq!(state.valid_keys_at(50)[0].key_ref.as_bytes(), b"key-new");
         }
     }
 
@@ -382,7 +375,7 @@ mod unit_tests {
         let document_hash = ContentId::from_bytes(b"Signed contract PDF content...");
         let before_proof_op = SsiOperation::BeforeProof(document_hash);
 
-        let batch = vec![create_op, before_proof_op];
+        let batch = [create_op, before_proof_op];
         assert_eq!(batch.len(), 2);
     }
 }
