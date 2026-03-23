@@ -1,7 +1,11 @@
 //! Unit tests for the Mosaic DID pallet (v2 — materialized state).
 
+#[allow(clippy::wildcard_imports)]
+use polkadot_sdk::*;
+
 #[cfg(test)]
 mod unit_tests {
+    use super::*;
     use crate::state::BeforeProofRecord;
     use mosaic_did_types::*;
 

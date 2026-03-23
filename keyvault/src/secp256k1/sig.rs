@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use super::*;
 use crate::multicipher::MSignature;
@@ -39,7 +39,7 @@ impl SecpSignature {
         );
         let mut array = [0u8; secp::util::SIGNATURE_SIZE];
         array.copy_from_slice(&bytes[VERSION_SIZE..]);
-        let sig = secp::Signature::parse_standard(&array)?;
+        let sig = secp::Signature::parse_standard(&array).map_err(convert_secp_error)?;
         Ok(Self(sig))
     }
 
@@ -56,7 +56,7 @@ impl SecpSignature {
     /// This method parses such signature into a SecpSignature. Very old BTC transactions
     /// also supported a less strict version (lax der), which we do not support.
     pub fn from_der(bytes: impl AsRef<[u8]>) -> Result<Self> {
-        let sig = secp::Signature::parse_der(bytes.as_ref())?;
+        let sig = secp::Signature::parse_der(bytes.as_ref()).map_err(convert_secp_error)?;
         Ok(Self(sig))
     }
 }

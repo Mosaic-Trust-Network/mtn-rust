@@ -80,7 +80,8 @@ impl From<MSignature> for MultiSignature {
 #[cfg(feature = "substrate")]
 mod sig_scale_impls {
     use super::*;
-    use parity_scale_codec::{Decode, Encode, EncodeLike};
+    use alloc::vec::Vec;
+    use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, EncodeLike};
     use scale_info::TypeInfo;
 
     impl EncodeLike for MultiSignature {}
@@ -102,6 +103,8 @@ mod sig_scale_impls {
             Ok(MultiSignature(sig))
         }
     }
+
+    impl DecodeWithMemTracking for MultiSignature {}
 
     impl TypeInfo for MultiSignature {
         type Identity = Self;
@@ -222,7 +225,8 @@ impl From<MPublicKey> for MultiPublicKey {
 #[cfg(feature = "substrate")]
 mod pk_scale_impls {
     use super::*;
-    use parity_scale_codec::{Decode, Encode, EncodeLike, MaxEncodedLen};
+    use alloc::vec::Vec;
+    use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, EncodeLike, MaxEncodedLen};
     use scale_info::TypeInfo;
 
     impl EncodeLike for MultiPublicKey {}
@@ -244,6 +248,8 @@ mod pk_scale_impls {
             Ok(MultiPublicKey(pk))
         }
     }
+
+    impl DecodeWithMemTracking for MultiPublicKey {}
 
     impl MaxEncodedLen for MultiPublicKey {
         fn max_encoded_len() -> usize {

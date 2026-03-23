@@ -115,7 +115,7 @@ impl From<MPublicKey> for Authentication {
 mod scale_impls {
     use super::*;
     use alloc::vec::Vec;
-    use parity_scale_codec::{Decode, Encode, EncodeLike, MaxEncodedLen};
+    use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, EncodeLike, MaxEncodedLen};
     use scale_info::TypeInfo;
 
     /// Maximum SCALE-encoded length of an Authentication value.
@@ -165,6 +165,8 @@ mod scale_impls {
             }
         }
     }
+
+    impl DecodeWithMemTracking for Authentication {}
 
     impl MaxEncodedLen for Authentication {
         fn max_encoded_len() -> usize {

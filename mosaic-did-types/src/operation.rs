@@ -6,7 +6,7 @@
 use bounded_collections::{BoundedVec, ConstU32};
 
 #[cfg(feature = "substrate")]
-use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
+use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 #[cfg(feature = "substrate")]
 use scale_info::TypeInfo;
 #[cfg(feature = "serde")]
@@ -26,7 +26,10 @@ pub const MAX_PURPOSES_PER_KEY: u32 = 5;
 /// The rights model extends IOP Morpheus (Update, Impersonate) with
 /// additional capabilities for enterprise and compliance use cases.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Right {
     /// Can modify the DID Document (add/revoke keys, rights).
@@ -72,7 +75,10 @@ impl core::fmt::Display for Right {
 
 /// Supported key types for verification methods.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum KeyType {
     /// Ed25519 -- default, required.
@@ -87,7 +93,10 @@ pub enum KeyType {
 
 /// Key purposes per W3C DID Core verification relationships.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum KeyPurpose {
     /// Prove control of DID (login, challenge-response).
@@ -107,7 +116,10 @@ pub enum KeyPurpose {
 /// All operations are submitted inside `SignedOperation` bundles within an
 /// atomic `submit_did_operations` batch.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum DidOperation {
     /// Add a new key to the DID document.
@@ -176,7 +188,7 @@ impl DidOperation {
 
 /// A top-level SSI operation: either a DID operation or a BeforeProof timestamp.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "substrate", derive(Encode, Decode, TypeInfo))]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, TypeInfo, DecodeWithMemTracking))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[allow(clippy::large_enum_variant)] // Not worth Box-ing it in WASM
 pub enum SsiOperation {
@@ -191,7 +203,7 @@ pub enum SsiOperation {
 /// The signature proves the signer has authority over the operation.
 /// The nonce provides replay protection.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "substrate", derive(Encode, Decode, TypeInfo))]
+#[cfg_attr(feature = "substrate", derive(Encode, Decode, TypeInfo, DecodeWithMemTracking))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct SignedDidOperation {
     /// The DID operation to execute.
@@ -206,7 +218,10 @@ pub struct SignedDidOperation {
 
 /// Type of DID operation (for events, without carrying full data).
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum DidOperationType {
     AddKey,

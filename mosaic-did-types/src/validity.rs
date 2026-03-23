@@ -16,15 +16,15 @@ pub fn is_height_valid(
     if height < start {
         return false;
     }
-    if let Some(expires) = expires_at {
-        if height >= expires {
-            return false;
-        }
+    if let Some(expires) = expires_at
+        && height >= expires
+    {
+        return false;
     }
-    if let Some(revoked) = revoked_at {
-        if height >= revoked {
-            return false;
-        }
+    if let Some(revoked) = revoked_at
+        && height >= revoked
+    {
+        return false;
     }
     true
 }

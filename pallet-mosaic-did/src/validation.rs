@@ -9,8 +9,12 @@
 //! against the public key bound to `signer_key_ref` in the DID document state.
 //! The signable payload is the SCALE-encoded tuple `(operation, signer_key_ref, nonce)`.
 
+#[allow(clippy::wildcard_imports)]
+use polkadot_sdk::*;
+
 use frame_support::ensure;
 use parity_scale_codec::Encode;
+use scale_info::prelude::format;
 use sp_std::vec::Vec;
 
 use mosaic_did_types::{
@@ -39,7 +43,7 @@ pub fn validate_did_operation<T: Config>(
             let raw_bytes = mpk.raw_bytes();
 
             // Derive the KeyRef from the Authentication's key ID string
-            let key_ref = mosaic_did_types::KeyRef::new(auth.key_id().to_string().into_bytes())
+            let key_ref = mosaic_did_types::KeyRef::new(format!("{}", auth.key_id()).into_bytes())
                 .map_err(|_| Error::<T>::InvalidPublicKey)?;
 
             match &maybe_state {

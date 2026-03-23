@@ -49,7 +49,7 @@ impl DomainName {
         Self { edges }
     }
 
-    pub fn iter(&self) -> std::slice::Iter<Edge> {
+    pub fn iter(&self) -> std::slice::Iter<'_, Edge> {
         self.edges.iter()
     }
 

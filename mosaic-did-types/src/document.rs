@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use bounded_collections::{BoundedBTreeMap, BoundedVec, ConstU32};
 
 #[cfg(feature = "substrate")]
-use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
+use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 #[cfg(feature = "substrate")]
 use scale_info::TypeInfo;
 #[cfg(feature = "serde")]
@@ -32,7 +32,10 @@ pub const MAX_NONCES_PER_DID: u32 = 32;
 
 /// A verification method in the DID Document.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct VerificationMethod {
     /// Key reference (document fragment), e.g. "key-1".
@@ -68,7 +71,10 @@ impl VerificationMethod {
 
 /// A right grant record.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct RightGrant {
     /// The key this right is granted to.
@@ -102,7 +108,10 @@ impl RightGrant {
 /// usable off-chain. All collections are bounded for deterministic
 /// `MaxEncodedLen` and safe on-chain storage.
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "substrate", derive(Encode, Decode, MaxEncodedLen, TypeInfo))]
+#[cfg_attr(
+    feature = "substrate",
+    derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
+)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct DidState {
     /// The DID this document describes.
@@ -162,13 +171,12 @@ impl DidState {
         // The initial key (first key added) implicitly has Update, Impersonate, and
         // Delegate rights. Delegate is required to bootstrap the rights system (grant
         // rights to other keys). Without it, AddRight/RevokeRight are unreachable.
-        if let Some(first_key) = self.keys.first() {
-            if first_key.key_ref == *key_ref && first_key.is_valid_at(height) {
-                match right {
-                    Right::Update | Right::Impersonate | Right::Delegate => return true,
-                    _ => {}
-                }
-            }
+        if let Some(first_key) = self.keys.first()
+            && first_key.key_ref == *key_ref
+            && first_key.is_valid_at(height)
+            && matches!(right, Right::Update | Right::Impersonate | Right::Delegate)
+        {
+            return true;
         }
 
         // For explicit rights: the key must be valid AND the grant must be active.

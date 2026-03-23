@@ -16,6 +16,10 @@ use digest::FixedOutput;
 use ripemd::Ripemd160;
 use sha2::{Digest, Sha256};
 
+fn convert_secp_error(e: secp::Error) -> anyhow::Error {
+    anyhow!("{}", e)
+}
+
 fn hash160<B: AsRef<[u8]>>(input: B) -> [u8; 20] {
     let mut inner_hasher = Sha256::default();
     inner_hasher.update(input);
@@ -29,7 +33,7 @@ const CHECKSUM_LEN: usize = 4;
 /// Encoding binary data with BASE58 after adding a 4-byte checksum pops up in the Bitcoin
 /// ecosystem on several places. Addresses, wallet-import-format, extended public and private
 /// key serialization formats. So this transformation is pulled up here as a free function.
-pub fn to_base58check<D: AsRef<[u8]>>(data: D) -> String {
+pub fn to_base58check<D: AsRef<[u8]>>(data: D) -> alloc::string::String {
     let data = data.as_ref();
     let mut inner_hasher = Sha256::default();
     inner_hasher.update(data);
@@ -50,10 +54,10 @@ pub fn to_base58check<D: AsRef<[u8]>>(data: D) -> String {
 /// Decoding string with BASE58 into binary data and verify if the 4-byte checksum at the end
 /// matches the rest of the data. Only the decoded data without checksum will be returned.
 pub fn from_base58check<S: AsRef<str>>(s: S) -> Result<Vec<u8>> {
-    let mut to_decode = String::new();
+    let mut to_decode = alloc::string::String::new();
     to_decode.push(multibase::Base::Base58Btc.code());
     to_decode += s.as_ref();
-    let (_base, checked_data) = multibase::decode(&to_decode)?;
+    let (_base, checked_data) = multibase::decode(&to_decode).map_err(map_multibase_err)?;
     let (data, actual_checksum) = checked_data.split_at(checked_data.len() - CHECKSUM_LEN);
 
     let mut inner_hasher = Sha256::default();

@@ -13,7 +13,7 @@ homepage.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 iop-keyvault = { workspace = true }
-multibase = { workspace = true }
+multibase = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }
 serde = { workspace = true, features = ["rc"]}
 typetag = { workspace = true }

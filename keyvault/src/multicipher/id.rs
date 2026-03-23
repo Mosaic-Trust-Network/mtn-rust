@@ -63,6 +63,7 @@ impl MKeyId {
     }
 }
 
+#[cfg(feature = "serde")]
 impl Serialize for MKeyId {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -74,6 +75,7 @@ impl Serialize for MKeyId {
     }
 }
 
+#[cfg(feature = "serde")]
 fn deser(bytes: Vec<u8>) -> Result<MKeyId> {
     ensure!(!bytes.is_empty(), "No crypto suite found");
     let suite = bytes[0] as char;
@@ -81,17 +83,47 @@ fn deser(bytes: Vec<u8>) -> Result<MKeyId> {
     MKeyId::from_inner_bytes(suite, data)
 }
 
+#[cfg(feature = "serde")]
 impl<'de> Deserialize<'de> for MKeyId {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        serde_bytes::deserialize(deserializer)
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = Vec<u8>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a byte array")
+            }
+
+            fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(v.to_vec())
+            }
+
+            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                let mut vec = Vec::new();
+                while let Some(elem) = seq.next_element()? {
+                    vec.push(elem);
+                }
+                Ok(vec)
+            }
+        }
+
+        deserializer
+            .deserialize_bytes(Visitor)
             .and_then(|b| deser(b).map_err(|e| serde::de::Error::custom(e.to_string())))
     }
 }
 
-impl From<&MKeyId> for String {
+impl From<&MKeyId> for alloc::string::String {
     fn from(src: &MKeyId) -> Self {
         let mut output = multibase::encode(multibase::Base::Base58Btc, src.to_inner_bytes());
         output.insert(0, src.suite().as_char());
@@ -100,25 +132,25 @@ impl From<&MKeyId> for String {
     }
 }
 
-impl From<MKeyId> for String {
+impl From<MKeyId> for alloc::string::String {
     fn from(src: MKeyId) -> Self {
         (&src).into()
     }
 }
 
-impl std::fmt::Display for MKeyId {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", String::from(self))
+impl fmt::Display for MKeyId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", alloc::string::String::from(self))
     }
 }
 
-impl std::fmt::Debug for MKeyId {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        (self as &dyn std::fmt::Display).fmt(f)
+impl fmt::Debug for MKeyId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        (self as &dyn fmt::Display).fmt(f)
     }
 }
 
-impl std::str::FromStr for MKeyId {
+impl core::str::FromStr for MKeyId {
     type Err = anyhow::Error;
     fn from_str(src: &str) -> Result<Self> {
         let mut chars = src.chars();
@@ -128,7 +160,7 @@ impl std::str::FromStr for MKeyId {
             Self::PREFIX
         );
         if let Some(suite) = chars.next() {
-            let (_base, binary) = multibase::decode(chars.as_str())?;
+            let (_base, binary) = multibase::decode(chars.as_str()).map_err(map_multibase_err)?;
             Self::from_inner_bytes(suite, &binary)
         } else {
             Err(anyhow!("No crypto suite found"))

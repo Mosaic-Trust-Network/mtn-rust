@@ -26,7 +26,8 @@ impl EdPublicKey {
     ///
     /// [`to_bytes`]: #method.to_bytes
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
-        let pk = ed::VerifyingKey::try_from(bytes.as_ref())?;
+        let pk = ed::VerifyingKey::try_from(bytes.as_ref())
+            .map_err(|_| anyhow!("invalid public key"))?;
         Ok(Self(pk))
     }
 }

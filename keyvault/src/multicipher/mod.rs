@@ -26,7 +26,7 @@ mod sk;
 
 use super::*;
 
-use std::hash::Hash;
+use core::hash::Hash;
 
 use crate::ed25519::{EdKeyId, EdPrivateKey, EdPublicKey, EdSignature};
 use crate::secp256k1::{SecpKeyId, SecpPrivateKey, SecpPublicKey, SecpSignature};
@@ -91,12 +91,17 @@ impl AsymmetricCrypto for MultiCipher {
     type Signature = MSignature;
 }
 
-#[derive(Serialize, Deserialize)]
-struct ErasedBytes {
-    #[serde(rename = "s")]
-    suite: u8,
-    #[serde(rename = "v", with = "serde_bytes")]
-    value: Vec<u8>,
+#[cfg(feature = "serde")]
+mod erased_bytes_serde {
+    use super::*;
+
+    #[derive(Serialize, Deserialize)]
+    pub struct ErasedBytes<'a> {
+        #[serde(rename = "s")]
+        pub suite: u8,
+        #[serde(rename = "v")]
+        pub value: &'a [u8],
+    }
 }
 
 #[cfg(test)]

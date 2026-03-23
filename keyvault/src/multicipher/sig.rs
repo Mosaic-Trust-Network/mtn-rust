@@ -34,13 +34,13 @@ impl MSignature {
     /// Even the binary representation of a multicipher signature is readable with this.
     // TODO Should we really keep it like this?
     pub fn to_bytes(&self) -> Vec<u8> {
-        String::from(self).as_bytes().to_vec()
+        alloc::string::String::from(self).as_bytes().to_vec()
     }
 
     /// Even the binary representation of a multicipher signature is readable with this.
     // TODO Should we really keep it like this?
     pub fn from_bytes<B: AsRef<[u8]>>(bytes: B) -> Result<Self> {
-        let string = String::from_utf8(bytes.as_ref().to_owned())?;
+        let string = alloc::string::String::from_utf8(bytes.as_ref().to_owned())?;
         string.parse()
     }
 
@@ -63,31 +63,37 @@ impl MSignature {
     }
 }
 
-impl Serialize for MSignature {
+#[cfg(feature = "serde")]
+impl serde::Serialize for MSignature {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let erased = ErasedBytes { suite: self.suite().as_byte(), value: self.to_inner_bytes() };
+        use crate::multicipher::erased_bytes_serde::ErasedBytes;
+        let inner_bytes = self.to_inner_bytes();
+        let erased = ErasedBytes { suite: self.suite().as_byte(), value: inner_bytes.as_slice() };
         erased.serialize(serializer)
     }
 }
 
-fn deser(erased: ErasedBytes) -> Result<MSignature> {
-    MSignature::from_inner_bytes(erased.suite as char, &erased.value)
+#[cfg(feature = "serde")]
+fn deser(erased: crate::multicipher::erased_bytes_serde::ErasedBytes<'_>) -> Result<MSignature> {
+    MSignature::from_inner_bytes(erased.suite as char, erased.value)
 }
 
-impl<'de> Deserialize<'de> for MSignature {
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for MSignature {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
+        use crate::multicipher::erased_bytes_serde::ErasedBytes;
         ErasedBytes::deserialize(deserializer)
             .and_then(|b| deser(b).map_err(|e| serde::de::Error::custom(e.to_string())))
     }
 }
 
-impl From<&MSignature> for String {
+impl From<&MSignature> for alloc::string::String {
     fn from(src: &MSignature) -> Self {
         let mut output = multibase::encode(multibase::Base::Base58Btc, src.to_inner_bytes());
         output.insert(0, src.suite().as_char());
@@ -96,25 +102,25 @@ impl From<&MSignature> for String {
     }
 }
 
-impl From<MSignature> for String {
+impl From<MSignature> for alloc::string::String {
     fn from(src: MSignature) -> Self {
         (&src).into()
     }
 }
 
-impl fmt::Display for MSignature {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(&String::from(self))
+impl core::fmt::Display for MSignature {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.write_str(&alloc::string::String::from(self))
     }
 }
 
-impl fmt::Debug for MSignature {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(self, f)
+impl core::fmt::Debug for MSignature {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        core::fmt::Display::fmt(self, f)
     }
 }
 
-impl std::str::FromStr for MSignature {
+impl core::str::FromStr for MSignature {
     type Err = anyhow::Error;
     fn from_str(src: &str) -> Result<Self> {
         let mut chars = src.chars();
@@ -124,7 +130,7 @@ impl std::str::FromStr for MSignature {
             Self::PREFIX
         );
         if let Some(suite) = chars.next() {
-            let (_base, binary) = multibase::decode(chars.as_str())?;
+            let (_base, binary) = multibase::decode(chars.as_str()).map_err(map_multibase_err)?;
             Self::from_inner_bytes(suite, &binary)
         } else {
             Err(anyhow!("No crypto suite found"))

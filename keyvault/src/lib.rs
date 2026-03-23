@@ -1,15 +1,13 @@
-#![warn(missing_docs)]
-
 //! # Keyvault
 //!
 //! Keyvault is a general purpose hierarchical deterministic (HD) generator for asymmetric keys.
 //! It is based on the same concepts as a Bitcoin HD-wallet and is built on the same specifications like
 //! [HD wallets of Bip32](https://en.bitcoin.it/wiki/BIP_0032),
 //! [Mnemonic word lists of Bip39](https://en.bitcoin.it/wiki/BIP_0039) and
-//! [Purpose fields of Bip43](https://en.bitcoin.it/wiki/BIP_0043).
+//! [Purpose fields of Bip43](https://en.bitcoin.it/wiki/BIP-0043).
 //!
 //! Though keyvault is capable of generating wallet addresses as defined in
-//! [Multi-Account cryptocurrency wallets of Bip44](https://en.bitcoin.it/wiki/BIP_0044),
+//! [Multi-Account cryptocurrency wallets of Bip44](https://en.bitcoin.it/wiki/BIP-0044),
 //! it is not only an address generator for multiple cryptocurrencies.
 //! Keyvault can also derive all the keys you might need in other software stacks
 //! and aims to be your all-in-one Swiss Army knife identity manager.
@@ -30,13 +28,20 @@
 //!
 //! [IOP developer site]: https://developer.iop.technology/glossary?id=multicipher
 
+#![cfg_attr(not(feature = "std"), no_std)]
+#![warn(missing_docs)]
+
+extern crate alloc;
+
 mod bip32;
+#[cfg(feature = "std")]
 mod bip39;
 mod bip43;
 mod bip44;
 mod bip44path;
 mod cc;
 pub mod ed25519;
+#[cfg(feature = "std")]
 pub mod encrypt;
 pub mod multicipher;
 mod network;
@@ -48,11 +53,14 @@ mod test_crypto;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "std")]
 pub use ::bip39::ErrorKind as Bip39ErrorKind;
+#[cfg(feature = "std")]
 pub use ::bip39::Language as Bip39Language;
 pub use anyhow::Result;
 pub use digest::Mac;
 
+#[cfg(feature = "std")]
 pub use crate::bip39::*;
 pub use bip32::*;
 pub use bip43::*;
@@ -62,14 +70,29 @@ pub use network::*;
 pub use networks::Networks;
 pub use seed::*;
 
-use std::cmp::Ordering;
-use std::fmt;
-use std::hash::{Hash, Hasher};
-use std::str::FromStr;
+use alloc::borrow::ToOwned;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::cmp::Ordering;
+use core::fmt;
+use core::hash::{Hash, Hasher};
+use core::str::FromStr;
 
 use anyhow::{anyhow, bail, ensure};
 use digest::KeyInit;
+#[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+#[inline]
+fn hex_decode(src: &str) -> Result<Vec<u8>, anyhow::Error> {
+    hex::decode(src).map_err(|_| anyhow!("invalid hex"))
+}
+
+#[inline]
+fn map_multibase_err(e: multibase::Error) -> anyhow::Error {
+    anyhow!("Multibase error: {e}")
+}
 
 /// A public key (also called shared key or pk in some literature) is that part of an asymmetric keypair
 /// which can be used to verify the authenticity of the sender of a message or to encrypt a message that
@@ -120,7 +143,7 @@ pub trait AsymmetricCrypto {
     /// [`PublicKey::key_id`] for more details.
     ///
     /// [`PublicKey::key_id`]: trait.PublicKey.html#tymethod.key_id
-    type KeyId: std::hash::Hash + Eq + Clone;
+    type KeyId: core::hash::Hash + Eq + Clone;
 
     /// See [`PublicKey`] for more details.
     ///

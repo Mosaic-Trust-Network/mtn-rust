@@ -1,3 +1,4 @@
+use alloc::borrow::ToOwned;
 use blake2::{
     Blake2bMac,
     digest::{consts::U16, typenum::Unsigned},
@@ -130,7 +131,7 @@ impl From<&EdPublicKey> for EdKeyId {
 }
 
 impl fmt::Debug for EdKeyId {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         let id = MKeyId::from(self.clone());
         id.fmt(formatter)
     }

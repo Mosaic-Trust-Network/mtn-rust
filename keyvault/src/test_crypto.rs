@@ -1,5 +1,5 @@
 use crate::*;
-use std::fmt;
+use core::fmt;
 
 pub struct TestCrypto {}
 

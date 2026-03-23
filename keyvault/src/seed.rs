@@ -1,11 +1,15 @@
+#[cfg(feature = "std")]
 use ::bip39::{Mnemonic, Seed as Bip39Seed};
+
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
 
 use super::*;
 
 // TODO consider de/serialize attributes here, currently only needed for demo
 /// The seed used for BIP32 derivations. A seed cannot be turned back into a phrase, because there is salted hashing involed
 /// in creating it from the BIP39 mnemonic phrase.
-#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Seed {
     // Note that you cannot restore the mnemonic from the seed, because it goes through a one-way function
     bytes: Vec<u8>,
@@ -34,6 +38,7 @@ impl Seed {
     /// let seed = Bip39::new().phrase(phrase).unwrap().password("morpheus");
     /// assert_eq!(hex::encode(seed.as_bytes()), seed_expected);
     /// ```
+    #[cfg(feature = "std")]
     pub(crate) fn from_bip39(mnemonic: &Mnemonic, password: &str) -> Self {
         let bytes = Bip39Seed::new(mnemonic, password).as_bytes().to_owned();
         Self { bytes }
@@ -61,5 +66,11 @@ impl Seed {
     /// Returns the bytes of the seed
     pub fn as_bytes(&self) -> &[u8] {
         self.bytes.as_slice()
+    }
+}
+
+impl fmt::Debug for Seed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Seed").field("bytes", &"***redacted***").finish()
     }
 }

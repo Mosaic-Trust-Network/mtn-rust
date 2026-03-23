@@ -122,31 +122,37 @@ impl PublicKey<MultiCipher> for MPublicKey {
     }
 }
 
-impl Serialize for MPublicKey {
+#[cfg(feature = "serde")]
+impl serde::Serialize for MPublicKey {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let erased = ErasedBytes { suite: self.suite().as_byte(), value: self.to_inner_bytes() };
+        use crate::multicipher::erased_bytes_serde::ErasedBytes;
+        let inner_bytes = self.to_inner_bytes();
+        let erased = ErasedBytes { suite: self.suite().as_byte(), value: inner_bytes.as_slice() };
         erased.serialize(serializer)
     }
 }
 
-fn deser(erased: ErasedBytes) -> Result<MPublicKey> {
-    MPublicKey::from_inner_bytes(erased.suite as char, &erased.value)
+#[cfg(feature = "serde")]
+fn deser(erased: crate::multicipher::erased_bytes_serde::ErasedBytes<'_>) -> Result<MPublicKey> {
+    MPublicKey::from_inner_bytes(erased.suite as char, erased.value)
 }
 
-impl<'de> Deserialize<'de> for MPublicKey {
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for MPublicKey {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
+        use crate::multicipher::erased_bytes_serde::ErasedBytes;
         ErasedBytes::deserialize(deserializer)
             .and_then(|b| deser(b).map_err(|e| serde::de::Error::custom(e.to_string())))
     }
 }
 
-impl From<&MPublicKey> for String {
+impl From<&MPublicKey> for alloc::string::String {
     fn from(src: &MPublicKey) -> Self {
         let mut output = multibase::encode(multibase::Base::Base58Btc, src.to_inner_bytes());
         output.insert(0, src.suite().as_char());
@@ -155,25 +161,25 @@ impl From<&MPublicKey> for String {
     }
 }
 
-impl From<MPublicKey> for String {
+impl From<MPublicKey> for alloc::string::String {
     fn from(src: MPublicKey) -> Self {
         (&src).into()
     }
 }
 
-impl std::fmt::Display for MPublicKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", String::from(self))
+impl core::fmt::Display for MPublicKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        write!(f, "{}", alloc::string::String::from(self))
     }
 }
 
-impl std::fmt::Debug for MPublicKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        (self as &dyn std::fmt::Display).fmt(f)
+impl core::fmt::Debug for MPublicKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        (self as &dyn core::fmt::Display).fmt(f)
     }
 }
 
-impl std::str::FromStr for MPublicKey {
+impl core::str::FromStr for MPublicKey {
     type Err = anyhow::Error;
     fn from_str(src: &str) -> Result<Self> {
         let mut chars = src.chars();
@@ -183,7 +189,7 @@ impl std::str::FromStr for MPublicKey {
             Self::PREFIX
         );
         if let Some(suite) = chars.next() {
-            let (_base, binary) = multibase::decode(chars.as_str())?;
+            let (_base, binary) = multibase::decode(chars.as_str()).map_err(map_multibase_err)?;
             Self::from_inner_bytes(suite, &binary)
         } else {
             Err(anyhow!("No crypto suite found"))

@@ -14,7 +14,7 @@ homepage.workspace = true
 anyhow = { workspace = true }
 chrono = { workspace = true }
 iop-journal-proto = { workspace = true }
-iop-keyvault = { workspace = true }
+iop-keyvault = { workspace = true, features = ["serde"] }
 json-digest = { workspace = true }
 jwt-compact = { workspace = true, features = ["std"] }
 serde = { workspace = true }

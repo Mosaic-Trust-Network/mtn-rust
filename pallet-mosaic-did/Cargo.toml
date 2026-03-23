@@ -11,32 +11,22 @@ repository.workspace = true
 [dependencies]
 mosaic-did-types = { workspace = true, features = ["substrate"] }
 
-# Substrate dependencies (polkadot-stable2503 / polkadot-sdk 2.0)
-frame-support = { version = "38", default-features = false }
-frame-system = { version = "38", default-features = false }
+polkadot-sdk = { workspace = true, default-features = false, features = ["sp-std", "sp-runtime", "frame-system", "frame-support"] }
+
 parity-scale-codec = { workspace = true }
 scale-info = { workspace = true }
-sp-runtime = { version = "39", default-features = false }
-sp-std = { version = "14", default-features = false }
 
 [dev-dependencies]
-sp-core = { version = "34" }
-sp-io = { version = "38" }
+polkadot-sdk = { workspace = true, default-features = false, features = ["sp-io", "sp-core"] }
 serde_json = { workspace = true }
 
 [features]
 default = ["std"]
 std = [
     "mosaic-did-types/std",
-    "frame-support/std",
-    "frame-system/std",
     "parity-scale-codec/std",
     "scale-info/std",
-    "sp-runtime/std",
-    "sp-std/std",
+    "polkadot-sdk/std",
 ]
 
-try-runtime = [
-    "frame-support/try-runtime",
-    "frame-system/try-runtime",
-]
+try-runtime = [ "polkadot-sdk/try-runtime" ]

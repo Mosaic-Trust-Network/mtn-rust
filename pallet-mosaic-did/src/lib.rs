@@ -17,7 +17,11 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 
+#[allow(clippy::wildcard_imports)]
+use polkadot_sdk::*;
+
 pub use pallet::*;
+use scale_info::prelude::format;
 
 #[cfg(test)]
 mod tests;
@@ -27,6 +31,7 @@ mod validation;
 
 #[frame_support::pallet]
 pub mod pallet {
+    use super::*;
     use frame_support::pallet_prelude::*;
     use frame_system::pallet_prelude::*;
     use sp_std::vec::Vec;
@@ -40,10 +45,7 @@ pub mod pallet {
     use crate::validation;
 
     #[pallet::config]
-    pub trait Config: frame_system::Config {
-        /// The overarching event type.
-        type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
-
+    pub trait Config: polkadot_sdk::frame_system::Config {
         /// Maximum operations per transaction.
         #[pallet::constant]
         type MaxOperationsPerTx: Get<u32>;
@@ -245,7 +247,7 @@ pub mod pallet {
                     let mpk = auth.to_multi_public_key().ok_or(Error::<T>::InvalidPublicKey)?;
                     let key_type = mpk.key_type().ok_or(Error::<T>::InvalidPublicKey)?;
                     let raw_bytes: Vec<u8> = mpk.raw_bytes();
-                    let key_ref = KeyRef::new(auth.key_id().to_string().into_bytes())
+                    let key_ref = KeyRef::new(format!("{}", auth.key_id()).into_bytes())
                         .map_err(|_| Error::<T>::InvalidPublicKey)?;
 
                     let vm = VerificationMethod {

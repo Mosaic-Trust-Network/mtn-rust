@@ -1,4 +1,4 @@
-use std::fmt;
+use core::fmt;
 
 use super::*;
 
@@ -30,7 +30,7 @@ pub trait Subtree {
 }
 
 impl<C: KeyDerivationCrypto + 'static> fmt::Debug for &dyn Subtree<Suite = C> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         formatter.write_str(self.name())
     }
 }
@@ -60,7 +60,7 @@ pub trait Network: Subtree {
 }
 
 impl<C: KeyDerivationCrypto + 'static> fmt::Debug for &dyn Network<Suite = C> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         formatter.write_str(self.name())
     }
 }

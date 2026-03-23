@@ -6,7 +6,7 @@
 //! ```
 //! where `<MKeyId>` is the Ed25519Blake3 multicipher key ID string (e.g., `iozABC...`).
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
 
@@ -40,7 +40,7 @@ pub struct Did {
 #[cfg(feature = "substrate")]
 mod scale_impls {
     use super::*;
-    use parity_scale_codec::{Decode, Encode, EncodeLike, MaxEncodedLen};
+    use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, EncodeLike, MaxEncodedLen};
     use scale_info::TypeInfo;
 
     impl EncodeLike for Did {}
@@ -62,6 +62,8 @@ mod scale_impls {
             Ok(Did { default_key_id: key_id })
         }
     }
+
+    impl DecodeWithMemTracking for Did {}
 
     impl MaxEncodedLen for Did {
         fn max_encoded_len() -> usize {
@@ -207,6 +209,7 @@ impl fmt::Display for DidParseError {
         parity_scale_codec::Encode,
         parity_scale_codec::Decode,
         parity_scale_codec::MaxEncodedLen,
+        parity_scale_codec::DecodeWithMemTracking,
         scale_info::TypeInfo
     )
 )]
@@ -291,6 +294,7 @@ impl fmt::Display for KeyRef {
         parity_scale_codec::Encode,
         parity_scale_codec::Decode,
         parity_scale_codec::MaxEncodedLen,
+        parity_scale_codec::DecodeWithMemTracking,
         scale_info::TypeInfo
     )
 )]

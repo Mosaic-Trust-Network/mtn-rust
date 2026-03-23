@@ -1,6 +1,6 @@
-use std::fmt;
-use std::ops::Add;
-use std::str::FromStr;
+use core::fmt;
+use core::ops::Add;
+use core::str::FromStr;
 
 use super::*;
 use crate::PublicKey;
@@ -35,7 +35,8 @@ impl SecpPublicKey {
     /// [`to_bytes`]: #method.to_bytes
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
         let format = Some(secp::PublicKeyFormat::Compressed);
-        let pk = secp::PublicKey::parse_slice(bytes.as_ref(), format)?;
+        let pk =
+            secp::PublicKey::parse_slice(bytes.as_ref(), format).map_err(convert_secp_error)?;
         Ok(Self(pk))
     }
 
@@ -62,9 +63,9 @@ impl Add<&[u8]> for &SecpPublicKey {
     type Output = Result<SecpPublicKey>;
 
     fn add(self, rhs: &[u8]) -> Self::Output {
-        let sk = secp::SecretKey::parse_slice(rhs)?;
+        let sk = secp::SecretKey::parse_slice(rhs).map_err(convert_secp_error)?;
         let mut sum = self.0;
-        sum.tweak_add_assign(&sk)?;
+        sum.tweak_add_assign(&sk).map_err(convert_secp_error)?;
         Ok(SecpPublicKey(sum))
     }
 }
@@ -105,7 +106,7 @@ impl Ord for SecpPublicKey {
 impl FromStr for SecpPublicKey {
     type Err = anyhow::Error;
     fn from_str(src: &str) -> Result<Self> {
-        Self::from_bytes(hex::decode(src)?)
+        Self::from_bytes(crate::hex_decode(src)?)
     }
 }
 

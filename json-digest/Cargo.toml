@@ -23,3 +23,7 @@ unicode-normalization = { version = "0.1.22" }
 
 [dev-dependencies]
 hex = { workspace = true }
+
+[features]
+default = ["std"]
+std = ["rand/thread_rng"]

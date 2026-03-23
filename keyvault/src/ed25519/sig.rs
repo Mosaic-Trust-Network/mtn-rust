@@ -36,7 +36,8 @@ impl EdSignature {
             bytes[0] == SIGNATURE_VERSION1,
             "Only identifier version {SIGNATURE_VERSION1:x} is supported"
         );
-        let sig = ed::Signature::try_from(&bytes[VERSION_SIZE..])?;
+        let sig = ed::Signature::try_from(&bytes[VERSION_SIZE..])
+            .map_err(|_| anyhow!("invalid signature format"))?;
         Ok(Self(sig))
     }
 }

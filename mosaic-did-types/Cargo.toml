@@ -13,8 +13,7 @@ blake3 = { workspace = true }
 bs58 = { version = "0.5", default-features = false, features = ["alloc"] }
 hex = { workspace = true }
 
-# Same version that frame-support / sp-runtime re-export.
-bounded-collections = { version = "0.2.4", default-features = false }
+bounded-collections = { version = "0.3", default-features = false }
 
 # Optional scale serialization
 parity-scale-codec = { workspace = true, optional = true }
@@ -31,15 +30,16 @@ anyhow = { workspace = true }
 serde_json = { workspace = true }
 
 [features]
-default = ["std", "serde"]
+default = ["std"]
 std = [
     "blake3/std",
     "bs58/std",
     "hex/std",
     "bounded-collections/std",
+    "iop-keyvault/std",
     "parity-scale-codec?/std",
     "scale-info?/std",
     "serde?/std",
 ]
-serde = ["dep:serde", "bounded-collections/serde"]
+serde = ["std", "dep:serde", "bounded-collections/serde"]
 substrate = ["parity-scale-codec", "scale-info"]

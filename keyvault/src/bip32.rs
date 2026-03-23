@@ -3,8 +3,6 @@
 //! [SLIP-0010](https://github.com/satoshilabs/slips/blob/master/slip-0010.md) compatible
 //! child-key derivation for building hierarchical deterministic wallets.
 
-use std::str::FromStr;
-
 use super::*;
 
 /// Entry point to generate extended private keys in a hierarchical deterministic wallet starting from a seed based
@@ -33,7 +31,7 @@ pub struct Bip32Node<C: KeyDerivationCrypto + 'static> {
 }
 
 impl<C: KeyDerivationCrypto + 'static> fmt::Debug for Bip32Node<C> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> std::result::Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         formatter
             .debug_struct("Bip32Node")
             .field("path", &self.path)
@@ -153,7 +151,7 @@ impl<C: KeyDerivationCrypto + 'static> Bip32PublicNode<C> {
 }
 
 impl<C: KeyDerivationCrypto + 'static> fmt::Debug for Bip32PublicNode<C> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> std::result::Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         formatter
             .debug_struct("Bip32PublicNode")
             .field("path", &self.path)
@@ -197,7 +195,7 @@ impl FromStr for ChildIndex {
 }
 
 impl fmt::Display for ChildIndex {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         match self {
             ChildIndex::Normal(idx) => formatter.write_fmt(format_args!("{idx}")),
             ChildIndex::Hardened(idx) => formatter.write_fmt(format_args!("{idx}'")),
@@ -259,7 +257,7 @@ impl From<Vec<ChildIndex>> for Path {
 }
 
 impl fmt::Display for Path {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         use fmt::Write as _;
         formatter.write_char('m')?;
         for c in &self.path {

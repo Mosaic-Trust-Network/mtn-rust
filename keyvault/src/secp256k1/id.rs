@@ -1,4 +1,5 @@
-use std::fmt;
+use alloc::borrow::ToOwned;
+use core::fmt;
 
 use super::*;
 use crate::multicipher::MKeyId;
@@ -109,7 +110,7 @@ impl From<&SecpPublicKey> for SecpKeyId {
 }
 
 impl fmt::Debug for SecpKeyId {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         let id = MKeyId::from(self.clone());
         id.fmt(formatter)
     }

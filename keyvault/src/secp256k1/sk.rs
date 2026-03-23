@@ -1,4 +1,4 @@
-use std::ops::Add;
+use core::ops::Add;
 
 use super::*;
 use crate::PrivateKey;
@@ -27,7 +27,7 @@ impl SecpPrivateKey {
     ///
     /// [`to_bytes`]: #method.to_bytes
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
-        let sk = secp::SecretKey::parse_slice(bytes.as_ref())?;
+        let sk = secp::SecretKey::parse_slice(bytes.as_ref()).map_err(convert_secp_error)?;
         Ok(Self(sk))
     }
 
@@ -75,8 +75,8 @@ impl Add<&[u8]> for &SecpPrivateKey {
     type Output = Result<SecpPrivateKey>;
 
     fn add(self, rhs: &[u8]) -> Self::Output {
-        let mut sum = secp::SecretKey::parse_slice(rhs)?;
-        sum.tweak_add_assign(&self.0)?;
+        let mut sum = secp::SecretKey::parse_slice(rhs).map_err(convert_secp_error)?;
+        sum.tweak_add_assign(&self.0).map_err(convert_secp_error)?;
         Ok(SecpPrivateKey(sum))
     }
 }

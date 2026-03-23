@@ -18,21 +18,36 @@ blake2 = { workspace = true }
 blake3 = { workspace = true }
 digest = { workspace = true }
 ed25519-dalek = { workspace = true }
-rand = { workspace = true }
-getrandom = { workspace = true }
-hex = { workspace = true, features = ["std"] }
+rand = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true }
+getrandom-2 = { workspace = true, optional = true }
+hex = { workspace = true }
 hmac = { workspace = true }
 # Unfortunately the crate name of the libsecp256k1 collides with the perfect module name
 # for the cipher, so we rename the dependency here:
 secp = { workspace = true }
 multibase = { workspace = true }
-orion = { workspace = true }
+orion = { workspace = true, optional = true }
 ripemd = { workspace = true }
-serde = { workspace = true }
-serde_bytes = { workspace = true }
+serde = { workspace = true, optional = true }
+serde_bytes = { workspace = true, optional = true }
 sha2 = { workspace = true }
-tiny-bip39 = { workspace = true }
+tiny-bip39 = { workspace = true, default-features = false, features = ["default-langs"], optional = true }
 
 [dev-dependencies]
 rmp-serde = { workspace = true }
 serde_json = { workspace = true }
+
+[features]
+default = ["std"]
+std = [
+    "anyhow/std",
+    "rand",
+    "hex/std",
+    "getrandom/std",
+    "dep:tiny-bip39",
+    "dep:orion",
+    "dep:getrandom",
+    "dep:getrandom-2",
+]
+serde = ["std", "dep:serde", "dep:serde_bytes"]

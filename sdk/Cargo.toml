@@ -20,7 +20,7 @@ iop-coeus-proto = { workspace = true }
 iop-hydra-proto = { workspace = true }
 iop-hydra-sdk = { workspace = true }
 iop-journal-proto = { workspace = true }
-iop-keyvault = { workspace = true }
+iop-keyvault = { workspace = true, features = ["std"] }
 iop-morpheus-proto = { workspace = true }
 iop-morpheus-sdk = { workspace = true }
 iop-vault = { workspace = true }
