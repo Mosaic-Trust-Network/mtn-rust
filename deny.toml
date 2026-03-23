@@ -67,6 +67,7 @@ skip = [
     { name = "syn" },
     { name = "toml_edit" },
     { name = "toml_datetime" },
+    { name = "winnow" },
 ]
 skip-tree = [
     # duplicate mess

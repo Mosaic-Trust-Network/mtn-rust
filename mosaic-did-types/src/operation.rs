@@ -178,6 +178,7 @@ impl DidOperation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "substrate", derive(Encode, Decode, TypeInfo))]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[allow(clippy::large_enum_variant)] // Not worth Box-ing it in WASM
 pub enum SsiOperation {
     /// A signed DID document operation.
     Did(SignedDidOperation),
