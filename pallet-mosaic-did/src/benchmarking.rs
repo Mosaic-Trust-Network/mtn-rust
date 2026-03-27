@@ -6,8 +6,6 @@
 //! Since the pallet has a single batched extrinsic `submit_did_operations`, we benchmark
 //! each operation type by submitting a batch with a single operation of that type.
 
-#![cfg(feature = "runtime-benchmarks")]
-
 use super::*;
 
 use frame_benchmarking::v2::*;
@@ -37,7 +35,7 @@ fn sign_with_alice(message: &[u8]) -> mosaic_did_types::MultiSignature {
     use iop_keyvault::PrivateKey;
     use iop_keyvault::ed25519::EdPrivateKey;
 
-    let sk = EdPrivateKey::from_bytes(&ALICE_SK).expect("valid alice sk");
+    let sk = EdPrivateKey::from_bytes(ALICE_SK).expect("valid alice sk");
     let sig = sk.sign(message);
     mosaic_did_types::MultiSignature::from(iop_keyvault::multicipher::MSignature::Ed25519Blake3(
         sig,
@@ -238,10 +236,10 @@ mod benchmarks {
     // Since this did does not exist yet, the call creates it and thus
     // it's the worst case measurement.
     #[benchmark]
-    fn submit_did_operations_add_key<T: Config>() {
+    fn add_key<T: Config>() {
         let caller: T::AccountId = whitelisted_caller();
         let signed_op = create_add_key_op(1);
-        let operations = sp_std::vec![SsiOperation::Did(signed_op)];
+        let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
 
         #[extrinsic_call]
         submit_did_operations(RawOrigin::Signed(caller), operations);
@@ -251,14 +249,14 @@ mod benchmarks {
     }
 
     #[benchmark]
-    fn submit_did_operations_revoke_key<T: Config>() {
+    fn revoke_key<T: Config>() {
         setup_existing_did::<T>();
 
         let caller: T::AccountId = whitelisted_caller();
         let did = alice_did();
         let key_ref = alice_key_ref();
         let signed_op = create_revoke_key_op(&did, &key_ref, 1);
-        let operations = sp_std::vec![SsiOperation::Did(signed_op)];
+        let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
 
         #[extrinsic_call]
         submit_did_operations(RawOrigin::Signed(caller), operations);
@@ -269,14 +267,14 @@ mod benchmarks {
     }
 
     #[benchmark]
-    fn submit_did_operations_add_right<T: Config>() {
+    fn add_right<T: Config>() {
         setup_existing_did::<T>();
 
         let caller: T::AccountId = whitelisted_caller();
         let did = alice_did();
         let key_ref = alice_key_ref();
         let signed_op = create_add_right_op(&did, &key_ref, Right::Issue, 1);
-        let operations = sp_std::vec![SsiOperation::Did(signed_op)];
+        let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
 
         #[extrinsic_call]
         submit_did_operations(RawOrigin::Signed(caller), operations);
@@ -286,14 +284,14 @@ mod benchmarks {
     }
 
     #[benchmark]
-    fn submit_did_operations_revoke_right<T: Config>() {
+    fn revoke_right<T: Config>() {
         setup_did_with_right::<T>();
 
         let caller: T::AccountId = whitelisted_caller();
         let did = alice_did();
         let key_ref = alice_key_ref();
         let signed_op = create_revoke_right_op(&did, &key_ref, Right::Issue, 1);
-        let operations = sp_std::vec![SsiOperation::Did(signed_op)];
+        let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
 
         #[extrinsic_call]
         submit_did_operations(RawOrigin::Signed(caller), operations);
@@ -308,13 +306,13 @@ mod benchmarks {
     }
 
     #[benchmark]
-    fn submit_did_operations_tombstone<T: Config>() {
+    fn tombstone_did<T: Config>() {
         setup_existing_did::<T>();
 
         let caller: T::AccountId = whitelisted_caller();
         let did = alice_did();
         let signed_op = create_tombstone_op(&did, 1);
-        let operations = sp_std::vec![SsiOperation::Did(signed_op)];
+        let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
 
         #[extrinsic_call]
         submit_did_operations(RawOrigin::Signed(caller), operations);
@@ -324,26 +322,15 @@ mod benchmarks {
     }
 
     #[benchmark]
-    fn submit_did_operations_before_proof<T: Config>() {
+    fn register_before_proof<T: Config>() {
         let caller: T::AccountId = whitelisted_caller();
         let content_id = ContentId::from_bytes(b"benchmark test document content");
-        let operations = sp_std::vec![SsiOperation::BeforeProof(content_id)];
+        let operations = sp_std::vec![SsiOperation::BeforeProof(content_id)].try_into().unwrap();
 
         #[extrinsic_call]
         submit_did_operations(RawOrigin::Signed(caller), operations);
 
-        assert!(BeforeProofs::<T>::contains_key(&content_id));
-    }
-
-    #[benchmark]
-    fn register_before_proof<T: Config>() {
-        let caller: T::AccountId = whitelisted_caller();
-        let content_id = ContentId::from_bytes(b"benchmark test document content 2");
-
-        #[extrinsic_call]
-        register_before_proof(RawOrigin::Signed(caller), content_id);
-
-        assert!(BeforeProofs::<T>::contains_key(&content_id));
+        assert!(BeforeProofs::<T>::contains_key(content_id));
     }
 
     // impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);

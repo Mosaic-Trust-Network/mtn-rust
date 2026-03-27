@@ -20,7 +20,6 @@
 #[allow(clippy::wildcard_imports)]
 use polkadot_sdk::*;
 
-pub use pallet::*;
 use scale_info::prelude::format;
 
 #[cfg(test)]
@@ -28,11 +27,15 @@ mod tests;
 
 #[cfg(feature = "runtime-benchmarks")]
 mod benchmarking;
+pub mod weights;
 
 #[cfg(test)]
 pub mod mock;
 pub mod state;
 mod validation;
+
+pub use pallet::*;
+pub use weights::WeightInfo;
 
 #[frame_support::pallet]
 pub mod pallet {
@@ -57,47 +60,6 @@ pub mod pallet {
 
         /// Weight information for extrinsics.
         type WeightInfo: WeightInfo;
-    }
-
-    /// Weight information trait for the pallet's extrinsics.
-    ///
-    /// Each DID operation type has its own weight function to allow
-    /// precise weight calculation for heterogeneous batches.
-    pub trait WeightInfo {
-        /// Weight for adding a key to a DID document.
-        fn add_key() -> Weight;
-        /// Weight for revoking a key from a DID document.
-        fn revoke_key() -> Weight;
-        /// Weight for adding a right to a key.
-        fn add_right() -> Weight;
-        /// Weight for revoking a right from a key.
-        fn revoke_right() -> Weight;
-        /// Weight for tombstoning a DID.
-        fn tombstone_did() -> Weight;
-        /// Weight for registering a BeforeProof.
-        fn before_proof() -> Weight;
-    }
-
-    /// Default weight implementation for development/testing.
-    impl WeightInfo for () {
-        fn add_key() -> Weight {
-            Weight::from_parts(10_000, 0)
-        }
-        fn revoke_key() -> Weight {
-            Weight::from_parts(10_000, 0)
-        }
-        fn add_right() -> Weight {
-            Weight::from_parts(10_000, 0)
-        }
-        fn revoke_right() -> Weight {
-            Weight::from_parts(10_000, 0)
-        }
-        fn tombstone_did() -> Weight {
-            Weight::from_parts(10_000, 0)
-        }
-        fn before_proof() -> Weight {
-            Weight::from_parts(10_000, 0)
-        }
     }
 
     #[pallet::pallet]
@@ -184,8 +146,6 @@ pub mod pallet {
         RightAlreadyGranted,
         /// The right does not exist.
         RightNotFound,
-        /// Too many operations in a single transaction.
-        TooManyOperations,
         /// BeforeProof content already exists.
         BeforeProofAlreadyExists,
         /// The DID does not exist (no keys registered).
@@ -216,22 +176,17 @@ pub mod pallet {
                         DidOperation::RevokeRight { .. } => T::WeightInfo::revoke_right(),
                         DidOperation::TombstoneDid { .. } => T::WeightInfo::tombstone_did(),
                     },
-                    SsiOperation::BeforeProof(_) => T::WeightInfo::before_proof(),
+                    SsiOperation::BeforeProof(_) => T::WeightInfo::register_before_proof(),
                 };
                 acc.saturating_add(w)
             })
         })]
         pub fn submit_did_operations(
-            origin: OriginFor<T>, operations: Vec<SsiOperation>,
+            origin: OriginFor<T>, operations: BoundedVec<SsiOperation, T::MaxOperationsPerTx>,
         ) -> DispatchResult {
             let submitter = ensure_signed(origin)?;
             let block_height = <frame_system::Pallet<T>>::block_number();
             let height_u32: u32 = Self::block_number_to_u32(block_height);
-
-            ensure!(
-                operations.len() <= T::MaxOperationsPerTx::get() as usize,
-                Error::<T>::TooManyOperations
-            );
 
             // Validate-then-apply each operation sequentially so that later
             // operations in the same batch see state mutations from earlier ones
@@ -265,11 +220,13 @@ pub mod pallet {
 
         /// Register a content hash for proof-of-existence (convenience wrapper).
         #[pallet::call_index(1)]
-        #[pallet::weight(T::WeightInfo::before_proof())]
+        #[pallet::weight(T::WeightInfo::register_before_proof())]
         pub fn register_before_proof(
             origin: OriginFor<T>, content_id: ContentId,
         ) -> DispatchResult {
-            Self::submit_did_operations(origin, sp_std::vec![SsiOperation::BeforeProof(content_id)])
+            let mut ops = BoundedVec::new();
+            ops.try_push(SsiOperation::BeforeProof(content_id)).expect("1 op fits");
+            Self::submit_did_operations(origin, ops)
         }
     }
 

@@ -32,7 +32,7 @@ ripemd = { workspace = true }
 serde = { workspace = true, optional = true }
 serde_bytes = { workspace = true, optional = true }
 sha2 = { workspace = true }
-tiny-bip39 = { workspace = true, default-features = false, features = ["default-langs"], optional = true }
+bip39 = { workspace = true, default-features = false, features = ["default-langs"], optional = true }
 
 [dev-dependencies]
 rmp-serde = { workspace = true }
@@ -45,7 +45,7 @@ std = [
     "rand",
     "hex/std",
     "getrandom/std",
-    "dep:tiny-bip39",
+    "dep:bip39",
     "dep:orion",
     "dep:getrandom",
     "dep:getrandom-2",
