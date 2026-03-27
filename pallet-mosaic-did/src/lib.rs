@@ -26,6 +26,11 @@ use scale_info::prelude::format;
 #[cfg(test)]
 mod tests;
 
+#[cfg(feature = "runtime-benchmarks")]
+mod benchmarking;
+
+#[cfg(test)]
+pub mod mock;
 pub mod state;
 mod validation;
 
@@ -55,17 +60,42 @@ pub mod pallet {
     }
 
     /// Weight information trait for the pallet's extrinsics.
+    ///
+    /// Each DID operation type has its own weight function to allow
+    /// precise weight calculation for heterogeneous batches.
     pub trait WeightInfo {
-        fn submit_did_operations(n: u32) -> Weight;
-        fn register_before_proof() -> Weight;
+        /// Weight for adding a key to a DID document.
+        fn add_key() -> Weight;
+        /// Weight for revoking a key from a DID document.
+        fn revoke_key() -> Weight;
+        /// Weight for adding a right to a key.
+        fn add_right() -> Weight;
+        /// Weight for revoking a right from a key.
+        fn revoke_right() -> Weight;
+        /// Weight for tombstoning a DID.
+        fn tombstone_did() -> Weight;
+        /// Weight for registering a BeforeProof.
+        fn before_proof() -> Weight;
     }
 
     /// Default weight implementation for development/testing.
     impl WeightInfo for () {
-        fn submit_did_operations(n: u32) -> Weight {
-            Weight::from_parts(10_000 * n as u64, 0)
+        fn add_key() -> Weight {
+            Weight::from_parts(10_000, 0)
         }
-        fn register_before_proof() -> Weight {
+        fn revoke_key() -> Weight {
+            Weight::from_parts(10_000, 0)
+        }
+        fn add_right() -> Weight {
+            Weight::from_parts(10_000, 0)
+        }
+        fn revoke_right() -> Weight {
+            Weight::from_parts(10_000, 0)
+        }
+        fn tombstone_did() -> Weight {
+            Weight::from_parts(10_000, 0)
+        }
+        fn before_proof() -> Weight {
             Weight::from_parts(10_000, 0)
         }
     }
@@ -176,7 +206,21 @@ pub mod pallet {
         ///
         /// **Anti-Censorship:** Any account can submit for any DID.
         #[pallet::call_index(0)]
-        #[pallet::weight(T::WeightInfo::submit_did_operations(operations.len() as u32))]
+        #[pallet::weight({
+            operations.iter().fold(Weight::zero(), |acc, op| {
+                let w = match op {
+                    SsiOperation::Did(signed) => match &signed.operation {
+                        DidOperation::AddKey { .. } => T::WeightInfo::add_key(),
+                        DidOperation::RevokeKey { .. } => T::WeightInfo::revoke_key(),
+                        DidOperation::AddRight { .. } => T::WeightInfo::add_right(),
+                        DidOperation::RevokeRight { .. } => T::WeightInfo::revoke_right(),
+                        DidOperation::TombstoneDid { .. } => T::WeightInfo::tombstone_did(),
+                    },
+                    SsiOperation::BeforeProof(_) => T::WeightInfo::before_proof(),
+                };
+                acc.saturating_add(w)
+            })
+        })]
         pub fn submit_did_operations(
             origin: OriginFor<T>, operations: Vec<SsiOperation>,
         ) -> DispatchResult {
@@ -221,7 +265,7 @@ pub mod pallet {
 
         /// Register a content hash for proof-of-existence (convenience wrapper).
         #[pallet::call_index(1)]
-        #[pallet::weight(T::WeightInfo::register_before_proof())]
+        #[pallet::weight(T::WeightInfo::before_proof())]
         pub fn register_before_proof(
             origin: OriginFor<T>, content_id: ContentId,
         ) -> DispatchResult {
