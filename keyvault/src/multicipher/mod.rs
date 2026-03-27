@@ -92,16 +92,15 @@ impl AsymmetricCrypto for MultiCipher {
 }
 
 #[cfg(feature = "serde")]
-mod erased_bytes_serde {
-    use super::*;
-
-    #[derive(Serialize, Deserialize)]
-    pub struct ErasedBytes<'a> {
-        #[serde(rename = "s")]
-        pub suite: u8,
-        #[serde(rename = "v")]
-        pub value: &'a [u8],
-    }
+#[derive(Serialize, Deserialize)]
+/// Cipher-prefixed serialization of cryptographic entities
+pub struct ErasedBytes {
+    #[serde(rename = "s")]
+    /// The cipher-suite prefix
+    pub suite: u8,
+    #[serde(rename = "v", with = "serde_bytes")]
+    /// The suite-dependent serialization of the entity
+    pub value: Vec<u8>,
 }
 
 #[cfg(test)]

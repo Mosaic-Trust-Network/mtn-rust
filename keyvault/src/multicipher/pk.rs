@@ -128,15 +128,13 @@ impl serde::Serialize for MPublicKey {
     where
         S: Serializer,
     {
-        use crate::multicipher::erased_bytes_serde::ErasedBytes;
-        let inner_bytes = self.to_inner_bytes();
-        let erased = ErasedBytes { suite: self.suite().as_byte(), value: inner_bytes.as_slice() };
+        let erased = ErasedBytes { suite: self.suite().as_byte(), value: self.to_inner_bytes() };
         erased.serialize(serializer)
     }
 }
 
 #[cfg(feature = "serde")]
-fn deser(erased: crate::multicipher::erased_bytes_serde::ErasedBytes<'_>) -> Result<MPublicKey> {
+fn deser(erased: crate::multicipher::ErasedBytes) -> Result<MPublicKey> {
     MPublicKey::from_inner_bytes(erased.suite as char, erased.value)
 }
 
@@ -146,7 +144,6 @@ impl<'de> serde::Deserialize<'de> for MPublicKey {
     where
         D: Deserializer<'de>,
     {
-        use crate::multicipher::erased_bytes_serde::ErasedBytes;
         ErasedBytes::deserialize(deserializer)
             .and_then(|b| deser(b).map_err(|e| serde::de::Error::custom(e.to_string())))
     }
