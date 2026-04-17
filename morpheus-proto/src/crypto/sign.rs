@@ -198,22 +198,22 @@ pub type BlockHash = ContentId;
 #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 pub struct AfterProof {
     #[serde(rename = "blockHash")]
-    block_hash: BlockHash,
+    pub block_hash: BlockHash,
     #[serde(rename = "blockHeight")]
-    block_height: BlockHeight,
+    pub block_height: BlockHeight,
 }
 
-//impl Content for AfterProof {}
-//impl Signable for AfterProof {}
+impl Content for AfterProof {}
+impl Signable for AfterProof {}
 
 // TODO Eq, PartialEq and maybe PartialOrd for AfterEnvelope
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AfterEnvelope<T: Signable> {
     // TODO will contentId be fetched from the content or needs a separate field?
     //      should we just use the contentId here and provide another way to resolve the content from it?
-    content: T,
-    proof: AfterProof, // TODO is a transactionId also needed here?
+    pub content: T,
+    pub proof: AfterProof, // TODO is a transactionId also needed here?
 }
 
-// impl<T: Signable> MaskableContent for AfterEnvelope<T> {}
-// impl<T: Signable> Signable for AfterEnvelope<T> {}
+impl<T: Signable> Content for AfterEnvelope<T> {}
+impl<T: Signable> Signable for AfterEnvelope<T> {}

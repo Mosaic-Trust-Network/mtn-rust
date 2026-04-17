@@ -1,3 +1,4 @@
+#[cfg(feature = "std")]
 use rand::{Rng, rng};
 use serde::{Deserialize, Serialize};
 
@@ -13,6 +14,7 @@ impl Nonce264 {
     /// Generates a new [`Nonce264`]. Uses the `getrandom` crate to find the best source of entropy on the platform.
     /// In JavaScript tests you might need to refer to <https://github.com/jsdom/jsdom/issues/1612> for
     /// how to fix phantom browsers to comply with HTML5 specs.
+    #[cfg(feature = "std")]
     pub fn generate() -> Self {
         let mut arr = [0u8; 33];
         rng().fill_bytes(&mut arr[..]);

@@ -10,3 +10,4 @@ Cargo.lock
 
 .worktrees/
 .sober/
+AGENTS.md

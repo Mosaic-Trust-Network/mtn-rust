@@ -92,6 +92,11 @@ fn map_multibase_err(e: multibase::Error) -> anyhow::Error {
     anyhow!("Multibase error: {e}")
 }
 
+#[inline]
+fn display_err<E: core::fmt::Display>(e: E) -> anyhow::Error {
+    anyhow!("{e}")
+}
+
 /// A public key (also called shared key or pk in some literature) is that part of an asymmetric keypair
 /// which can be used to verify the authenticity of the sender of a message or to encrypt a message that
 /// can only be decrypted by a single recipient. In both cases this other party owns the [`PrivateKey`]
