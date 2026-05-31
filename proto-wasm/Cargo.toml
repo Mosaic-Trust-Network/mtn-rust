@@ -22,6 +22,9 @@ iop-journal-proto = { workspace = true }
 iop-keyvault = { workspace = true }
 iop-keyvault-wasm = { workspace = true }
 iop-morpheus-proto = { workspace = true }
+mosaic-did-types = { workspace = true, features = ["serde", "substrate"] }
+multibase = { workspace = true }
+parity-scale-codec = { workspace = true }
 serde = { workspace = true }
 serde-wasm-bindgen = { workspace = true }
 serde_json = { workspace = true }

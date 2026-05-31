@@ -58,17 +58,38 @@ impl Right {
             Right::Recovery,
         ]
     }
+
+    /// Stable lower-case wire name for client bindings.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Right::Update => "update",
+            Right::Impersonate => "impersonate",
+            Right::Delegate => "delegate",
+            Right::Issue => "issue",
+            Right::Revoke => "revoke",
+            Right::Recovery => "recovery",
+        }
+    }
 }
 
 impl core::fmt::Display for Right {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Right::Update => write!(f, "update"),
-            Right::Impersonate => write!(f, "impersonate"),
-            Right::Delegate => write!(f, "delegate"),
-            Right::Issue => write!(f, "issue"),
-            Right::Revoke => write!(f, "revoke"),
-            Right::Recovery => write!(f, "recovery"),
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl core::str::FromStr for Right {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "update" | "Update" => Ok(Right::Update),
+            "impersonate" | "Impersonate" => Ok(Right::Impersonate),
+            "delegate" | "Delegate" => Ok(Right::Delegate),
+            "issue" | "Issue" => Ok(Right::Issue),
+            "revoke" | "Revoke" => Ok(Right::Revoke),
+            "recovery" | "Recovery" => Ok(Right::Recovery),
+            _ => Err("invalid Mosaic DID right"),
         }
     }
 }
@@ -91,6 +112,38 @@ pub enum KeyType {
     X25519,
 }
 
+impl KeyType {
+    /// Stable lower-case wire name for client bindings.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            KeyType::Ed25519 => "ed25519",
+            KeyType::Secp256k1 => "secp256k1",
+            KeyType::Secp256r1 => "secp256r1",
+            KeyType::X25519 => "x25519",
+        }
+    }
+}
+
+impl core::fmt::Display for KeyType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl core::str::FromStr for KeyType {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ed25519" | "Ed25519" => Ok(KeyType::Ed25519),
+            "secp256k1" | "Secp256k1" => Ok(KeyType::Secp256k1),
+            "secp256r1" | "Secp256r1" => Ok(KeyType::Secp256r1),
+            "x25519" | "X25519" => Ok(KeyType::X25519),
+            _ => Err("invalid Mosaic DID key type"),
+        }
+    }
+}
+
 /// Key purposes per W3C DID Core verification relationships.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(
@@ -109,6 +162,40 @@ pub enum KeyPurpose {
     CapabilityInvocation,
     /// Delegate capabilities.
     CapabilityDelegation,
+}
+
+impl KeyPurpose {
+    /// Stable lower-camel-case wire name for client bindings.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            KeyPurpose::Authentication => "authentication",
+            KeyPurpose::AssertionMethod => "assertionMethod",
+            KeyPurpose::KeyAgreement => "keyAgreement",
+            KeyPurpose::CapabilityInvocation => "capabilityInvocation",
+            KeyPurpose::CapabilityDelegation => "capabilityDelegation",
+        }
+    }
+}
+
+impl core::fmt::Display for KeyPurpose {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl core::str::FromStr for KeyPurpose {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "authentication" | "Authentication" => Ok(KeyPurpose::Authentication),
+            "assertionMethod" | "AssertionMethod" => Ok(KeyPurpose::AssertionMethod),
+            "keyAgreement" | "KeyAgreement" => Ok(KeyPurpose::KeyAgreement),
+            "capabilityInvocation" | "CapabilityInvocation" => Ok(KeyPurpose::CapabilityInvocation),
+            "capabilityDelegation" | "CapabilityDelegation" => Ok(KeyPurpose::CapabilityDelegation),
+            _ => Err("invalid Mosaic DID key purpose"),
+        }
+    }
 }
 
 /// Phase 1 (MVP) DID operations.
@@ -323,5 +410,30 @@ mod tests {
         assert_eq!(Right::Issue.to_string(), "issue");
         assert_eq!(Right::Revoke.to_string(), "revoke");
         assert_eq!(Right::Recovery.to_string(), "recovery");
+    }
+
+    #[test]
+    fn client_wire_names_parse_and_display() {
+        assert_eq!("update".parse::<Right>().unwrap(), Right::Update);
+        assert_eq!("Issue".parse::<Right>().unwrap(), Right::Issue);
+        assert_eq!(Right::Recovery.to_string(), "recovery");
+
+        assert_eq!("ed25519".parse::<KeyType>().unwrap(), KeyType::Ed25519);
+        assert_eq!("Secp256k1".parse::<KeyType>().unwrap(), KeyType::Secp256k1);
+        assert_eq!(KeyType::X25519.to_string(), "x25519");
+
+        assert_eq!("assertionMethod".parse::<KeyPurpose>().unwrap(), KeyPurpose::AssertionMethod);
+        assert_eq!(
+            "CapabilityDelegation".parse::<KeyPurpose>().unwrap(),
+            KeyPurpose::CapabilityDelegation
+        );
+        assert_eq!(KeyPurpose::KeyAgreement.to_string(), "keyAgreement");
+    }
+
+    #[test]
+    fn client_wire_names_reject_unknown_values() {
+        assert!("admin".parse::<Right>().is_err());
+        assert!("rsa".parse::<KeyType>().is_err());
+        assert!("signing".parse::<KeyPurpose>().is_err());
     }
 }

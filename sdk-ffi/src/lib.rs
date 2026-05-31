@@ -9,6 +9,7 @@ mod hydra;
 mod jwt;
 mod keyvault;
 mod morpheus;
+mod mosaic;
 mod signed;
 mod validation;
 mod vault;

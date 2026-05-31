@@ -7,11 +7,13 @@
 mod coeus;
 mod did;
 mod jwt;
+mod mosaic;
 mod sign;
 
 pub use coeus::*;
 pub use did::*;
 pub use jwt::*;
+pub use mosaic::*;
 pub use sign::*;
 
 // imports from standard library

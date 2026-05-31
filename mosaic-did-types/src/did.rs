@@ -353,6 +353,46 @@ impl fmt::Display for ContentId {
     }
 }
 
+impl core::str::FromStr for ContentId {
+    type Err = ContentIdParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some(hex) = s.strip_prefix("cj:0x") {
+            return Ok(ContentId::JsonDigest(decode_hash_hex(hex)?));
+        }
+        if let Some(hex) = s.strip_prefix("0x") {
+            return Ok(ContentId::ByteHash(decode_hash_hex(hex)?));
+        }
+        Err(ContentIdParseError::InvalidPrefix)
+    }
+}
+
+fn decode_hash_hex(hex_str: &str) -> Result<[u8; 32], ContentIdParseError> {
+    let bytes = hex::decode(hex_str).map_err(|_| ContentIdParseError::InvalidHex)?;
+    bytes.try_into().map_err(|_| ContentIdParseError::InvalidLength)
+}
+
+/// Errors that can occur when parsing a displayed [`ContentId`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContentIdParseError {
+    /// The string was not in `0x...` or `cj:0x...` form.
+    InvalidPrefix,
+    /// The hash payload was not valid hexadecimal.
+    InvalidHex,
+    /// The decoded hash was not exactly 32 bytes.
+    InvalidLength,
+}
+
+impl fmt::Display for ContentIdParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPrefix => write!(f, "ContentId must start with '0x' or 'cj:0x'"),
+            Self::InvalidHex => write!(f, "ContentId hash must be valid hexadecimal"),
+            Self::InvalidLength => write!(f, "ContentId hash must be exactly 32 bytes"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,6 +489,29 @@ mod tests {
 
         let json_cid = ContentId::JsonDigest(hash);
         assert!(json_cid.to_string().starts_with("cj:0x"));
+    }
+
+    #[test]
+    fn content_id_display_roundtrip() {
+        let hash = [0x42u8; 32];
+
+        let byte_cid = ContentId::ByteHash(hash);
+        let parsed_byte = byte_cid.to_string().parse::<ContentId>().unwrap();
+        assert_eq!(parsed_byte, byte_cid);
+
+        let json_cid = ContentId::JsonDigest(hash);
+        let parsed_json = json_cid.to_string().parse::<ContentId>().unwrap();
+        assert_eq!(parsed_json, json_cid);
+    }
+
+    #[test]
+    fn content_id_parse_rejects_bad_inputs() {
+        assert_eq!(
+            "cjuFoobar".parse::<ContentId>().unwrap_err(),
+            ContentIdParseError::InvalidPrefix
+        );
+        assert_eq!("0xnot-hex".parse::<ContentId>().unwrap_err(), ContentIdParseError::InvalidHex);
+        assert_eq!("cj:0x42".parse::<ContentId>().unwrap_err(), ContentIdParseError::InvalidLength);
     }
 
     #[test]
