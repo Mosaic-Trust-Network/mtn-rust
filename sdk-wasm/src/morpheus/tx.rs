@@ -23,7 +23,7 @@ impl JsMorpheusTxBuilder {
         network_name: &str, morpheus_asset: &JsValue, sender_pubkey: &JsSecpPublicKey, nonce: u64,
         vendor_field: Option<String>, manual_fee: Option<u64>,
     ) -> Result<JsValue, JsValue> {
-        let morpheus_asset: MorpheusAsset = from_value(morpheus_asset.clone())?;
+        let morpheus_asset: MorpheusAsset = from_json_value(morpheus_asset)?;
         let common_fields = CommonTransactionFields {
             network: Networks::by_name(network_name).map_err_to_js()?,
             sender_public_key: sender_pubkey.inner().to_owned(),
@@ -31,8 +31,7 @@ impl JsMorpheusTxBuilder {
             optional: OptionalTransactionFields { amount: 0, vendor_field, manual_fee },
         };
         let morpheus_tx = Transaction::new(common_fields, morpheus_asset.operation_attempts);
-        let res = to_value(&morpheus_tx.to_data())?;
-        Ok(res)
+        to_json_value(&morpheus_tx.to_data())
     }
 }
 
@@ -76,8 +75,7 @@ impl JsMorpheusAssetBuilder {
     /// @see MorpheusTxBuilder
     pub fn build(&self) -> Result<JsValue, JsValue> {
         let asset = MorpheusAsset::new(self.op_attempts.to_owned());
-        let res = to_value(&asset)?;
-        Ok(res)
+        to_json_value(&asset)
     }
 }
 
@@ -93,14 +91,14 @@ impl JsMorpheusSignableOperation {
     /// Deserializes a single unsigned SSI operation from a JSON.
     #[wasm_bindgen(constructor)]
     pub fn new(json: &JsValue) -> Result<JsMorpheusSignableOperation, JsValue> {
-        let inner: SignableOperationAttempt = from_value(json.clone())?;
+        let inner: SignableOperationAttempt = from_json_value(json)?;
         Ok(JsMorpheusSignableOperation { inner })
     }
 
     /// Serializes a single unsigned SSI operation into a JSON.
     #[wasm_bindgen(js_name = toJSON)]
     pub fn to_json(&self) -> Result<JsValue, JsValue> {
-        to_value(&self.inner).map_err_to_js()
+        to_json_value(&self.inner)
     }
 }
 
@@ -285,14 +283,14 @@ impl JsMorpheusSignedOperation {
     /// Deserializes a set of signed SSI operations from a JSON.
     #[wasm_bindgen(constructor)]
     pub fn new(json: &JsValue) -> Result<JsMorpheusSignedOperation, JsValue> {
-        let inner: SignedOperation = from_value(json.clone())?;
+        let inner: SignedOperation = from_json_value(json)?;
         Ok(JsMorpheusSignedOperation { inner })
     }
 
     /// Serializes a set of signed SSI operations into a JSON.
     #[wasm_bindgen(js_name = toJSON)]
     pub fn to_json(&self) -> Result<JsValue, JsValue> {
-        to_value(&self.inner).map_err_to_js()
+        to_json_value(&self.inner)
     }
 }
 

@@ -28,7 +28,6 @@ impl JsCoeusTxBuilder {
         };
 
         let tx = coeus::Transaction::new(common_fields, vec![ops.inner().clone()]);
-        let res = to_value(&tx.to_data())?;
-        Ok(res)
+        to_json_value(&tx.to_data())
     }
 }

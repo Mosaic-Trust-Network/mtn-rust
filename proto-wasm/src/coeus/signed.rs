@@ -63,7 +63,7 @@ pub struct JsSignedBundle {
 impl JsSignedBundle {
     #[wasm_bindgen(constructor)]
     pub fn new(data: &JsValue) -> Result<JsSignedBundle, JsValue> {
-        let signed_ops: SignedBundle = from_value(data.clone())?;
+        let signed_ops: SignedBundle = from_json_value(data)?;
         Ok(signed_ops.into())
     }
 

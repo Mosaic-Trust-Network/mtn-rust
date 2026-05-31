@@ -9,7 +9,7 @@ pub struct JsCoeusAsset {
 impl JsCoeusAsset {
     #[wasm_bindgen(constructor)]
     pub fn new(data: &JsValue) -> Result<JsCoeusAsset, JsValue> {
-        let inner: CoeusAsset = from_value(data.clone())?;
+        let inner: CoeusAsset = from_json_value(data)?;
         Ok(inner.into())
     }
 
@@ -28,8 +28,7 @@ impl JsCoeusAsset {
 
     #[wasm_bindgen(js_name = toJSON)]
     pub fn to_json(&self) -> Result<JsValue, JsValue> {
-        let res = to_value(&self.inner)?;
-        Ok(res)
+        to_json_value(&self.inner)
     }
 }
 

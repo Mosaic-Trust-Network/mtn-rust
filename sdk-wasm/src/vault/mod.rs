@@ -27,8 +27,7 @@ impl JsVault {
     /// vault with {@link unlock} or with some plugins like {@link HydraPlugin.private} or {@link MorpheusPlugin.private}. The public
     /// keys can be enumerated and used without the unlock password.
     pub fn load(data: &JsValue) -> Result<JsVault, JsValue> {
-        // TODO Consider https://github.com/cloudflare/serde-wasm-bindgen
-        let data_serde: serde_json::Value = from_value(data.clone())?;
+        let data_serde: serde_json::Value = from_json_value(data)?;
         let hack: VaultSerializer = serde_json::from_value(data_serde).map_err_to_js()?;
         let inner = Vault::from(hack);
         Ok(Self { inner })
@@ -39,7 +38,7 @@ impl JsVault {
     ///
     /// Note that calling this method clears the {@link dirty} flag on the vault.
     pub fn save(&mut self) -> Result<JsValue, JsValue> {
-        let result = to_value(&self.inner)?;
+        let result = to_json_value(&self.inner)?;
         self.set_dirty(false)?;
         Ok(result)
     }

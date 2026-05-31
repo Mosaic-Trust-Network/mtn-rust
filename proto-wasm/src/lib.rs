@@ -21,6 +21,7 @@ pub use sign::*;
 // imports from 3rd party crates
 
 use anyhow::Result;
+use serde::{Serialize, de::DeserializeOwned};
 use serde_wasm_bindgen::*;
 use wasm_bindgen::prelude::*;
 
@@ -37,3 +38,12 @@ use iop_morpheus_proto::{
 };
 
 pub use iop_keyvault_wasm::*;
+
+fn from_json_value<T: DeserializeOwned>(value: &JsValue) -> Result<T, JsValue> {
+    let json: String = js_sys::JSON::stringify(value)?.into();
+    serde_json::from_str(&json).map_err_to_js()
+}
+
+fn to_json_value<T: Serialize + ?Sized>(value: &T) -> Result<JsValue, JsValue> {
+    value.serialize(&Serializer::json_compatible()).map_err_to_js()
+}

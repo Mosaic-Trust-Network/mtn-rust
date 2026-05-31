@@ -20,7 +20,7 @@ use std::str::FromStr;
 // imports from 3rd party crates
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_wasm_bindgen::*;
 use wasm_bindgen::prelude::*;
 
@@ -52,3 +52,12 @@ pub use iop_keyvault_wasm::err_to_js;
 pub use iop_keyvault_wasm::*;
 pub use iop_proto_wasm::*;
 pub use json_digest_wasm::{digest, selective_digest, stringify, wrap_with_nonce};
+
+fn from_json_value<T: DeserializeOwned>(value: &JsValue) -> Result<T, JsValue> {
+    let json: String = js_sys::JSON::stringify(value)?.into();
+    serde_json::from_str(&json).map_err_to_js()
+}
+
+fn to_json_value<T: Serialize + ?Sized>(value: &T) -> Result<JsValue, JsValue> {
+    value.serialize(&Serializer::json_compatible()).map_err_to_js()
+}

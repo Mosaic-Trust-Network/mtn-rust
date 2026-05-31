@@ -40,8 +40,7 @@ impl JsHydraTxBuilder {
         };
 
         let transfer = hyd_core::Transaction::transfer(common_fields, recipient_id.inner());
-        let res = to_value(&transfer.to_data())?;
-        Ok(res)
+        to_json_value(&transfer.to_data())
     }
 
     /// Creates a vote transaction that empowers a delegate {@SecpPublicKey} to validate blocks and earn rewards for doing so.
@@ -108,8 +107,7 @@ impl JsHydraTxBuilder {
         };
 
         let tx = hyd_core::Transaction::register_delegate(common_fields, delegate_name);
-        let res = to_value(&tx.to_data())?;
-        Ok(res)
+        to_json_value(&tx.to_data())
     }
 
     fn create_vote_tx(
@@ -128,7 +126,6 @@ impl JsHydraTxBuilder {
         };
 
         let vote = build_tx(common_fields, delegate.inner());
-        let res = to_value(&vote.to_data())?;
-        Ok(res)
+        to_json_value(&vote.to_data())
     }
 }

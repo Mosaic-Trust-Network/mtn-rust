@@ -102,7 +102,7 @@ impl JsSignedJson {
     ) -> Result<JsSignedJson, JsValue> {
         let inner = Signed::<serde_json::Value>::new(
             public_key.inner().to_owned(),
-            from_value(content.clone())?,
+            from_json_value(content)?,
             signature.inner().to_owned(),
         );
         Ok(Self { inner })
@@ -117,8 +117,7 @@ impl JsSignedJson {
     /// Accessor of the JSON content.
     #[wasm_bindgen(getter)]
     pub fn content(&self) -> Result<JsValue, JsValue> {
-        let res = to_value(self.inner.content())?;
-        Ok(res)
+        to_json_value(self.inner.content())
     }
 
     /// Accessor of the {@link Signature}.
@@ -162,14 +161,13 @@ impl JsSignedJson {
     /// Serialize this object as a JSON in a format used by IOP SSI in several places
     #[wasm_bindgen(js_name = toJSON)]
     pub fn to_json(&self) -> Result<JsValue, JsValue> {
-        let res = to_value(&self.inner)?;
-        Ok(res)
+        to_json_value(&self.inner)
     }
 
     /// Deserialize a {@SignedJson} from a JSON in a format used by IOP SSI in several places
     #[wasm_bindgen(js_name = fromJSON)]
     pub fn from_json(json: &JsValue) -> Result<JsSignedJson, JsValue> {
-        let inner: Signed<serde_json::Value> = from_value(json.clone())?;
+        let inner: Signed<serde_json::Value> = from_json_value(json)?;
         Ok(Self { inner })
     }
 }

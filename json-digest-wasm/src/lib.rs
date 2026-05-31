@@ -6,6 +6,7 @@
 //! of all allowed documents. Order of keys in an object and Unicode normalization are well-defined in this
 //! subset, making it suitable for hashing.
 
+use serde::Serialize;
 use serde_wasm_bindgen::*;
 use wasm_bindgen::prelude::*;
 
@@ -38,6 +39,15 @@ impl<T, E: ToString> MapJsError<T> for Result<T, E> {
     }
 }
 
+fn from_json_value(value: &JsValue) -> Result<serde_json::Value, JsValue> {
+    let json: String = js_sys::JSON::stringify(value)?.into();
+    serde_json::from_str(&json).map_err_to_js()
+}
+
+fn to_json_value(value: &serde_json::Value) -> Result<JsValue, JsValue> {
+    value.serialize(&Serializer::json_compatible()).map_err_to_js()
+}
+
 /// Returns a canonical string representation of a JSON document, in which any sub-objects not explicitly listed in the
 /// second argument are collapsed to their digest. The format of the second argument is inspired by
 /// [JQ basic filters](https://stedolan.github.io/jq/manual/#Basicfilters) and these are some examples:
@@ -62,7 +72,7 @@ impl<T, E: ToString> MapJsError<T> for Result<T, E> {
 /// has enough entropy. @see wrapJsonWithNonce
 #[wasm_bindgen(js_name = selectiveDigestJson)]
 pub fn selective_digest(data: &JsValue, keep_properties_list: &str) -> Result<String, JsValue> {
-    let serde_data: serde_json::Value = from_value(data.clone())?;
+    let serde_data = from_json_value(data)?;
     let digested_data_str =
         selective_digest_json(&serde_data, keep_properties_list).map_err_to_js()?;
     Ok(digested_data_str)
@@ -81,7 +91,7 @@ pub fn digest(data: &JsValue) -> Result<String, JsValue> {
 /// This is a drop-in replacement for `JSON.stringify(data)`
 #[wasm_bindgen(js_name = stringifyJson)]
 pub fn stringify(data: &JsValue) -> Result<String, JsValue> {
-    let serde_data: serde_json::Value = from_value(data.clone())?;
+    let serde_data = from_json_value(data)?;
     let stringified = canonical_json(&serde_data).map_err_to_js()?;
     Ok(stringified)
 }
@@ -101,12 +111,11 @@ pub fn stringify(data: &JsValue) -> Result<String, JsValue> {
 /// ```
 #[wasm_bindgen(js_name = wrapWithNonce)]
 pub fn wrap_with_nonce(data: &JsValue) -> Result<JsValue, JsValue> {
-    let serde_data: serde_json::Value = from_value(data.clone())?;
+    let serde_data = from_json_value(data)?;
     let nonce = Nonce264::generate();
     let wrapped_serde = serde_json::json!({
         "nonce": nonce.0,
         "value": serde_data,
     });
-    let wrapped_json = to_value(&wrapped_serde)?;
-    Ok(wrapped_json)
+    to_json_value(&wrapped_serde)
 }
