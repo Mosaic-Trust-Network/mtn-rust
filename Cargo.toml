@@ -95,6 +95,7 @@ lto = true
 opt-level = 's'
 
 [patch.crates-io]
+core2 = { path = "./vendor/core2-0.4.0" }
 iop-coeus-node = { path = "./coeus-node" }
 iop-coeus-proto = { path = "./coeus-proto" }
 iop-hydra-proto = { path = "./hydra-proto" }
