@@ -13,11 +13,25 @@ mod sk;
 use super::*;
 
 use digest::FixedOutput;
+use k256::{
+    FieldBytes, ProjectivePoint, PublicKey as KPublicKey, Scalar, SecretKey as KSecretKey,
+    ecdsa::{
+        Signature as KSignature, SigningKey, VerifyingKey,
+        signature::hazmat::{PrehashSigner, PrehashVerifier},
+    },
+    elliptic_curve::{PrimeField, sec1::ToEncodedPoint},
+};
 use ripemd::Ripemd160;
 use sha2::{Digest, Sha256};
 
-fn convert_secp_error(e: secp::Error) -> anyhow::Error {
+fn convert_secp_error(e: impl core::fmt::Display) -> anyhow::Error {
     anyhow!("{}", e)
+}
+
+fn scalar_from_bytes(bytes: &[u8]) -> Result<Scalar> {
+    ensure!(bytes.len() == PRIVATE_KEY_SIZE, "Scalar length is not {PRIVATE_KEY_SIZE}");
+    Option::<Scalar>::from(Scalar::from_repr(FieldBytes::clone_from_slice(bytes)))
+        .ok_or_else(|| anyhow!("Invalid secp256k1 scalar"))
 }
 
 fn hash160<B: AsRef<[u8]>>(input: B) -> [u8; 20] {
@@ -78,12 +92,12 @@ pub fn from_base58check<S: AsRef<str>>(s: S) -> Result<Vec<u8>> {
 pub struct Secp256k1;
 
 impl Secp256k1 {
-    fn hash_message<D: AsRef<[u8]>>(data: D) -> secp::Message {
+    fn hash_message<D: AsRef<[u8]>>(data: D) -> [u8; 32] {
         let mut hasher = Sha256::default();
         hasher.update(data.as_ref());
-        let mut hash = [0u8; secp::util::MESSAGE_SIZE];
+        let mut hash = [0u8; 32];
         hash.copy_from_slice(&hasher.finalize_fixed());
-        secp::Message::parse(&hash)
+        hash
     }
 }
 

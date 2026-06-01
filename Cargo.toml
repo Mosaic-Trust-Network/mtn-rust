@@ -66,6 +66,7 @@ hmac = { version = "0.12.1", default-features = false }
 jni = { version = "0.21.1", default-features = false }
 jwt-compact = { version = "0.8.0", default-features = false }
 js-sys = { version = "0.3" }
+k256 = { version = "0.13.4", default-features = false, features = ["alloc", "arithmetic", "ecdsa"] }
 multibase = { version = "0.9.1", default-features = false }
 orion = { version = "0.17.11" }
 parity-scale-codec = { version = "3", default-features = false, features = ["derive", "max-encoded-len"] }
@@ -75,9 +76,6 @@ rand = { version = "0.10.0", default-features = false }
 ripemd = { version = "0.1.3", default-features = false }
 rmp-serde = { version = "1.3.0" }
 scale-info = { version = "2", default-features = false, features = ["derive"] }
-# Unfortunately the crate name of the libsecp256k1 collides with the perfect module name
-# for the cipher, so we rename the dependency here:
-secp = { version = "0.7.2", package = "libsecp256k1", default-features = false, features = ["hmac", "static-context"]}
 serde = { version = "1.0.219", default-features = false, features = ["derive", "alloc"] }
 serde_bytes = { version = "0.11.17", default-features = false, features = ["alloc"]}
 serde_json = { version = "1.0.142", default-features = false, features = ["preserve_order", "alloc"] }

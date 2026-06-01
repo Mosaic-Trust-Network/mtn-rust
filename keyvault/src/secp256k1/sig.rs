@@ -6,12 +6,12 @@ use crate::multicipher::MSignature;
 /// The serialized byte representation for the current version of the signature algorithm
 pub const SIGNATURE_VERSION1: u8 = b'\x01';
 
-/// Size of the signature is the version byte plus the actual libsecp256k1 signature size
-pub const SIGNATURE_SIZE: usize = secp::util::SIGNATURE_SIZE + VERSION_SIZE;
+/// Size of the signature is the version byte plus the actual secp256k1 signature size
+pub const SIGNATURE_SIZE: usize = 64 + VERSION_SIZE;
 
 /// Implementation of Secp256k1::Signature
 #[derive(Clone, Eq, PartialEq)]
-pub struct SecpSignature(pub(super) secp::Signature);
+pub struct SecpSignature(pub(super) KSignature);
 
 impl SecpSignature {
     /// The signature serialized in a format that can be fed to [`from_bytes`]
@@ -20,14 +20,14 @@ impl SecpSignature {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut res = Vec::with_capacity(SIGNATURE_SIZE);
         res.push(SIGNATURE_VERSION1);
-        res.extend_from_slice(&self.0.serialize()[..]);
+        res.extend_from_slice(&self.0.to_bytes()[..]);
         res
     }
 
     /// Creates a signature from a byte slice possibly returned by the [`to_bytes`] method.
     ///
     /// # Error
-    /// If `bytes` is rejected by `libsecp256k1::Signature::parse`
+    /// If `bytes` is rejected by `k256::ecdsa::Signature::from_slice`
     ///
     /// [`to_bytes`]: #method.to_bytes
     pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self> {
@@ -37,9 +37,9 @@ impl SecpSignature {
             bytes[0] == SIGNATURE_VERSION1,
             "Only identifier version {SIGNATURE_VERSION1:x} is supported"
         );
-        let mut array = [0u8; secp::util::SIGNATURE_SIZE];
+        let mut array = [0u8; 64];
         array.copy_from_slice(&bytes[VERSION_SIZE..]);
-        let sig = secp::Signature::parse_standard(&array).map_err(convert_secp_error)?;
+        let sig = KSignature::from_slice(&array).map_err(convert_secp_error)?;
         Ok(Self(sig))
     }
 
@@ -47,8 +47,7 @@ impl SecpSignature {
     ///
     /// This method allows to output such representation of
     pub fn to_der(&self) -> Vec<u8> {
-        let array = self.0.serialize_der();
-        array.as_ref().to_vec()
+        self.0.to_der().as_bytes().to_vec()
     }
 
     /// The BTC mainnet uses a DER encoded signature, so many technology copied that over.
@@ -56,7 +55,7 @@ impl SecpSignature {
     /// This method parses such signature into a SecpSignature. Very old BTC transactions
     /// also supported a less strict version (lax der), which we do not support.
     pub fn from_der(bytes: impl AsRef<[u8]>) -> Result<Self> {
-        let sig = secp::Signature::parse_der(bytes.as_ref()).map_err(convert_secp_error)?;
+        let sig = KSignature::from_der(bytes.as_ref()).map_err(convert_secp_error)?;
         Ok(Self(sig))
     }
 }
@@ -71,18 +70,6 @@ impl fmt::Display for SecpSignature {
 impl fmt::Debug for SecpSignature {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, formatter)
-    }
-}
-
-impl From<secp::Signature> for SecpSignature {
-    fn from(sig: secp::Signature) -> Self {
-        Self(sig)
-    }
-}
-
-impl From<SecpSignature> for secp::Signature {
-    fn from(sig: SecpSignature) -> secp::Signature {
-        sig.0
     }
 }
 

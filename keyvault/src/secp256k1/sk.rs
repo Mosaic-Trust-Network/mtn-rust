@@ -6,28 +6,29 @@ use crate::PrivateKey;
 /// The size of the private key in the format used by [`to_bytes`]
 ///
 /// [`to_bytes`]: #method.to_bytes
-pub const PRIVATE_KEY_SIZE: usize = secp::util::SECRET_KEY_SIZE;
+pub const PRIVATE_KEY_SIZE: usize = 32;
 
 /// Implementation of Secp256k1::PrivateKey
 #[derive(Clone, Eq, PartialEq)]
-pub struct SecpPrivateKey(secp::SecretKey);
+pub struct SecpPrivateKey(KSecretKey);
 
 impl SecpPrivateKey {
     /// The private key serialized in a format that can be fed to [`from_bytes`]
     ///
     /// [`from_bytes`]: #method.from_bytes
     pub fn to_bytes(&self) -> Vec<u8> {
-        self.0.serialize().to_vec()
+        self.0.to_bytes().to_vec()
     }
 
     /// Creates a public key from a byte slice possibly returned by the [`to_bytes`] method.
     ///
     /// # Error
-    /// If `bytes` is rejected by `libsecp256k1::SecretKey::parse_slice`
+    /// If `bytes` is rejected by `k256::SecretKey::from_slice`
     ///
     /// [`to_bytes`]: #method.to_bytes
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
-        let sk = secp::SecretKey::parse_slice(bytes.as_ref()).map_err(convert_secp_error)?;
+        let sk =
+            KSecretKey::from_slice(bytes.as_ref()).map_err(|_| anyhow!("Invalid secret key"))?;
         Ok(Self(sk))
     }
 
@@ -75,16 +76,15 @@ impl Add<&[u8]> for &SecpPrivateKey {
     type Output = Result<SecpPrivateKey>;
 
     fn add(self, rhs: &[u8]) -> Self::Output {
-        let mut sum = secp::SecretKey::parse_slice(rhs).map_err(convert_secp_error)?;
-        sum.tweak_add_assign(&self.0).map_err(convert_secp_error)?;
-        Ok(SecpPrivateKey(sum))
+        let mut sum = scalar_from_bytes(&self.to_bytes())?;
+        sum += scalar_from_bytes(rhs)?;
+        Ok(SecpPrivateKey(KSecretKey::from_bytes(&sum.to_bytes()).map_err(convert_secp_error)?))
     }
 }
 
 impl PrivateKey<Secp256k1> for SecpPrivateKey {
     fn public_key(&self) -> SecpPublicKey {
-        let pk = secp::PublicKey::from_secret_key(&self.0);
-        SecpPublicKey(pk)
+        SecpPublicKey(self.0.public_key())
     }
 
     /// # Panics
@@ -93,19 +93,8 @@ impl PrivateKey<Secp256k1> for SecpPrivateKey {
     /// fail, but this pure rust version does. Then we panic.
     fn sign<D: AsRef<[u8]>>(&self, data: D) -> SecpSignature {
         let msg = Secp256k1::hash_message(data);
-        let (sig, _recovery) = secp::sign(&msg, &self.0);
+        let signing_key = SigningKey::from(&self.0);
+        let sig = signing_key.sign_prehash(&msg).expect("valid secp256k1 prehash");
         SecpSignature(sig)
-    }
-}
-
-impl From<secp::SecretKey> for SecpPrivateKey {
-    fn from(sk: secp::SecretKey) -> Self {
-        Self(sk)
-    }
-}
-
-impl From<SecpPrivateKey> for secp::SecretKey {
-    fn from(sk: SecpPrivateKey) -> secp::SecretKey {
-        sk.0
     }
 }

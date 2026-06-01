@@ -23,9 +23,7 @@ getrandom = { workspace = true, optional = true }
 getrandom-2 = { workspace = true, optional = true }
 hex = { workspace = true }
 hmac = { workspace = true }
-# Unfortunately the crate name of the libsecp256k1 collides with the perfect module name
-# for the cipher, so we rename the dependency here:
-secp = { workspace = true }
+k256 = { workspace = true }
 multibase = { workspace = true }
 orion = { workspace = true, optional = true }
 ripemd = { workspace = true }
