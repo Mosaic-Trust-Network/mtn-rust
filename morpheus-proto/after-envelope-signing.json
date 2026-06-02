@@ -1,0 +1,66 @@
+{
+  "description": "Golden test vectors for AfterEnvelope signing and anchor fingerprint.\n  AfterEnvelope = { content: { root, height }, proof: AfterProof }.\n  Signed = { signature: { publicKey, bytes }, content: AfterEnvelope }.\n  Fingerprint = digestJson(Signed).\n  Content to sign = UTF-8 bytes of afterEnvelopeDigest string.",
+  "testKeyPair": {
+    "algorithm": "ed25519-rfc8032",
+    "seedHex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+    "publicKeyHex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+    "publicKey": "pezFVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z",
+    "reference": "RFC 8032 Section 7.1, empty message test vector"
+  },
+  "vectors": [
+    {
+      "id": "single-document-batch",
+      "description": "Sign an AfterEnvelope for a single-document-batch at block height 42",
+      "input": {
+        "smtRoot": "cjuF2OXGNIY3Zl5mFXZ9rq1s6dwq_QXtrPtqUjxrtga2jw",
+        "smtHeight": 10,
+        "afterProof": {
+          "blockHeight": 42,
+          "blockHash": "0x0400000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expected": {
+        "afterEnvelopeDigest": "cjuwowG6jmmPTiRFoayB76MQkytv1aFtDkRIO2q6eBirNs",
+        "signature": "sez8TKYaZiPLHMh52rFcebTu2jT5vo1qQ3pV37V8wu1iYfsLG2yJSBYSNG5p89uwk1skHGxBp6bXZAFa7ZY4b3xYnKM",
+        "fingerprint": "cjua2swGJzAEP4vNAiVbD6lvLvwPDQkm9jnNZt4CDYfuZY",
+        "signatureValid": true
+      }
+    },
+    {
+      "id": "two-document-batch",
+      "description": "Sign an AfterEnvelope for a two-document-batch at block height 100",
+      "input": {
+        "smtRoot": "cjugARvbOF9_Gc7KMI9A292jJN6rxt6VFXpknpnTB6O-vU",
+        "smtHeight": 10,
+        "afterProof": {
+          "blockHeight": 100,
+          "blockHash": "0x0500000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expected": {
+        "afterEnvelopeDigest": "cjuKKtcneziSpvKi86cHSLlxEctdoy5aCbPtY6etl7mpmU",
+        "signature": "sez7NJXcnPrRFVyXqT8CTJYqe2HC6XsqdGbaxNHTUUGtCruspSGjXs6chw4zwYRUL9JBdQE3FW1EDsdM4Gn1wnbrRrm",
+        "fingerprint": "cjuxubC2fch3YxOBt8q-ezY0ul31fJFks1INeYg9LRmN0M",
+        "signatureValid": true
+      }
+    },
+    {
+      "id": "nine-document-batch",
+      "description": "Sign an AfterEnvelope for a nine-document-batch at block height 200",
+      "input": {
+        "smtRoot": "cjuQ8szMpvinuUfojH-O6mNvTQE7bTSPXhbwNFJW0GhpO0",
+        "smtHeight": 10,
+        "afterProof": {
+          "blockHeight": 200,
+          "blockHash": "0x0600000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "expected": {
+        "afterEnvelopeDigest": "cjuwwl5FIx_tXdHAhZZkv7qD4agN5TfpaXW9-4NKw4PtbM",
+        "signature": "sezA8s4PhLm9De8qp3R4RSJQg5n7X1vb85gjP215QMWSg2hrLn4rqFsmiX5fsNUJmo1q9kWBpw9uKBqFJYTqj9os6cy",
+        "fingerprint": "cju1mEpgQPqbFEB6uULt2Lq2XafGRyC04HPZ-RDQgxS2XY",
+        "signatureValid": true
+      }
+    }
+  ]
+}

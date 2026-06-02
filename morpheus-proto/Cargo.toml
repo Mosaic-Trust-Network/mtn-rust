@@ -20,3 +20,6 @@ jwt-compact = { workspace = true, features = ["std"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_str = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }

@@ -217,3 +217,66 @@ pub struct AfterEnvelope<T: Signable> {
 
 impl<T: Signable> Content for AfterEnvelope<T> {}
 impl<T: Signable> Signable for AfterEnvelope<T> {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iop_keyvault::PrivateKey;
+    use iop_keyvault::ed25519::EdPrivateKey;
+    use json_digest::digest_data;
+    use serde_json::json;
+
+    #[test]
+    fn after_envelope_signing_golden_vectors() {
+        let data = include_str!("../../after-envelope-signing.json");
+        let vectors: serde_json::Value = serde_json::from_str(data).unwrap();
+        let kp = &vectors["testKeyPair"];
+
+        assert_eq!(kp["algorithm"].as_str().unwrap(), "ed25519-rfc8032");
+
+        let seed_bytes = hex::decode(kp["seedHex"].as_str().unwrap()).unwrap();
+        let ed_sk = EdPrivateKey::from_bytes(&seed_bytes).unwrap();
+        let pk_bytes = ed_sk.public_key().to_bytes();
+        assert_eq!(hex::encode(pk_bytes), kp["publicKeyHex"].as_str().unwrap());
+
+        let msk = MPrivateKey::from(ed_sk);
+        let mpk = msk.public_key();
+        assert_eq!(mpk.to_string(), kp["publicKey"].as_str().unwrap());
+
+        for v in vectors["vectors"].as_array().unwrap() {
+            let id = v["id"].as_str().unwrap();
+            let smt_root = v["input"]["smtRoot"].as_str().unwrap();
+            let block_hash = v["input"]["afterProof"]["blockHash"].as_str().unwrap();
+            let block_height = v["input"]["afterProof"]["blockHeight"].as_i64().unwrap() as u32;
+
+            let after_envelope = AfterEnvelope {
+                content: json!({ "root": smt_root, "height": 10 }),
+                proof: AfterProof { block_hash: block_hash.to_string(), block_height },
+            };
+
+            assert_eq!(
+                digest_data(&after_envelope).unwrap(),
+                v["expected"]["afterEnvelopeDigest"].as_str().unwrap(),
+                "{id}: afterEnvelopeDigest mismatch",
+            );
+
+            let to_sign = after_envelope.content_to_sign().unwrap();
+            let signature = msk.sign(&to_sign);
+            let signed = Signed::new(msk.public_key(), after_envelope, signature);
+
+            assert!(signed.validate(), "{id}: signature must be valid");
+
+            assert_eq!(
+                signed.signature().to_string(),
+                v["expected"]["signature"].as_str().unwrap(),
+                "{id}: signature mismatch",
+            );
+
+            assert_eq!(
+                digest_data(&signed).unwrap(),
+                v["expected"]["fingerprint"].as_str().unwrap(),
+                "{id}: fingerprint mismatch",
+            );
+        }
+    }
+}
