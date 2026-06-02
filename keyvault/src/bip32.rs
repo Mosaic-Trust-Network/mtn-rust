@@ -322,38 +322,6 @@ mod tests {
         assert!("m/522147483648".parse::<Path>().is_err());
     }
 
-    // macro_rules! assert_fmt {
-    //     ($actual:expr, $($arg:tt)+) => {
-    //         assert_eq!(format!("{:?}", $actual), format!($($arg)+));
-    //     }
-    // }
-
-    // fn test_path(path_str: &str) {
-    //     let seed = crate::Seed::generate_new();
-    //     let master = Bip32.master(&seed, &TestNetwork);
-    //     let path = path_str.parse::<Path>().unwrap();
-    //     assert_fmt!(
-    //         TestCrypto::bip32_ext_priv_key(&master, &path).unwrap(),
-    //         "xprv(sk({}))",
-    //         path_str
-    //     );
-    //     assert_fmt!(
-    //         TestCrypto::bip32_ext_pub_key(&master, &path).unwrap(),
-    //         "xpub(pk({}))",
-    //         path_str
-    //     );
-    //     assert_fmt!(TestCrypto::bip32_priv_key(&master, &path).unwrap(), "sk({})", path_str);
-    //     assert_fmt!(TestCrypto::bip32_pub_key(&master, &path).unwrap(), "pk({})", path_str);
-    //     assert_fmt!(TestCrypto::bip32_key_id(&master, &path).unwrap(), "id({})", path_str);
-    // }
-
-    // #[test]
-    // fn apply_path() {
-    //     test_path("m");
-    //     test_path("m/0'");
-    //     test_path("m/44'/0'/0'/0/0");
-    // }
-
     #[test]
     fn derivation() -> Result<()> {
         let phrase = "blast cargo razor option vote shoe stock cruel mansion boy spot never album crop reflect kangaroo blouse slam empty shoot cable vital crane manual";

@@ -168,10 +168,8 @@ pub fn serialize_signatures(
     transaction: &TransactionData, bytes: &mut Vec<u8>, skip_signature: bool,
     skip_second_signature: bool, skip_multisignatures: bool,
 ) -> Result<()> {
-    if !skip_signature {
-        if let Some(ref signature) = transaction.signature {
-            write_decoded_hex(signature, bytes)?;
-        }
+    if !skip_signature && let Some(ref signature) = transaction.signature {
+        write_decoded_hex(signature, bytes)?;
     }
     if !skip_second_signature {
         let second_signature =

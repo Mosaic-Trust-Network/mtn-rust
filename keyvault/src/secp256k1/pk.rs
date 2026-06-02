@@ -38,7 +38,7 @@ impl SecpPublicKey {
             bytes.as_ref().len() == PUBLIC_KEY_SIZE,
             "Public key length is not {PUBLIC_KEY_SIZE}"
         );
-        let pk = KPublicKey::from_sec1_bytes(bytes.as_ref()).map_err(convert_secp_error)?;
+        let pk = KPublicKey::from_sec1_bytes(bytes.as_ref())?;
         Ok(Self(pk))
     }
 
@@ -70,7 +70,7 @@ impl Add<&[u8]> for &SecpPublicKey {
     fn add(self, rhs: &[u8]) -> Self::Output {
         let tweak = scalar_from_bytes(rhs)?;
         let sum = self.0.to_projective() + ProjectivePoint::GENERATOR * tweak;
-        Ok(SecpPublicKey(KPublicKey::from_affine(sum.to_affine()).map_err(convert_secp_error)?))
+        Ok(SecpPublicKey(KPublicKey::from_affine(sum.to_affine())?))
     }
 }
 

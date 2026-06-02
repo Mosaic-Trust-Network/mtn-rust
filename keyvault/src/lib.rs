@@ -49,8 +49,6 @@ mod networks;
 pub mod secp256k1;
 mod seed;
 #[cfg(test)]
-mod test_crypto;
-#[cfg(test)]
 mod tests;
 
 #[cfg(feature = "std")]

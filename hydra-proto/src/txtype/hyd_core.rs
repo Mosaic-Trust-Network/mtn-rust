@@ -4,7 +4,9 @@ use super::*;
     Clone, Copy, Debug, Deserialize_repr, Eq, FromPrimitive, Hash, PartialEq, Serialize_repr,
 )]
 #[repr(u16)]
+#[derive(Default)]
 pub enum CoreTransactionType {
+    #[default]
     Transfer = 0,
     SecondSignatureRegistration = 1,
     DelegateRegistration = 2,
@@ -14,12 +16,6 @@ pub enum CoreTransactionType {
     TimelockTransfer = 6,
     MultiPayment = 7,
     DelegateResignation = 8,
-}
-
-impl Default for CoreTransactionType {
-    fn default() -> Self {
-        Self::Transfer
-    }
 }
 
 impl CoreTransactionType {

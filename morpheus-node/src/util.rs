@@ -5,16 +5,16 @@ pub fn is_height_in_range_exc_until(
     height: BlockHeight, from_height_inc: Option<BlockHeight>,
     until_height_exc: Option<BlockHeight>,
 ) -> bool {
-    if let Some(from) = from_height_inc {
-        if height < from {
-            return false;
-        }
+    if let Some(from) = from_height_inc
+        && height < from
+    {
+        return false;
     }
 
-    if let Some(until) = until_height_exc {
-        if height >= until {
-            return false;
-        }
+    if let Some(until) = until_height_exc
+        && height >= until
+    {
+        return false;
     }
 
     true
@@ -24,16 +24,16 @@ pub fn is_height_in_range_inc_until(
     height: BlockHeight, from_height_inc: Option<BlockHeight>,
     until_height_inc: Option<BlockHeight>,
 ) -> bool {
-    if let Some(from) = from_height_inc {
-        if height < from {
-            return false;
-        }
+    if let Some(from) = from_height_inc
+        && height < from
+    {
+        return false;
     }
 
-    if let Some(until) = until_height_inc {
-        if height > until {
-            return false;
-        }
+    if let Some(until) = until_height_inc
+        && height > until
+    {
+        return false;
     }
 
     true

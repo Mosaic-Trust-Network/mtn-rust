@@ -39,7 +39,7 @@ impl SecpSignature {
         );
         let mut array = [0u8; 64];
         array.copy_from_slice(&bytes[VERSION_SIZE..]);
-        let sig = KSignature::from_slice(&array).map_err(convert_secp_error)?;
+        let sig = KSignature::from_slice(&array)?;
         Ok(Self(sig))
     }
 
@@ -55,7 +55,7 @@ impl SecpSignature {
     /// This method parses such signature into a SecpSignature. Very old BTC transactions
     /// also supported a less strict version (lax der), which we do not support.
     pub fn from_der(bytes: impl AsRef<[u8]>) -> Result<Self> {
-        let sig = KSignature::from_der(bytes.as_ref()).map_err(convert_secp_error)?;
+        let sig = KSignature::from_der(bytes.as_ref())?;
         Ok(Self(sig))
     }
 }

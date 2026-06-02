@@ -41,15 +41,15 @@ impl Right {
 pub fn is_in_opt_range(
     height: BlockHeight, from_inc: Option<BlockHeight>, until_exc: Option<BlockHeight>,
 ) -> bool {
-    if let Some(from) = from_inc {
-        if height < from {
-            return false;
-        }
+    if let Some(from) = from_inc
+        && height < from
+    {
+        return false;
     }
-    if let Some(until) = until_exc {
-        if until <= height {
-            return false;
-        }
+    if let Some(until) = until_exc
+        && until <= height
+    {
+        return false;
     }
     true
 }
@@ -207,10 +207,10 @@ impl DidDocument {
     ) -> Result<bool> {
         self.ensure_known_height(height)?;
 
-        if let Some(tombstoned_at_height) = self.tombstoned_at_height {
-            if tombstoned_at_height <= height {
-                return Ok(false);
-            }
+        if let Some(tombstoned_at_height) = self.tombstoned_at_height
+            && tombstoned_at_height <= height
+        {
+            return Ok(false);
         }
         let keys_with_right = match self.rights.get(&right) {
             Some(key) => key,
@@ -255,10 +255,10 @@ impl DidDocument {
         if self.is_tombstoned_at(from)? {
             result.add_issue(Severity::Error, "DID was tombstoned before given period");
         }
-        if let Some(tombstone_height) = self.tombstoned_at_height {
-            if is_between(tombstone_height, from, until) {
-                result.add_issue(Severity::Warning, "DID was tombstoned during given period");
-            }
+        if let Some(tombstone_height) = self.tombstoned_at_height
+            && is_between(tombstone_height, from, until)
+        {
+            result.add_issue(Severity::Warning, "DID was tombstoned during given period");
         }
 
         let keys_with_right = match self.rights.get(&right) {

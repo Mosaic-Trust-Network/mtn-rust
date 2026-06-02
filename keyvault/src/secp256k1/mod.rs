@@ -24,10 +24,6 @@ use k256::{
 use ripemd::Ripemd160;
 use sha2::{Digest, Sha256};
 
-fn convert_secp_error(e: impl core::fmt::Display) -> anyhow::Error {
-    anyhow!("{}", e)
-}
-
 fn scalar_from_bytes(bytes: &[u8]) -> Result<Scalar> {
     ensure!(bytes.len() == PRIVATE_KEY_SIZE, "Scalar length is not {PRIVATE_KEY_SIZE}");
     Option::<Scalar>::from(Scalar::from_repr(FieldBytes::clone_from_slice(bytes)))

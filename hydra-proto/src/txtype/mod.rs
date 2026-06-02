@@ -14,15 +14,11 @@ use iop_morpheus_proto::txtype::{MorpheusAsset, OperationAttempt};
 
 #[derive(Clone, Copy, Debug, Deserialize_repr, Eq, Hash, PartialEq, Serialize_repr)]
 #[repr(u32)]
+#[derive(Default)]
 pub enum TxTypeGroup {
+    #[default]
     Core = 1,
     Iop = 4242,
-}
-
-impl Default for TxTypeGroup {
-    fn default() -> Self {
-        Self::Core
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

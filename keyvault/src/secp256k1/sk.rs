@@ -78,7 +78,7 @@ impl Add<&[u8]> for &SecpPrivateKey {
     fn add(self, rhs: &[u8]) -> Self::Output {
         let mut sum = scalar_from_bytes(&self.to_bytes())?;
         sum += scalar_from_bytes(rhs)?;
-        Ok(SecpPrivateKey(KSecretKey::from_bytes(&sum.to_bytes()).map_err(convert_secp_error)?))
+        Ok(SecpPrivateKey(KSecretKey::from_bytes(&sum.to_bytes())?))
     }
 }
 
