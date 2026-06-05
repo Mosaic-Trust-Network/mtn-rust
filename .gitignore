@@ -5,9 +5,8 @@
 
 Cargo.lock
 
-# Local agent bootstrap files (per-contributor, references private home paths)
-AGENTS.md
-.agents/
-
 # ProGit local project state (contains tokens in config.kdl - never commit)
 .project/
+
+.worktrees/
+.sober/
