@@ -6,6 +6,9 @@ This repository is part of the Mosaic Trust Network workspace. The `.agents`
 symlink is an internal core-team coordination bridge. If it does not resolve on
 your machine, ignore it — you do not need it to contribute to this repository.
 
+For core team agents only, follow the repo-local `.agents/AGENTS.md` entry point
+(via this symlink) for full doctrine.
+
 ## Tech Stack
 
 - **Language:** Rust
@@ -33,3 +36,7 @@ your machine, ignore it — you do not need it to contribute to this repository.
 
 This repo uses Sober for repository governance. The `.sober/` directory contains
 local Sober state. Run `sober status` to check repository health.
+
+If `sober assist` is available, use it as the default first pass for agent-assisted
+development suggestions. If the repository has no `.sober/` directory yet, initialize
+as needed (`sober init`) or rely on local verification commands.
