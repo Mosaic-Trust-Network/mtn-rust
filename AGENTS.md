@@ -40,3 +40,11 @@ local Sober state. Run `sober status` to check repository health.
 If `sober assist` is available, use it as the default first pass for agent-assisted
 development suggestions. If the repository has no `.sober/` directory yet, initialize
 as needed (`sober init`) or rely on local verification commands.
+
+## Repo Boundary and `.agents` Rule
+
+- This is the `_Dlabs/mosaic-trust-network` organizational boundary. Internal coordination lives in the parent-level private `agents/` layer.
+- External contributors should use this file and repo-local docs only.
+- Core-team agents may use `<repo>/.agents/AGENTS.md` when it resolves.
+- If `.agents/AGENTS.md` is missing, broken, or points outside this workspace, ignore it and continue with repository-local `AGENTS.md`.
+- Do not duplicate this project as a copy under another organization root unless explicitly requested.
