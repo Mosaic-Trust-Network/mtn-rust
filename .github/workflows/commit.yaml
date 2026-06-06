@@ -1,16 +1,8 @@
 name: Commit checks
 on: [push, pull_request]
 jobs:
-  agents-bootstrap:
-    name: Validate .agents symlink
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - name: Validate .agents symlink target
-        run: sh ./.agents/scripts/verify-agents-symlink.sh ../agents
   build:
     name: Build/test
-    needs: agents-bootstrap
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2

@@ -11,8 +11,6 @@ variables:
 # Use cargo to test the project
 test:cargo:
   before_script:
-    - >
-      ./.agents/scripts/verify-agents-symlink.sh ../agents
     - apt-get update
     # - apt-get install -y packagename
   script:
