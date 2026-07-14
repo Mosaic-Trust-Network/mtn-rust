@@ -222,4 +222,31 @@
       }
     }
   ]
+,
+  "blake3Vectors": [
+    { "id": "simple-flat-object", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmubZ00m9rLN6yfWykQ9jq2Pi2YTEDYBmvmbuDfi9ncDcE" } },
+    { "id": "empty-object", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmubkbdEN78m1bCmm7Fa1CMIfVMCBkhlOTfJb828MnDwnk" } },
+    { "id": "nested-object", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuazWbCvtAyzX_IY3m1eIcy-ltrIHJkRwb2j-dF514N5E" } },
+    { "id": "rust-testdata-simple", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmursDCffzo2qmg4225E9FojsU5yn92SZfE3oufMQH2QYs" } },
+    { "id": "rust-nfkd-key", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuaLw7DB8fDQZRIEksyjLYB8lSSMGTNPKcbKq8OsqhOZw" } },
+    { "id": "rust-self-describing-id", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cjuzC-XxgzNMwYXtw8aMIAeS2Xjlw1hlSNKTvVtUwPuyYo" } },
+    { "id": "float-decimal-0.1", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuj_WRZzNco_naEcY7YV0rj0CP_D1nJK6L2TaAxLKaW0U" } },
+    { "id": "float-exponent-4.2E-5", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmurqhKcJaPtG8ux_uIOwZACeGkA_D5ceMMa3qr-OX0E-0" } },
+    { "id": "rust-ts-roundtrip-3.0", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuNNabNqvDctzCsVVQIgzX9XBgA-T3pTF_WfMSTjZd0rw" } },
+    { "id": "rust-ts-roundtrip-65.50", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuwYCy31D0duMLn8vujgq3mbvH93uVUw9UB342jW37etc" } },
+    { "id": "rust-ts-roundtrip-3e30", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuncPXpLM9fclSiuEOzH8iVm9aFbUzHHDL9YoSVFD7Q0s" } },
+    { "id": "rust-ts-roundtrip-5.4e-21", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuH3qDQGrm1CwtoRpzl_d9DiG_uPNgOeTFDJxUuiya4PQ" } },
+    { "id": "boundary-large-decimal-1e20", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuuxXnE-y3Hm13m5rwXx-ZUT4pTbVKoC1cVP30P2BRpCE" } },
+    { "id": "boundary-large-scientific-1e21", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuMruMokaEWCdQYwS_fJbcJFE-u2ifhhXSmuMSwWWfIps" } },
+    { "id": "boundary-small-decimal-1e-6", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmubI2jWy3bKrIS4AU1wFu-2bRBPkpNKmKSUJFNa9uwduk" } },
+    { "id": "boundary-small-scientific-1e-7", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmunSwb3RZ7S6NzZUSQVFz8Fac_e_K1tiTHZZlk3qK6jp0" } },
+    { "id": "boundary-int-float-100.00", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuTeuSODb2iHPN6xxkRy4gOevgrkVn8SQ_4ZSoW0_jCNk" } },
+    { "id": "boundary-precision-1.2345678901234567", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuUwVE5sdKW9pzSVcmI0ely9sGd6O6ft7OgHlaQPMcmBA" } },
+    { "id": "boundary-trailing-zeros-0.001000", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmupJuamm9lYbKIIBpbzTH9kB4lPbgGlUETdr3gav4P270" } }
+  ],
+  "blake3SelectiveVectors": [
+    { "id": "rust-composite-keep-y", "description": "BLAKE3-256 selective digest.", "keepPaths": ".y", "expected": { "selectiveDigest": "{\"y\":{\"a\":2,\"b\":1},\"z\":\"cmursDCffzo2qmg4225E9FojsU5yn92SZfE3oufMQH2QYs\"}", "redigestHash": "cmuCN0sPTWwivYj8XyX5eaKKRbKb832i5F1uiKKhvdKous" } },
+    { "id": "rust-double-composite-keep-y-z", "description": "BLAKE3-256 selective digest.", "keepPaths": ".y.z", "expected": { "selectiveDigest": "{\"y\":{\"y\":\"cmursDCffzo2qmg4225E9FojsU5yn92SZfE3oufMQH2QYs\",\"z\":{\"a\":2,\"b\":1}},\"z\":\"cmuCN0sPTWwivYj8XyX5eaKKRbKb832i5F1uiKKhvdKous\"}", "redigestHash": "cmuODjpLaA_FJ-rb54M5FSCaBWIdHtErnvb1s0Hcg9EbUs" } },
+    { "id": "float-selective-keep-a", "description": "BLAKE3-256 selective digest.", "keepPaths": ".a", "expected": { "selectiveDigest": "{\"a\":{\"x\":0.1,\"y\":0.2},\"b\":\"cmuDQTX_-eCA3cR8AO4hbPMcYUeN4bhAMXzelKplbjyJ7I\"}", "redigestHash": "cmuZFXlvckSgVSFdBYe-H8AgG4hTDCl0mDuk4aG7ETyQ50" } }
+  ]
 }

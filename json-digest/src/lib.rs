@@ -42,9 +42,11 @@
 
 mod digest;
 pub mod error;
+mod hasher;
 pub mod json_path;
 mod nonce;
 
 pub use digest::*;
 pub use error::*;
+pub use hasher::*;
 pub use nonce::*;

@@ -25,3 +25,6 @@ sha2 = { workspace = true }
 [target.'cfg(target_os="android")'.dependencies]
 jni = { workspace = true }
 android_logger = { workspace = true }
+
+[features]
+std = [ "iop-keyvault/std" ]

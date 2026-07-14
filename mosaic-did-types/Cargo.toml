@@ -24,20 +24,23 @@ serde = { workspace = true, optional = true }
 # IOP reuse (keyvault crypto is blockchain-agnostic)
 iop-keyvault.workspace = true
 
+json-digest = { workspace = true }
+multibase = { workspace = true }
+
 [dev-dependencies]
 serde_json = { workspace = true }
 
 [features]
-default = ["std"]
+default = [ "std" ]
 std = [
-    "blake3/std",
-    "bs58/std",
-    "hex/std",
-    "bounded-collections/std",
-    "iop-keyvault/std",
-    "parity-scale-codec?/std",
-    "scale-info?/std",
-    "serde?/std",
+	"blake3/std",
+	"bounded-collections/std",
+	"bs58/std",
+	"hex/std",
+	"iop-keyvault/std",
+	"parity-scale-codec?/std",
+	"scale-info?/std",
+	"serde?/std",
 ]
-serde = ["std", "dep:serde", "bounded-collections/serde"]
-substrate = ["parity-scale-codec", "scale-info"]
+serde = [ "bounded-collections/serde", "dep:serde", "std" ]
+substrate = [ "json-digest/substrate", "parity-scale-codec", "scale-info" ]

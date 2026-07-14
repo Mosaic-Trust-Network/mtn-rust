@@ -16,5 +16,7 @@ name = "iop_sdk"
 iop-keyvault = { workspace = true }
 iop-vault = { workspace = true }
 mosaic-did-types = { workspace = true }
-pallet-mosaic-did = { workspace = true }
 json-digest = { workspace = true }
+
+[features]
+std = [ "iop-keyvault/std", "iop-vault/std", "mosaic-did-types/std" ]
