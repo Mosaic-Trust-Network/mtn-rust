@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::KeyvaultError;
 
 /// The serialized byte representation for the current version of the signature algorithm
 /// (standard Ed25519 signature uses SHA256 internally and its output is only dependent on
@@ -28,16 +29,17 @@ impl EdSignature {
     /// # Error
     /// If `bytes` is rejected by `ed25519_dalek::SecretKey::from_bytes`
     ///
-    /// [`to_bytes`]: #method.to_bytes
+    /// [`to_bytes`]: #method.from_bytes
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
         let bytes = bytes.as_ref();
-        ensure!(bytes.len() == SIGNATURE_SIZE, "Signature length is not {SIGNATURE_SIZE}");
-        ensure!(
-            bytes[0] == SIGNATURE_VERSION1,
-            "Only identifier version {SIGNATURE_VERSION1:x} is supported"
-        );
+        if bytes.len() != SIGNATURE_SIZE {
+            return Err(KeyvaultError::SignatureLength { expected: SIGNATURE_SIZE });
+        }
+        if bytes[0] != SIGNATURE_VERSION1 {
+            return Err(KeyvaultError::UnsupportedSignatureVersion { version: SIGNATURE_VERSION1 });
+        }
         let sig = ed::Signature::try_from(&bytes[VERSION_SIZE..])
-            .map_err(|_| anyhow!("invalid signature format"))?;
+            .map_err(|_| KeyvaultError::InvalidSignatureFormat)?;
         Ok(Self(sig))
     }
 }

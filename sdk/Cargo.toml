@@ -5,7 +5,6 @@ description = "Client SDK for the IOP Stack — re-exports the core crates in th
 version.workspace = true
 rust-version.workspace = true
 edition.workspace = true
-authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true

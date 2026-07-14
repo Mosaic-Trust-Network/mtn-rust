@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::KeyvaultError;
 use crate::multicipher::{MPrivateKey, MPublicKey};
 
 /// There can be several usages of DIDs differentiated inside the wallet
@@ -34,7 +35,7 @@ impl DidKind {
 }
 
 impl FromStr for DidKind {
-    type Err = anyhow::Error;
+    type Err = KeyvaultError;
 
     fn from_str(input: &str) -> Result<Self> {
         match input.to_lowercase().as_ref() {
@@ -42,7 +43,7 @@ impl FromStr for DidKind {
             "device" => Ok(DidKind::Device),
             "group" => Ok(DidKind::Group),
             "resource" => Ok(DidKind::Resource),
-            _ => bail!("Unknown DID kind {input}"),
+            _ => Err(KeyvaultError::UnknownDidKind { kind: input.to_owned() }),
         }
     }
 }

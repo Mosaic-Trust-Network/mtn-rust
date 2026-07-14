@@ -1,4 +1,4 @@
-use anyhow::{Result, bail, ensure};
+use crate::error::{JsonDigestError, Result};
 use tiny_keccak::Hasher;
 use unicode_normalization::UnicodeNormalization;
 
@@ -51,7 +51,7 @@ fn path_starts_with<P: AsRef<str>, Q: AsRef<str>>(path: &[P], prefix: &[Q]) -> b
 /// and `.foo[0][1]` → `["foo", "[0]", "[1]"]`.
 fn split_path(path: &str) -> Result<Vec<&str>> {
     if !path.starts_with('.') {
-        bail!("Path must start with '.' but it's: {path}");
+        return Err(JsonDigestError::InvalidPathStart { path: path.to_owned() });
     }
     let inner = &path[1..];
     let mut segments = Vec::new();
@@ -64,7 +64,7 @@ fn split_path(path: &str) -> Result<Vec<&str>> {
             }
             let close = rest[bracket_pos..]
                 .find(']')
-                .ok_or_else(|| anyhow::anyhow!("Unclosed bracket in path: {path}"))?;
+                .ok_or_else(|| JsonDigestError::UnclosedBracket { path: path.to_owned() })?;
             segments.push(&rest[bracket_pos..bracket_pos + close + 1]);
             rest = &rest[bracket_pos + close + 1..];
         }
@@ -104,10 +104,9 @@ fn walk_json(
             keys.sort();
             let mut entries = Vec::new();
             for key in keys {
-                ensure!(
-                    *key == normalize_unicode(key),
-                    "Data for canonical JSON serialization must contain field names normalized with Unicode NFKD"
-                );
+                if *key != normalize_unicode(key) {
+                    return Err(JsonDigestError::NonNormalizedInput);
+                }
 
                 let canonical_key =
                     walk_json(&serde_json::Value::String(key.to_owned()), &[], &mut |_, _| {
@@ -249,13 +248,15 @@ pub fn selective_digest_json(
         serde_json::Value::Object(_obj) => mask_json_subtree(json_value, keep_paths_vec),
         serde_json::Value::Array(_arr) => mask_json_subtree(json_value, keep_paths_vec),
         serde_json::Value::String(_s) => Ok(json_value.to_owned()),
-        _ => bail!("Json digest is currently implemented only for composite types"),
+        _ => return Err(JsonDigestError::NonCompositeType),
     }?;
     match digest_json {
         serde_json::Value::String(digest) => Ok(digest),
         // TODO probably a serde_json::to_string() would be enough and faster
         serde_json::Value::Object(_) => canonical_json(&digest_json),
-        _ => bail!("Implementation error: digest should always return a string or object"),
+        _ => {
+            Err(JsonDigestError::Internal("digest should always return a string or object".into()))
+        }
     }
 }
 
@@ -273,10 +274,9 @@ pub fn selective_digest_data<T: serde::Serialize>(
 ///
 /// [`selective_digest_json`]: ./fn.selective_digest_json.html
 pub fn selective_digest_json_str(json_str: &str, keep_paths_str: &str) -> Result<String> {
-    ensure!(
-        json_str == normalize_unicode(json_str),
-        "Json string to be digested must be normalized with Unicode NFKD"
-    );
+    if json_str != normalize_unicode(json_str) {
+        return Err(JsonDigestError::NonNormalizedInput);
+    }
 
     let json_value: serde_json::Value = serde_json::from_str(json_str)?;
     selective_digest_json(&json_value, keep_paths_str)
@@ -481,7 +481,10 @@ mod tests {
         }
 
         if !failures.is_empty() {
-            bail!("Vector test failures:\n{}", failures.join("\n\n"));
+            return Err(JsonDigestError::Internal(format!(
+                "Vector test failures:\n{}",
+                failures.join("\n\n")
+            )));
         }
         Ok(())
     }
@@ -521,7 +524,10 @@ mod tests {
         }
 
         if !failures.is_empty() {
-            bail!("Selective vector test failures:\n{}", failures.join("\n\n"));
+            return Err(JsonDigestError::Internal(format!(
+                "Selective vector test failures:\n{}",
+                failures.join("\n\n")
+            )));
         }
         Ok(())
     }

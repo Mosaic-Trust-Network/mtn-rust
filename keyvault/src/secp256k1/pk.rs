@@ -4,6 +4,7 @@ use core::str::FromStr;
 
 use super::*;
 use crate::PublicKey;
+use crate::error::KeyvaultError;
 
 /// The size of the public key in the compressed format used by [`to_bytes`]
 ///
@@ -34,10 +35,9 @@ impl SecpPublicKey {
     ///
     /// [`to_bytes`]: #method.to_bytes
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
-        ensure!(
-            bytes.as_ref().len() == PUBLIC_KEY_SIZE,
-            "Public key length is not {PUBLIC_KEY_SIZE}"
-        );
+        if bytes.as_ref().len() != PUBLIC_KEY_SIZE {
+            return Err(KeyvaultError::PublicKeyLength { expected: PUBLIC_KEY_SIZE });
+        }
         let pk = KPublicKey::from_sec1_bytes(bytes.as_ref()).map_err(display_err)?;
         Ok(Self(pk))
     }
@@ -108,20 +108,20 @@ impl Ord for SecpPublicKey {
 }
 
 impl FromStr for SecpPublicKey {
-    type Err = anyhow::Error;
+    type Err = KeyvaultError;
     fn from_str(src: &str) -> Result<Self> {
         Self::from_bytes(crate::hex_decode(src)?)
     }
 }
 
 impl fmt::Display for SecpPublicKey {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str(&hex::encode(self.to_bytes()))
     }
 }
 
 impl fmt::Debug for SecpPublicKey {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         fmt::Display::fmt(self, formatter)
     }
 }

@@ -1,7 +1,7 @@
 //! Utility functions to specify subtrees in a JSON document. Path pattern syntax is based on
 //! JQ patterns, see <https://stedolan.github.io/jq/manual/#Basicfilters>
 
-use anyhow::{Result, bail};
+use crate::error::{JsonDigestError, Result};
 
 /// Checks if any of the paths exist in the provided value.
 pub fn matches(tree: &serde_json::Value, paths_pattern: &str) -> Result<bool> {
@@ -59,7 +59,7 @@ pub fn split_alternatives(paths_pattern: &str) -> Vec<&str> {
 /// ```
 pub fn split_head_tail(path: &str) -> Result<(&str, Option<&str>)> {
     if !path.starts_with('.') {
-        bail!("Path must start with '.' but it's: {path}");
+        return Err(JsonDigestError::InvalidPathStart { path: path.to_owned() });
     }
     let path = &path[1..];
 

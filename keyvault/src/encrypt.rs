@@ -3,18 +3,18 @@
 use orion::aead::SecretKey;
 
 use super::*;
-use anyhow::Context;
+use crate::error::KeyvaultError;
 
 fn password_to_key(pw: &str, salt: &[u8]) -> Result<SecretKey> {
     use orion::hazardous::stream::chacha20::CHACHA_KEYSIZE;
     use orion::kdf::{Password, Salt, derive_key};
 
-    let pw = Password::from_slice(pw.as_bytes()).with_context(|| "Password is too short")?;
-    let salt = Salt::from_slice(salt).with_context(|| "Salt is too short")?;
+    let pw = Password::from_slice(pw.as_bytes()).map_err(|_| KeyvaultError::PasswordTooShort)?;
+    let salt = Salt::from_slice(salt).map_err(|_| KeyvaultError::SaltTooShort)?;
     let kdf_key = derive_key(&pw, &salt, 15, 1024, CHACHA_KEYSIZE as u32)
-        .with_context(|| "Could not derive key from password")?;
+        .map_err(|_| KeyvaultError::KeyDerivationFailed)?;
     let key = SecretKey::from_slice(kdf_key.unprotected_as_bytes())
-        .with_context(|| "Could not convert key")?;
+        .map_err(|_| KeyvaultError::KeyConversionFailed)?;
     Ok(key)
 }
 
@@ -45,20 +45,20 @@ pub fn encrypt(
     let nonce = nonce.as_ref();
 
     let key = password_to_key(pw, nonce)?;
-    let key =
-        XSecretKey::from_slice(key.unprotected_as_bytes()).with_context(|| "Key is invalid")?;
+    let key = XSecretKey::from_slice(key.unprotected_as_bytes())
+        .map_err(|_| KeyvaultError::InvalidKey)?;
 
-    let nonce = Nonce::from_slice(nonce).with_context(|| "Nonce is too short")?;
+    let nonce = Nonce::from_slice(nonce).map_err(|_| KeyvaultError::NonceTooShort)?;
 
     let out_len = match plaintext.len().checked_add(XCHACHA_NONCESIZE + POLY1305_OUTSIZE) {
         Some(min_out_len) => min_out_len,
-        None => bail!("Plaintext is too long"),
+        None => return Err(KeyvaultError::PlaintextTooLong),
     };
     let mut output = vec![0u8; out_len];
     output[..XCHACHA_NONCESIZE].copy_from_slice(nonce.as_ref());
 
     seal(&key, &nonce, plaintext, None, &mut output[XCHACHA_NONCESIZE..])
-        .with_context(|| "Could not convert key")?;
+        .map_err(|_| KeyvaultError::KeyConversionFailed)?;
 
     Ok(output)
 }
@@ -72,10 +72,12 @@ pub fn decrypt(ciphertext: impl AsRef<[u8]>, pw: impl AsRef<str>) -> Result<Vec<
     let ciphertext = ciphertext.as_ref();
     let pw = pw.as_ref();
 
-    ensure!(ciphertext.len() > XCHACHA_NONCESIZE, "Ciphertext is too short");
+    if ciphertext.len() <= XCHACHA_NONCESIZE {
+        return Err(KeyvaultError::CiphertextTooShort);
+    }
 
     let key = password_to_key(pw, &ciphertext[..XCHACHA_NONCESIZE])?;
-    open(&key, ciphertext).with_context(|| "Ciphertext was tampered with")
+    open(&key, ciphertext).map_err(|_| KeyvaultError::CiphertextTampered)
 }
 
 #[cfg(test)]

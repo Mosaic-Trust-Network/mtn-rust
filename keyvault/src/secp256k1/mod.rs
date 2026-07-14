@@ -12,6 +12,7 @@ mod sk;
 
 use super::*;
 
+use crate::error::KeyvaultError;
 use digest::FixedOutput;
 use k256::{
     FieldBytes, ProjectivePoint, PublicKey as KPublicKey, Scalar, SecretKey as KSecretKey,
@@ -25,9 +26,11 @@ use ripemd::Ripemd160;
 use sha2::{Digest, Sha256};
 
 fn scalar_from_bytes(bytes: &[u8]) -> Result<Scalar> {
-    ensure!(bytes.len() == PRIVATE_KEY_SIZE, "Scalar length is not {PRIVATE_KEY_SIZE}");
+    if bytes.len() != PRIVATE_KEY_SIZE {
+        return Err(KeyvaultError::ScalarLength { expected: PRIVATE_KEY_SIZE });
+    }
     Option::<Scalar>::from(Scalar::from_repr(FieldBytes::clone_from_slice(bytes)))
-        .ok_or_else(|| anyhow!("Invalid secp256k1 scalar"))
+        .ok_or(KeyvaultError::InvalidScalar)
 }
 
 fn hash160<B: AsRef<[u8]>>(input: B) -> [u8; 20] {
@@ -77,7 +80,9 @@ pub fn from_base58check<S: AsRef<str>>(s: S) -> Result<Vec<u8>> {
     let hash = outer_hasher.finalize_fixed();
     let expected_checksum = &hash[..CHECKSUM_LEN];
 
-    ensure!(expected_checksum == actual_checksum, "Incorrect checksum");
+    if expected_checksum != actual_checksum {
+        return Err(KeyvaultError::IncorrectChecksum);
+    }
 
     Ok(data.to_vec())
 }
@@ -177,7 +182,7 @@ impl Bip178 {
             b"\x10" => Ok(P2PKH_Only),
             b"\x11" => Ok(P2WPKH),
             b"\x12" => Ok(P2WPKH_P2SH),
-            _ => Err(anyhow!("Unknown wif suffix {}", hex::encode(data))),
+            _ => Err(KeyvaultError::UnknownWifSuffix { suffix: hex::encode(data) }),
         }
     }
 }

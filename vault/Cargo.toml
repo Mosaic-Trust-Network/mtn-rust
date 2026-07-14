@@ -5,13 +5,12 @@ description = "A hierarchical deterministic wallet that allows plugin extensions
 version.workspace = true
 rust-version.workspace = true
 edition.workspace = true
-authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+thiserror = { workspace = true }
 iop-keyvault = { workspace = true }
 multibase = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }

@@ -1,6 +1,7 @@
 use ::bip39::{Mnemonic, MnemonicType};
 
 use super::*;
+use crate::error::KeyvaultError;
 
 /// Tool for generating, validating and parsing BIP39 phrases in different supported languages.
 #[derive(Clone, Copy, Debug, Default)]
@@ -40,7 +41,7 @@ impl Bip39 {
     /// ```
     pub fn language_code(code: impl AsRef<str>) -> Result<Self> {
         let lang = Bip39Language::from_language_code(code.as_ref())
-            .ok_or_else(|| anyhow!("Invalid BIP39 language code"))?;
+            .ok_or(KeyvaultError::InvalidBip39Language)?;
         Ok(Self { lang })
     }
 
@@ -112,7 +113,7 @@ impl Bip39 {
     /// later converted into a [`Seed`] with an optional password.
     pub fn phrase(self, phrase: impl AsRef<str>) -> Result<Bip39Phrase> {
         if phrase.as_ref().split(' ').count() != Bip39::MNEMONIC_WORDS {
-            bail!("Only {}-word mnemonics are supported", Bip39::MNEMONIC_WORDS)
+            return Err(KeyvaultError::MnemonicWordCount { word_count: Bip39::MNEMONIC_WORDS });
         }
         self.short_phrase(phrase)
     }
@@ -129,7 +130,7 @@ impl Bip39 {
     pub fn entropy(self, entropy: impl AsRef<[u8]>) -> Result<Bip39Phrase> {
         let size = MnemonicType::for_word_count(Self::MNEMONIC_WORDS).unwrap();
         if entropy.as_ref().len() * 8 != size.entropy_bits() {
-            bail!("Only {}-bit entropy is supported", size.entropy_bits())
+            return Err(KeyvaultError::InvalidEntropyBitCount { bit_count: size.entropy_bits() });
         }
         self.short_entropy(entropy)
     }

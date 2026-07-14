@@ -7,13 +7,12 @@ categories = ["cryptography", "cryptography::cryptocurrencies"]
 version.workspace = true
 rust-version.workspace = true
 edition.workspace = true
-authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+thiserror = { workspace = true }
 blake2 = { workspace = true }
 blake3 = { workspace = true }
 digest = { workspace = true }
@@ -39,7 +38,7 @@ serde_json = { workspace = true }
 [features]
 default = ["std"]
 std = [
-    "anyhow/std",
+    "thiserror/std",
     "rand",
     "hex/std",
     "getrandom/std",

@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.0.17"
+version = "0.1.0"
 rust-version = "1.88"
 edition = "2024"
 repository = "https://github.com/Internet-of-People/iop-rs"
@@ -18,14 +18,13 @@ license = "LGPL-3.0-or-later"
 homepage = "https://developer.iop.technology/glossary?id=multicipher"
 
 [workspace.dependencies]
-iop-keyvault = { version = "0.0.17", default-features = false }
-iop-vault = { version = "0.0.17" }
-json-digest = { version = "0.0.17" }
-mosaic-did-types = { version = "0.0.17", default-features = false }
-pallet-mosaic-did = { version = "0.0.17" }
+iop-keyvault = { version = "0.1.0", default-features = false }
+iop-vault = { version = "0.1.0" }
+json-digest = { version = "0.1.0" }
+mosaic-did-types = { version = "0.1.0", default-features = false }
+pallet-mosaic-did = { version = "0.1.0" }
 
 android_logger = { version = "0.15.1" }
-anyhow = { version = "1.0.98", default-features = false }
 blake2 = { version = "0.10.6", default-features = false }
 blake3 = { version = "1", default-features = false }
 byteorder = { version = "1.5.0" }
@@ -52,7 +51,7 @@ serde_json = { version = "1.0.142", default-features = false, features = ["prese
 sha2 = { version = "0.10.9", default-features = false }
 bip39 = { package = "tiny-bip39", version = "2.0.0", features = ["rand"], default-features = false }
 typetag = { version = "0.2.20" }
-varint =  { version = "0.9.0" }
+thiserror = { version = "2", default-features = false }
 
 # Experiment for optimizing WASM and FFI binary sizes
 [profile.release]

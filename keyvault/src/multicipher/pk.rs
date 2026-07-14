@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::KeyvaultError;
 
 /// Multicipher [`PublicKey`]
 ///
@@ -177,19 +178,17 @@ impl core::fmt::Debug for MPublicKey {
 }
 
 impl core::str::FromStr for MPublicKey {
-    type Err = anyhow::Error;
+    type Err = KeyvaultError;
     fn from_str(src: &str) -> Result<Self> {
         let mut chars = src.chars();
-        ensure!(
-            chars.next() == Some(Self::PREFIX),
-            "Public keys must start with '{}'",
-            Self::PREFIX
-        );
+        if chars.next() != Some(Self::PREFIX) {
+            return Err(KeyvaultError::InvalidPublicKeyPrefix);
+        }
         if let Some(suite) = chars.next() {
             let (_base, binary) = multibase::decode(chars.as_str()).map_err(map_multibase_err)?;
             Self::from_inner_bytes(suite, &binary)
         } else {
-            Err(anyhow!("No crypto suite found"))
+            Err(KeyvaultError::NoCryptoSuite)
         }
     }
 }
@@ -281,26 +280,26 @@ mod test {
         }
 
         #[test]
-        #[should_panic(expected = "Unknown crypto suite 'g'")]
+        #[should_panic(expected = "UnknownCryptoSuite { suite: 'g' }")]
         fn invalid_suite() {
             let _pk =
                 "pgzAgmjPHe5Qs4VakvXHGnd6NsYjaxt4suMUtf39TayrSfb".parse::<MPublicKey>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "No crypto suite found")]
+        #[should_panic(expected = "NoCryptoSuite")]
         fn missing_suite() {
             let _pk = "p".parse::<MPublicKey>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "Public keys must start with 'p'")]
+        #[should_panic(expected = "InvalidPublicKeyPrefix")]
         fn invalid_type() {
             let _pk = "Fez21JXEtMzXjbCK6BAYFU9ewX".parse::<MPublicKey>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "Public keys must start with 'p'")]
+        #[should_panic(expected = "InvalidPublicKeyPrefix")]
         fn empty() {
             let _pk = "".parse::<MPublicKey>().unwrap();
         }

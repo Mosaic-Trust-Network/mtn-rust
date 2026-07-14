@@ -2,6 +2,7 @@ use core::ops::Add;
 
 use super::*;
 use crate::PrivateKey;
+use crate::error::KeyvaultError;
 
 /// The size of the private key in the format used by [`to_bytes`]
 ///
@@ -28,7 +29,7 @@ impl SecpPrivateKey {
     /// [`to_bytes`]: #method.to_bytes
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
         let sk =
-            KSecretKey::from_slice(bytes.as_ref()).map_err(|_| anyhow!("Invalid secret key"))?;
+            KSecretKey::from_slice(bytes.as_ref()).map_err(|_| KeyvaultError::InvalidSecretKey)?;
         Ok(Self(sk))
     }
 
@@ -51,18 +52,20 @@ impl SecpPrivateKey {
     /// Deserializes private key from wallet import format supported by many pre-HD wallets
     pub fn from_wif(wif: &str, network: &dyn Network<Suite = Secp256k1>) -> Result<(Self, Bip178)> {
         let data = from_base58check(wif)?;
-        ensure!(data.len() > PRIVATE_KEY_SIZE, "WIF data is too short");
+        if data.len() <= PRIVATE_KEY_SIZE {
+            return Err(KeyvaultError::WifTooShort);
+        }
 
         let expected_prefix = network.wif();
         debug_assert_eq!(expected_prefix.len(), ADDR_PREFIX_SIZE);
         debug_assert_eq!(ADDR_PREFIX_SIZE, 1);
 
         let (actual_prefix, data) = data.split_at(ADDR_PREFIX_SIZE);
-        ensure!(
-            actual_prefix == expected_prefix,
-            "Invalid network prefix found: {}",
-            hex::encode(actual_prefix)
-        );
+        if actual_prefix != expected_prefix {
+            return Err(KeyvaultError::InvalidWifNetworkPrefix {
+                prefix: hex::encode(actual_prefix),
+            });
+        }
 
         let (sk_bytes, usage_bytes) = data.split_at(PRIVATE_KEY_SIZE);
         let sk = Self::from_bytes(sk_bytes)?;

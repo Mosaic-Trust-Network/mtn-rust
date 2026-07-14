@@ -1,10 +1,12 @@
 // sub-modules
 
+pub mod error;
 mod state;
 mod vault;
 
 // exports
 
+pub use error::*;
 pub use state::*;
 pub use vault::*;
 
@@ -17,7 +19,6 @@ use std::sync::Arc;
 
 // imports from 3rd party crates
 
-use anyhow::{Result, ensure, format_err};
 use parking_lot::{
     MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
 };

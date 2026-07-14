@@ -29,6 +29,7 @@ use super::*;
 use core::hash::Hash;
 
 use crate::ed25519::{EdKeyId, EdPrivateKey, EdPublicKey, EdSignature};
+use crate::error::KeyvaultError;
 use crate::secp256k1::{SecpKeyId, SecpPrivateKey, SecpPublicKey, SecpSignature};
 use crate::{AsymmetricCrypto, PrivateKey, PublicKey};
 
@@ -75,7 +76,7 @@ impl CipherSuite {
             'e' => Ok(Self::Ed25519),
             's' => Ok(Self::Secp256k1),
             'o' => Ok(Self::Ed25519Blake3),
-            _ => bail!("Unknown crypto suite '{c}'"),
+            _ => Err(KeyvaultError::UnknownCryptoSuite { suite: c }),
         }
     }
 }

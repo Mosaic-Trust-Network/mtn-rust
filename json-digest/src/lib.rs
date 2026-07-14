@@ -41,8 +41,10 @@
 //! ```
 
 mod digest;
+pub mod error;
 pub mod json_path;
 mod nonce;
 
 pub use digest::*;
+pub use error::*;
 pub use nonce::*;

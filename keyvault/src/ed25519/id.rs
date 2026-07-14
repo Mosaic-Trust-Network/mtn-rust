@@ -5,6 +5,7 @@ use blake2::{
 };
 
 use super::*;
+use crate::error::KeyvaultError;
 use crate::multicipher::MKeyId;
 
 type HashSize = U16;
@@ -93,18 +94,19 @@ impl EdKeyId {
         let bytes = bytes.as_ref();
         match bytes.first() {
             Some(&KEY_ID_VERSION1) => {
-                ensure!(bytes.len() == KEY_ID_SIZE, "Legacy key id must be {KEY_ID_SIZE} bytes");
+                if bytes.len() != KEY_ID_SIZE {
+                    return Err(KeyvaultError::LegacyKeyIdSize { expected: KEY_ID_SIZE });
+                }
                 Ok(Self(bytes.to_owned()))
             }
             Some(&KEY_ID_VERSION_BLAKE3) => {
-                ensure!(
-                    bytes.len() == BLAKE3_KEY_ID_SIZE,
-                    "Blake3 key id must be {BLAKE3_KEY_ID_SIZE} bytes"
-                );
+                if bytes.len() != BLAKE3_KEY_ID_SIZE {
+                    return Err(KeyvaultError::LegacyKeyIdSize { expected: BLAKE3_KEY_ID_SIZE });
+                }
                 Ok(Self(bytes.to_owned()))
             }
-            Some(v) => bail!("Unknown key id version byte 0x{v:02x}"),
-            None => bail!("Empty key id bytes"),
+            Some(v) => Err(KeyvaultError::UnknownKeyIdVersion { version: *v }),
+            None => Err(KeyvaultError::EmptyKeyIdBytes),
         }
     }
 
@@ -131,7 +133,7 @@ impl From<&EdPublicKey> for EdKeyId {
 }
 
 impl fmt::Debug for EdKeyId {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         let id = MKeyId::from(self.clone());
         id.fmt(formatter)
     }

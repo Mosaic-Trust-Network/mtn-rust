@@ -26,7 +26,7 @@ impl EdPrivateKey {
     ///
     /// [`to_bytes`]: #method.to_bytes
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
-        let secret_key = ed::SecretKey::try_from(bytes.as_ref())?;
+        let secret_key = ed::SecretKey::try_from(bytes.as_ref()).map_err(display_err)?;
         let signing_key = ed::SigningKey::from_bytes(&secret_key);
         Ok(Self(signing_key))
     }
