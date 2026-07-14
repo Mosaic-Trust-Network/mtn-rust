@@ -43,6 +43,7 @@ mod cc;
 pub mod ed25519;
 #[cfg(feature = "std")]
 pub mod encrypt;
+pub mod error;
 pub mod multicipher;
 mod network;
 mod networks;
@@ -55,8 +56,8 @@ mod tests;
 pub use ::bip39::ErrorKind as Bip39ErrorKind;
 #[cfg(feature = "std")]
 pub use ::bip39::Language as Bip39Language;
-pub use anyhow::Result;
 pub use digest::Mac;
+pub use error::{KeyvaultError, Result};
 
 #[cfg(feature = "std")]
 pub use crate::bip39::*;
@@ -70,31 +71,29 @@ pub use seed::*;
 
 use alloc::borrow::ToOwned;
 use alloc::string::String;
-use alloc::vec;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 use core::fmt;
 use core::hash::{Hash, Hasher};
 use core::str::FromStr;
 
-use anyhow::{anyhow, bail, ensure};
 use digest::KeyInit;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 #[inline]
-fn hex_decode(src: &str) -> Result<Vec<u8>, anyhow::Error> {
-    hex::decode(src).map_err(|_| anyhow!("invalid hex"))
+fn hex_decode(src: &str) -> core::result::Result<Vec<u8>, error::KeyvaultError> {
+    hex::decode(src).map_err(|_| error::KeyvaultError::InvalidHex)
 }
 
 #[inline]
-fn map_multibase_err(e: multibase::Error) -> anyhow::Error {
-    anyhow!("Multibase error: {e}")
+fn map_multibase_err(e: multibase::Error) -> error::KeyvaultError {
+    error::multibase_err(e)
 }
 
 #[inline]
-fn display_err<E: core::fmt::Display>(e: E) -> anyhow::Error {
-    anyhow!("{e}")
+fn display_err<E: core::fmt::Display>(e: E) -> error::KeyvaultError {
+    error::display_err(e)
 }
 
 /// A public key (also called shared key or pk in some literature) is that part of an asymmetric keypair

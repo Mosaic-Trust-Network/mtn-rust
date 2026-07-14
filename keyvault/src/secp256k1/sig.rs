@@ -1,6 +1,7 @@
 use core::fmt;
 
 use super::*;
+use crate::error::KeyvaultError;
 use crate::multicipher::MSignature;
 
 /// The serialized byte representation for the current version of the signature algorithm
@@ -32,11 +33,12 @@ impl SecpSignature {
     /// [`to_bytes`]: #method.to_bytes
     pub fn from_bytes(bytes: impl AsRef<[u8]>) -> Result<Self> {
         let bytes = bytes.as_ref();
-        ensure!(bytes.len() == SIGNATURE_SIZE, "Signature length is not {SIGNATURE_SIZE}");
-        ensure!(
-            bytes[0] == SIGNATURE_VERSION1,
-            "Only identifier version {SIGNATURE_VERSION1:x} is supported"
-        );
+        if bytes.len() != SIGNATURE_SIZE {
+            return Err(KeyvaultError::SignatureLength { expected: SIGNATURE_SIZE });
+        }
+        if bytes[0] != SIGNATURE_VERSION1 {
+            return Err(KeyvaultError::UnsupportedSignatureVersion { version: SIGNATURE_VERSION1 });
+        }
         let mut array = [0u8; 64];
         array.copy_from_slice(&bytes[VERSION_SIZE..]);
         let sig = KSignature::from_slice(&array).map_err(display_err)?;

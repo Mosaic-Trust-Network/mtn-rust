@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::{Result, VaultError};
 
 pub trait State<T: 'static + Send + Sync>: Send + Sync {
     fn clone(&self) -> Box<dyn State<T>>;
@@ -23,12 +24,12 @@ impl<T: 'static + Sync + Send> State<T> for Arc<RwLock<T>> {
 
     // TODO all try_read and try_write calls should block instead with read_until() and write_until()
     fn try_borrow(&self) -> Result<MappedRwLockReadGuard<'_, T>> {
-        let r = self.try_read().ok_or_else(|| format_err!("Read lock on Vault state failed"))?;
+        let r = self.try_read().ok_or(VaultError::StateReadLockFailed)?;
         Ok(RwLockReadGuard::map(r, |x| x))
     }
 
     fn try_borrow_mut(&mut self) -> Result<MappedRwLockWriteGuard<'_, T>> {
-        let w = self.try_write().ok_or_else(|| format_err!("Write lock on Vault state failed"))?;
+        let w = self.try_write().ok_or(VaultError::StateWriteLockFailed)?;
         Ok(RwLockWriteGuard::map(w, |x| x))
     }
 }

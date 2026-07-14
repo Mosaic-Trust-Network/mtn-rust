@@ -50,24 +50,26 @@ allow-wildcard-paths = true
 highlight = "all"
 skip = [
     #duplicates
-    { name = "base64" },
     { name = "bitflags" },
     { name = "block-buffer" },
     { name = "cpufeatures" },
     { name = "digest" },
-    { name = "erased-serde" },
     { name = "fiat-crypto" },
+    { name = "foldhash" },
     { name = "getrandom" },
     { name = "hashbrown" },
-    { name = "hmac" },
     { name = "itertools" },
     { name = "r-efi" },
     { name = "rand" },
     { name = "rand_core" },
     { name = "sha2" },
     { name = "syn" },
+    { name = "thiserror" },
+    { name = "thiserror-impl" },
     { name = "toml_edit" },
     { name = "toml_datetime" },
+    { name = "winnow" },
+    { name = "wit-bindgen" },
 ]
 skip-tree = [
     # duplicate mess

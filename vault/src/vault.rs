@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::{Result, VaultError};
 
 #[cfg_attr(target_arch = "wasm32", typetag::serialize(tag = "pluginName"))]
 #[cfg_attr(not(target_arch = "wasm32"), typetag::serde(tag = "pluginName"))]
@@ -59,24 +60,22 @@ impl Vault {
     }
 
     pub fn unlock(&self, unlock_password: &str) -> Result<Seed> {
-        let imp = self.inner.try_read().ok_or_else(|| format_err!("Read lock on Vault failed"))?;
+        let imp = self.inner.try_read().ok_or(VaultError::ReadLockFailed)?;
         Self::decrypt_seed(&imp.encrypted_seed, unlock_password)
     }
 
     pub fn plugins_by_type<T: VaultPlugin + 'static>(&self) -> Result<Vec<Box<T>>> {
-        let imp = self.inner.try_read().ok_or_else(|| format_err!("Read lock on Vault failed"))?;
+        let imp = self.inner.try_read().ok_or(VaultError::ReadLockFailed)?;
         let plugins =
             imp.plugins.iter().by_ref().filter_map(|p| p.to_any().downcast().ok()).collect();
         Ok(plugins)
     }
 
     pub fn add(&mut self, plugin: Box<dyn VaultPlugin>) -> Result<()> {
-        let mut imp =
-            self.inner.try_write().ok_or_else(|| format_err!("Write lock on Vault failed"))?;
-        ensure!(
-            imp.plugins.iter().all(|p| !p.eq(plugin.as_ref())),
-            "Same plugin was already added to vault"
-        );
+        let mut imp = self.inner.try_write().ok_or(VaultError::WriteLockFailed)?;
+        if !imp.plugins.iter().all(|p| !p.eq(plugin.as_ref())) {
+            return Err(VaultError::DuplicatePlugin);
+        }
         imp.plugins.push(plugin);
         imp.is_dirty = true;
         Ok(())
@@ -95,7 +94,7 @@ impl Vault {
     fn decrypt_seed(seed: &str, unlock_password: &str) -> Result<Seed> {
         let (_, encrypted_seed_bytes) = multibase::decode(seed)?;
         let decrypted_bytes = decrypt(&encrypted_seed_bytes, unlock_password)?;
-        Seed::from_bytes(&decrypted_bytes)
+        Ok(Seed::from_bytes(&decrypted_bytes)?)
     }
 }
 

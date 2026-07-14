@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::KeyvaultError;
 
 /// Multicipher [`Signature`]
 ///
@@ -118,19 +119,17 @@ impl core::fmt::Debug for MSignature {
 }
 
 impl core::str::FromStr for MSignature {
-    type Err = anyhow::Error;
+    type Err = KeyvaultError;
     fn from_str(src: &str) -> Result<Self> {
         let mut chars = src.chars();
-        ensure!(
-            chars.next() == Some(Self::PREFIX),
-            "Signatures must start with '{}'",
-            Self::PREFIX
-        );
+        if chars.next() != Some(Self::PREFIX) {
+            return Err(KeyvaultError::InvalidSignaturePrefix);
+        }
         if let Some(suite) = chars.next() {
             let (_base, binary) = multibase::decode(chars.as_str()).map_err(map_multibase_err)?;
             Self::from_inner_bytes(suite, &binary)
         } else {
-            Err(anyhow!("No crypto suite found"))
+            Err(KeyvaultError::NoCryptoSuite)
         }
     }
 }
@@ -208,26 +207,26 @@ mod test {
         }
 
         #[test]
-        #[should_panic(expected = "Unknown crypto suite 'g'")]
+        #[should_panic(expected = "UnknownCryptoSuite { suite: 'g' }")]
         fn invalid_suite() {
             let _sig =
                 "sgzAhoNep8B9HTRCAYaJFPL1hNgqxfjM72UD4B75s258aF6pPCtDf5trXm7mppZVzT6ynpC3jyH6h3Li7r9Rw4yjeG2".parse::<MSignature>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "No crypto suite found")]
+        #[should_panic(expected = "NoCryptoSuite")]
         fn missing_suite() {
             let _sig = "s".parse::<MSignature>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "Signatures must start with 's'")]
+        #[should_panic(expected = "InvalidSignaturePrefix")]
         fn invalid_type() {
             let _sig = "FezAhoNep8B9HTRCAYaJFPL1hNgqxfjM72UD4B75s258aF6pPCtDf5trXm7mppZVzT6ynpC3jyH6h3Li7r9Rw4yjeG2".parse::<MSignature>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "Signatures must start with 's'")]
+        #[should_panic(expected = "InvalidSignaturePrefix")]
         fn empty() {
             let _sig = "".parse::<MSignature>().unwrap();
         }

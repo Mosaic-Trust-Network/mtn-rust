@@ -5,6 +5,7 @@ use ::bip39::{Mnemonic, Seed as Bip39Seed};
 use serde::{Deserialize, Serialize};
 
 use super::*;
+use crate::error::KeyvaultError;
 
 // TODO consider de/serialize attributes here, currently only needed for demo
 /// The seed used for BIP32 derivations. A seed cannot be turned back into a phrase, because there is salted hashing involed
@@ -56,7 +57,7 @@ impl Seed {
     /// ```
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() * 8 != Self::BITS {
-            bail!("Only {}-bit seeds are supported", Self::BITS)
+            return Err(KeyvaultError::InvalidSeedBits { bit_count: Self::BITS });
         }
         let bytes = bytes.to_vec();
         Ok(Self { bytes })

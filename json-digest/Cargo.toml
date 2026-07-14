@@ -7,13 +7,12 @@ categories = ["cryptography", "algorithms"]
 version.workspace = true
 rust-version.workspace = true
 edition.workspace = true
-authors.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 
 [dependencies]
-anyhow = { workspace = true }
+thiserror = { workspace = true }
 multibase = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }

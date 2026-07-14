@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::KeyvaultError;
 
 /// Entry point to generate a hierarchical deterministic wallet using the BIP-0044 standard. It is a more structured
 /// way to use the same seed for multiple coins, each with multiple accounts, each accounts with a new key for each
@@ -43,7 +44,9 @@ impl<C: KeyDerivationCrypto + 'static> Bip44Coin<C> {
 
     /// Creates an account in the coin with the given index.
     pub fn account(&self, account: i32) -> Result<Bip44Account<C>> {
-        ensure!(account >= 0, "Cannot use negative account index");
+        if account < 0 {
+            return Err(KeyvaultError::NegativeAccountIndex);
+        }
         Ok(Bip44Account::new(
             self.path.clone().account(account),
             self.network,

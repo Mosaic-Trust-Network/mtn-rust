@@ -1,4 +1,5 @@
 use super::{
+    error::KeyvaultError,
     secp256k1::{Secp256k1, ark, btc, hyd, iop},
     *,
 };
@@ -27,6 +28,6 @@ impl Networks {
             .iter()
             .find(|n| n.name() == name)
             .copied()
-            .ok_or_else(|| anyhow!("Could not find network with name {name}."))
+            .ok_or_else(|| KeyvaultError::NetworkNotFound { name: name.to_owned() })
     }
 }

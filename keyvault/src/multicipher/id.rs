@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::KeyvaultError;
 
 /// Multicipher [`KeyId`]
 ///
@@ -77,7 +78,9 @@ impl Serialize for MKeyId {
 
 #[cfg(feature = "serde")]
 fn deser(bytes: Vec<u8>) -> Result<MKeyId> {
-    ensure!(!bytes.is_empty(), "No crypto suite found");
+    if bytes.is_empty() {
+        return Err(KeyvaultError::NoCryptoSuite);
+    }
     let suite = bytes[0] as char;
     let data = &bytes[1..];
     MKeyId::from_inner_bytes(suite, data)
@@ -122,19 +125,17 @@ impl fmt::Debug for MKeyId {
 }
 
 impl core::str::FromStr for MKeyId {
-    type Err = anyhow::Error;
+    type Err = KeyvaultError;
     fn from_str(src: &str) -> Result<Self> {
         let mut chars = src.chars();
-        ensure!(
-            chars.next() == Some(Self::PREFIX),
-            "Identifiers must start with '{}'",
-            Self::PREFIX
-        );
+        if chars.next() != Some(Self::PREFIX) {
+            return Err(KeyvaultError::InvalidIdentifierPrefix);
+        }
         if let Some(suite) = chars.next() {
             let (_base, binary) = multibase::decode(chars.as_str()).map_err(map_multibase_err)?;
             Self::from_inner_bytes(suite, &binary)
         } else {
-            Err(anyhow!("No crypto suite found"))
+            Err(KeyvaultError::NoCryptoSuite)
         }
     }
 }
@@ -195,25 +196,25 @@ mod test {
         }
 
         #[test]
-        #[should_panic(expected = "Unknown crypto suite 'g'")]
+        #[should_panic(expected = "UnknownCryptoSuite { suite: 'g' }")]
         fn invalid_suite() {
             let _id = "igz21JXEtMzXjbCK6BAYFU9ewX".parse::<MKeyId>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "No crypto suite found")]
+        #[should_panic(expected = "NoCryptoSuite")]
         fn missing_suite() {
             let _id = "i".parse::<MKeyId>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "Identifiers must start with 'i'")]
+        #[should_panic(expected = "InvalidIdentifierPrefix")]
         fn invalid_type() {
             let _id = "fez21JXEtMzXjbCK6BAYFU9ewX".parse::<MKeyId>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "Identifiers must start with 'i'")]
+        #[should_panic(expected = "InvalidIdentifierPrefix")]
         fn empty() {
             let _id = "".parse::<MKeyId>().unwrap();
         }

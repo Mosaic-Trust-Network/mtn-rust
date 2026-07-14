@@ -10,8 +10,7 @@ After installing Rust using [rustup](https://rustup.rs/), use the `iop-sdk` crat
 
 ## Overview
 
-You can read a  overview and descriptions of different components on our
-[developer portal](https://developer.iop.technology). We especially suggest reading [glossary page](https://developer.iop.technology/glossary) for a detailed explanation of terms, concept and design principles of different software stack components.
+You can read a  overview and descriptions of different components on our [Mosaic DID Paper](https://sovereign-society.org/papers/mosaic-did/).
 
 ## Components
 
@@ -22,7 +21,7 @@ You can read a  overview and descriptions of different components on our
   it can deterministically derive an enormous number of private keys for any purpose
   like cryptocurrency addresses, DIDs, device keys, etc.
 - `vault` adds encryption support, pluggability with state handling and persistence to the pure calculator features of the `keyvault`
-- `morpheus` supports Self-Sovereign Identity (SSI) with Decentralized Identifiers (DIDs) and Verifiable Claims/Credentials (VCs). It defines a state machine for keeping a queriable history of DIDs, their keys and rights with atomic transactions to change the state.
-- `coeus` implements a generic decentralized naming system (DDNS). It defines a state machine for managing resolvable names with atomic transactions to change the state.
-- `hydra` supports using the Hydra blockchain by building transactions for cryptocurrency operations (transfer, delegate voting, etc), or custom transactions with SSI and DNS operations.
+- `mosaic-did-types` provides types used in protocols between blockchain code and application code
 - `sdk` exports features of libraries above for clients in a single crate
+- `pallet-mosaic-did` is a Polkadot SDK component that can be added to a blockchain runtime to keep and update DID state using a
+  consensus among multiple participants.

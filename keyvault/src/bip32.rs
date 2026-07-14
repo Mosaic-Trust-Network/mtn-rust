@@ -4,6 +4,7 @@
 //! child-key derivation for building hierarchical deterministic wallets.
 
 use super::*;
+use crate::error::KeyvaultError;
 
 /// Entry point to generate extended private keys in a hierarchical deterministic wallet starting from a seed based
 /// on the BIP-0032 standard (and the SLIP-0010 for crypto suites other than Secp256k1).
@@ -31,7 +32,7 @@ pub struct Bip32Node<C: KeyDerivationCrypto + 'static> {
 }
 
 impl<C: KeyDerivationCrypto + 'static> fmt::Debug for Bip32Node<C> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("Bip32Node")
             .field("path", &self.path)
@@ -151,7 +152,7 @@ impl<C: KeyDerivationCrypto + 'static> Bip32PublicNode<C> {
 }
 
 impl<C: KeyDerivationCrypto + 'static> fmt::Debug for Bip32PublicNode<C> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("Bip32PublicNode")
             .field("path", &self.path)
@@ -180,7 +181,7 @@ fn is_hardened_suffix_char(c: char) -> bool {
 }
 
 impl FromStr for ChildIndex {
-    type Err = anyhow::Error;
+    type Err = KeyvaultError;
     fn from_str(mut src: &str) -> Result<Self> {
         let hardened = src.ends_with(is_hardened_suffix_char);
         if hardened {
@@ -188,14 +189,14 @@ impl FromStr for ChildIndex {
         };
         let idx = src.parse::<i32>()?;
         if idx < 0 {
-            bail!("BIP32 derivation index cannot be negative");
+            return Err(KeyvaultError::NegativeBip32Index);
         }
         Ok(if hardened { ChildIndex::Hardened(idx) } else { ChildIndex::Normal(idx) })
     }
 }
 
 impl fmt::Display for ChildIndex {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             ChildIndex::Normal(idx) => formatter.write_fmt(format_args!("{idx}")),
             ChildIndex::Hardened(idx) => formatter.write_fmt(format_args!("{idx}'")),
@@ -223,24 +224,26 @@ impl Path {
 }
 
 impl FromStr for Path {
-    type Err = anyhow::Error;
+    type Err = KeyvaultError;
     fn from_str(src: &str) -> Result<Self> {
         let mut pieces = src.split('/');
 
         let first_opt = pieces.next();
         if let Some(first) = first_opt {
             if first != "m" && first != "M" {
-                bail!("BIP32 derivation path needs to start with 'm'");
+                return Err(KeyvaultError::Bip32PathNotStartingWithM);
             }
         } else {
-            bail!("BIP32 derivation path cannot be empty");
+            return Err(KeyvaultError::Bip32PathEmpty);
         }
 
         let (mut successes, errors): (Vec<_>, Vec<_>) =
             pieces.map(|p: &str| (p, p.parse::<ChildIndex>())).partition(|(_p, i)| i.is_ok());
 
         if !errors.is_empty() {
-            bail!("BIP32 derivation path contains invalid child indices: {errors:?}");
+            let details: Vec<(String, core::result::Result<(), KeyvaultError>)> =
+                errors.into_iter().map(|(p, r)| (String::from(p), r.map(|_| ()))).collect();
+            return Err(KeyvaultError::InvalidChildIndices { details });
         }
 
         // because of the above partitioning, successes only contain parse results
@@ -257,7 +260,7 @@ impl From<Vec<ChildIndex>> for Path {
 }
 
 impl fmt::Display for Path {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         use fmt::Write as _;
         formatter.write_char('m')?;
         for c in &self.path {

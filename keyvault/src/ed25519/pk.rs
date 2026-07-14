@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::KeyvaultError;
 
 /// The size of the public key in the compressed format used by [`to_bytes`]
 ///
@@ -27,7 +28,7 @@ impl EdPublicKey {
     /// [`to_bytes`]: #method.to_bytes
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
         let pk = ed::VerifyingKey::try_from(bytes.as_ref())
-            .map_err(|_| anyhow!("invalid public key"))?;
+            .map_err(|_| KeyvaultError::InvalidPublicKey)?;
         Ok(Self(pk))
     }
 }
@@ -79,7 +80,7 @@ impl Ord for EdPublicKey {
 
 impl ExtendedPublicKey<Ed25519> for EdPublicKey {
     fn derive_normal_child(&self, _idx: i32) -> Result<EdPublicKey> {
-        bail!("Normal derivation of Ed25519 is invalid based on SLIP-0010.")
+        Err(KeyvaultError::Ed25519NormalDerivationInvalid)
     }
     fn public_key(&self) -> EdPublicKey {
         self.clone()
