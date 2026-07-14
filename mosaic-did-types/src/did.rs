@@ -8,7 +8,9 @@
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+
 use core::fmt;
+use json_digest::JsonDigest;
 
 use bounded_collections::{BoundedVec, ConstU32};
 use iop_keyvault::ed25519::{Blake3, EdKeyId, EdPublicKey};
@@ -277,17 +279,25 @@ impl fmt::Display for KeyRef {
     }
 }
 
-/// Content identifier for BeforeProof -- discriminates hashing strategy.
+/// Content identifier — discriminates hashing strategy and structure (flat vs. Merkle tree).
 ///
-/// Two hashing strategies exist in the ecosystem:
-/// - **ByteHash**: BLAKE3-256 of raw binary content (new, Mosaic-native).
-/// - **JsonDigest**: SHA3-256 Merkle-tree hash of structured JSON data
-///   (legacy Morpheus `cj`-prefix format). Enables selective disclosure
-///   of document subtrees -- a property flat hashing cannot provide.
+/// # Variants
 ///
-/// Both variants store a fixed 32-byte hash. The enum discriminant captures
-/// *how* the hash was produced, which determines verifiability semantics.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// | Prefix | Variant | Algorithm | Structure | Hash size |
+/// |--------|---------|-----------|-----------|-----------|
+/// | `cb` | `Blake3Flat` | BLAKE3-256 | flat bytes | 32 |
+/// | `cB` | `Blake2bFlat` | BLAKE2b-512 | flat bytes | 64 |
+/// | `cj` | `Structured` | SHA3-256 | json-digest | 32 |
+/// | `cm` | `Structured` | BLAKE3-256 | json-digest | 32 |
+///
+/// Flat hashes use **Base58Btc** encoding. Structured hashes use the standard
+/// `json_digest::JsonDigest` format (multibase Base64Url).
+///
+/// # Size note
+///
+/// `Blake2bFlat` carries a 64-byte hash — the large-enum-variant warning is expected
+/// and acceptable. All other variants use 32-byte hashes.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(
     feature = "substrate",
     derive(
@@ -298,57 +308,76 @@ impl fmt::Display for KeyRef {
         scale_info::TypeInfo
     )
 )]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[allow(clippy::large_enum_variant)] // Blake2bFlat is intentionally 64 bytes
 pub enum ContentId {
-    /// BLAKE3-256 hash of raw binary content.
-    ByteHash([u8; 32]),
-    /// SHA3-256 json-digest Merkle-tree hash of structured JSON data.
-    /// Supports selective disclosure of document subtrees.
-    JsonDigest([u8; 32]),
+    /// BLAKE3-256 of raw binary content (32 bytes). Prefix `cb`.
+    Blake3Flat([u8; 32]),
+    /// BLAKE2b-512 of raw binary content (64 bytes). Prefix `cB`.
+    Blake2bFlat([u8; 64]),
+    /// Structured JSON Merkle-tree hash (SHA3-256 or BLAKE3-256).
+    /// The inner `JsonDigest` carries the algorithm kind.
+    Structured(JsonDigest),
 }
 
 impl ContentId {
-    /// Compute a ContentId from arbitrary content bytes using BLAKE3.
+    /// Compute a `Blake3Flat` content ID from arbitrary raw bytes.
     pub fn from_bytes(content: &[u8]) -> Self {
-        let hash = blake3::hash(content);
-        ContentId::ByteHash(*hash.as_bytes())
+        ContentId::Blake3Flat(*blake3::hash(content).as_bytes())
     }
 
-    /// Create a ContentId from a pre-computed JSON-digest hash (SHA3-256).
+    /// Create a `Structured` content ID from a pre-computed json-digest (SHA3-256, legacy).
     pub fn from_json_digest_hash(hash: [u8; 32]) -> Self {
-        ContentId::JsonDigest(hash)
+        ContentId::Structured(JsonDigest::Sha3(hash))
     }
 
-    /// Return the raw 32-byte hash, regardless of hashing strategy.
-    pub fn as_bytes(&self) -> &[u8; 32] {
+    /// Create a `Structured` content ID from a typed [`JsonDigest`].
+    pub fn from_json_digest(digest: JsonDigest) -> Self {
+        ContentId::Structured(digest)
+    }
+
+    /// Return the raw hash bytes as a slice, regardless of variant.
+    pub fn as_bytes(&self) -> &[u8] {
         match self {
-            ContentId::ByteHash(h) | ContentId::JsonDigest(h) => h,
+            ContentId::Blake3Flat(h) => h,
+            ContentId::Blake2bFlat(h) => h,
+            ContentId::Structured(d) => d.as_bytes(),
         }
     }
 
-    /// Returns `true` if this content ID was produced by json-digest.
+    /// Returns `true` if this content ID is a structured JSON digest.
     pub fn is_json_digest(&self) -> bool {
-        matches!(self, ContentId::JsonDigest(_))
+        matches!(self, ContentId::Structured(_))
     }
 }
 
 impl Default for ContentId {
     fn default() -> Self {
-        ContentId::ByteHash([0u8; 32])
+        ContentId::Blake3Flat([0u8; 32])
     }
 }
 
 impl From<[u8; 32]> for ContentId {
     fn from(bytes: [u8; 32]) -> Self {
-        ContentId::ByteHash(bytes)
+        ContentId::Blake3Flat(bytes)
+    }
+}
+
+impl From<JsonDigest> for ContentId {
+    fn from(digest: JsonDigest) -> Self {
+        ContentId::Structured(digest)
     }
 }
 
 impl fmt::Display for ContentId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ContentId::ByteHash(h) => write!(f, "0x{}", hex::encode(h)),
-            ContentId::JsonDigest(h) => write!(f, "cj:0x{}", hex::encode(h)),
+            ContentId::Blake3Flat(h) => {
+                write!(f, "cb{}", multibase::encode(multibase::Base::Base58Btc, h))
+            }
+            ContentId::Blake2bFlat(h) => {
+                write!(f, "cB{}", multibase::encode(multibase::Base::Base58Btc, h))
+            }
+            ContentId::Structured(d) => fmt::Display::fmt(d, f),
         }
     }
 }
@@ -356,40 +385,77 @@ impl fmt::Display for ContentId {
 impl core::str::FromStr for ContentId {
     type Err = ContentIdParseError;
 
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some(hex) = s.strip_prefix("cj:0x") {
-            return Ok(ContentId::JsonDigest(decode_hash_hex(hex)?));
+    fn from_str(s: &str) -> core::result::Result<Self, Self::Err> {
+        let mut chars = s.chars();
+        if chars.next() != Some('c') {
+            return Err(ContentIdParseError::InvalidPrefix);
         }
-        if let Some(hex) = s.strip_prefix("0x") {
-            return Ok(ContentId::ByteHash(decode_hash_hex(hex)?));
+        let kind = chars.next().ok_or(ContentIdParseError::InvalidPrefix)?;
+        let payload = chars.as_str();
+        match kind {
+            'b' => {
+                let (_base, bytes) =
+                    multibase::decode(payload).map_err(|_| ContentIdParseError::InvalidBase58)?;
+                let arr: [u8; 32] =
+                    bytes.try_into().map_err(|_| ContentIdParseError::InvalidLength)?;
+                Ok(ContentId::Blake3Flat(arr))
+            }
+            'B' => {
+                let (_base, bytes) =
+                    multibase::decode(payload).map_err(|_| ContentIdParseError::InvalidBase58)?;
+                let arr: [u8; 64] =
+                    bytes.try_into().map_err(|_| ContentIdParseError::InvalidLength)?;
+                Ok(ContentId::Blake2bFlat(arr))
+            }
+            'j' | 'm' => {
+                // Re-parse through JsonDigest::from_str for structured variants.
+                let digest: JsonDigest =
+                    s.parse().map_err(|_| ContentIdParseError::InvalidJsonDigest)?;
+                Ok(ContentId::Structured(digest))
+            }
+            _ => Err(ContentIdParseError::InvalidPrefix),
         }
-        Err(ContentIdParseError::InvalidPrefix)
     }
-}
-
-fn decode_hash_hex(hex_str: &str) -> Result<[u8; 32], ContentIdParseError> {
-    let bytes = hex::decode(hex_str).map_err(|_| ContentIdParseError::InvalidHex)?;
-    bytes.try_into().map_err(|_| ContentIdParseError::InvalidLength)
 }
 
 /// Errors that can occur when parsing a displayed [`ContentId`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ContentIdParseError {
-    /// The string was not in `0x...` or `cj:0x...` form.
+    /// The string does not start with `c` followed by a known variant letter.
     InvalidPrefix,
-    /// The hash payload was not valid hexadecimal.
-    InvalidHex,
-    /// The decoded hash was not exactly 32 bytes.
+    /// The Base58Btc payload could not be decoded.
+    InvalidBase58,
+    /// The decoded hash bytes had the wrong length for the variant.
     InvalidLength,
+    /// The structured JSON digest string could not be parsed.
+    InvalidJsonDigest,
 }
 
 impl fmt::Display for ContentIdParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidPrefix => write!(f, "ContentId must start with '0x' or 'cj:0x'"),
-            Self::InvalidHex => write!(f, "ContentId hash must be valid hexadecimal"),
-            Self::InvalidLength => write!(f, "ContentId hash must be exactly 32 bytes"),
+            Self::InvalidPrefix => {
+                write!(f, "ContentId must start with 'c' followed by b/B/j/m")
+            }
+            Self::InvalidBase58 => write!(f, "ContentId payload is not valid Base58Btc"),
+            Self::InvalidLength => write!(f, "ContentId hash has wrong length for its variant"),
+            Self::InvalidJsonDigest => write!(f, "ContentId structured digest could not be parsed"),
         }
+    }
+}
+
+#[cfg(feature = "serde")]
+impl serde::Serialize for ContentId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for ContentId {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -474,44 +540,64 @@ mod tests {
         let hash = [0xABu8; 32];
         let cid = ContentId::from_json_digest_hash(hash);
         assert!(cid.is_json_digest());
-        assert_eq!(cid.as_bytes(), &hash);
+        assert_eq!(cid.as_bytes(), &hash[..]);
 
-        // ByteHash and JsonDigest with same bytes are NOT equal (different variants)
-        let byte_cid = ContentId::ByteHash(hash);
-        assert_ne!(cid, byte_cid);
+        // Blake3Flat and Structured with same bytes are NOT equal (different variants)
+        let flat_cid = ContentId::Blake3Flat(hash);
+        assert_ne!(cid, flat_cid);
     }
 
     #[test]
     fn content_id_display() {
         let hash = [0x42u8; 32];
-        let byte_cid = ContentId::ByteHash(hash);
-        assert!(byte_cid.to_string().starts_with("0x"));
+        let flat_cid = ContentId::Blake3Flat(hash);
+        assert!(flat_cid.to_string().starts_with("cb"));
 
-        let json_cid = ContentId::JsonDigest(hash);
-        assert!(json_cid.to_string().starts_with("cj:0x"));
+        let json_cid = ContentId::from_json_digest_hash(hash);
+        assert!(json_cid.to_string().starts_with("cj"));
     }
 
     #[test]
     fn content_id_display_roundtrip() {
         let hash = [0x42u8; 32];
 
-        let byte_cid = ContentId::ByteHash(hash);
-        let parsed_byte = byte_cid.to_string().parse::<ContentId>().unwrap();
-        assert_eq!(parsed_byte, byte_cid);
+        let flat_cid = ContentId::Blake3Flat(hash);
+        let parsed_flat = flat_cid.to_string().parse::<ContentId>().unwrap();
+        assert_eq!(parsed_flat, flat_cid);
 
-        let json_cid = ContentId::JsonDigest(hash);
+        let json_cid = ContentId::from_json_digest_hash(hash);
         let parsed_json = json_cid.to_string().parse::<ContentId>().unwrap();
         assert_eq!(parsed_json, json_cid);
+
+        // BLAKE3 structured roundtrip
+        let blake3_cid = ContentId::Structured(JsonDigest::Blake3(hash));
+        let s = blake3_cid.to_string();
+        assert!(s.starts_with("cm"), "expected cm prefix, got {s}");
+        let parsed = s.parse::<ContentId>().unwrap();
+        assert_eq!(parsed, blake3_cid);
     }
 
     #[test]
     fn content_id_parse_rejects_bad_inputs() {
         assert_eq!(
-            "cjuFoobar".parse::<ContentId>().unwrap_err(),
+            "not-a-content-id".parse::<ContentId>().unwrap_err(),
             ContentIdParseError::InvalidPrefix
         );
-        assert_eq!("0xnot-hex".parse::<ContentId>().unwrap_err(), ContentIdParseError::InvalidHex);
-        assert_eq!("cj:0x42".parse::<ContentId>().unwrap_err(), ContentIdParseError::InvalidLength);
+        assert_eq!("cxF...".parse::<ContentId>().unwrap_err(), ContentIdParseError::InvalidPrefix);
+        // Wrong length for Blake3Flat variant
+        let short = format!("cb{}", multibase::encode(multibase::Base::Base58Btc, [0u8; 16]));
+        assert_eq!(short.parse::<ContentId>().unwrap_err(), ContentIdParseError::InvalidLength);
+    }
+
+    #[test]
+    fn content_id_blake2b_roundtrip() {
+        // 64 bytes of dummy hash
+        let hash = [0x7Fu8; 64];
+        let cid = ContentId::Blake2bFlat(hash);
+        let s = cid.to_string();
+        assert!(s.starts_with("cB"), "expected cB prefix, got {s}");
+        let parsed = s.parse::<ContentId>().unwrap();
+        assert_eq!(parsed, cid);
     }
 
     #[test]

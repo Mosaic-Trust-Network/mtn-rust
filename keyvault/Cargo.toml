@@ -36,15 +36,15 @@ rmp-serde = { workspace = true }
 serde_json = { workspace = true }
 
 [features]
-default = ["std"]
+default = [ "std" ]
 std = [
-    "thiserror/std",
-    "rand",
-    "hex/std",
-    "getrandom/std",
-    "dep:bip39",
-    "dep:orion",
-    "dep:getrandom",
-    "dep:getrandom-2",
+	"dep:bip39",
+	"dep:getrandom",
+	"dep:getrandom-2",
+	"dep:orion",
+	"getrandom/std",
+	"hex/std",
+	"rand",
+	"thiserror/std",
 ]
-serde = ["std", "dep:serde", "dep:serde_bytes"]
+serde = [ "dep:serde", "dep:serde_bytes", "std" ]

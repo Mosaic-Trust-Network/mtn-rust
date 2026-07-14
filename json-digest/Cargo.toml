@@ -13,6 +13,7 @@ homepage.workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
+blake3 = { workspace = true }
 multibase = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
@@ -20,9 +21,14 @@ serde_json = { workspace = true }
 tiny-keccak = { version = "2.0.2", features = ["sha3"] }
 unicode-normalization = { version = "0.1.22" }
 
+# Optional SCALE codec support for Substrate integration
+parity-scale-codec = { workspace = true, optional = true }
+scale-info = { workspace = true, optional = true }
+
 [dev-dependencies]
 hex = { workspace = true }
 
 [features]
-default = ["std"]
-std = ["rand/thread_rng"]
+default = [ "std" ]
+std = [ "rand/thread_rng" ]
+substrate = [ "dep:parity-scale-codec", "dep:scale-info" ]

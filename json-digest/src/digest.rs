@@ -1,5 +1,5 @@
 use crate::error::{JsonDigestError, Result};
-use tiny_keccak::Hasher;
+use crate::hasher::{Blake3Cm, ContentHasher, Sha3Cj};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::json_path;
@@ -11,23 +11,12 @@ pub fn normalize_unicode(s: &str) -> String {
     s.nfkd().collect()
 }
 
-/// Multibase-encoded hash of the provided bytes used in many places around this crate.
-///
-/// We use SHA3_256 (not Keccak) with Base-64 URL encoding.
-pub fn default_hasher(content: &[u8]) -> String {
-    // TODO we might want to use sha3 crate instead of tiny_keccak
-    let mut hasher = tiny_keccak::Sha3::v256();
-    let mut hash_output = [0u8; 32];
-    hasher.update(content);
-    hasher.finalize(&mut hash_output);
-    multibase::encode(multibase::Base::Base64Url, hash_output)
-}
-
 /// Multibase-encoded hash of the utf8 representation of the provided string,
-/// prefixed with "cj". Character 'j' marks that a JSON value was hashed and
+/// prefixed with the hasher's two-character prefix.
+/// Character 'j' marks a JSON value hashed with SHA3, 'm' marks BLAKE3;
 /// 'c' stands for content hash.
-fn hash_str(content: &str) -> String {
-    format!("cj{}", default_hasher(content.as_bytes()))
+fn hash_str<H: ContentHasher>(content: &str) -> String {
+    format!("{}{}", H::PREFIX, H::hash(content.as_bytes()))
 }
 
 /// Action to take when walking a JSON tree node.
@@ -84,7 +73,7 @@ fn split_path(path: &str) -> Result<Vec<&str>> {
 ///
 /// The `path` argument tracks the current location using object-key strings and
 /// array-index `"[N]"` segments so that `decide` can make path-aware decisions.
-fn walk_json(
+fn walk_json<H: ContentHasher>(
     data: &serde_json::Value, path: &[String],
     decide: &mut dyn FnMut(&[String], &serde_json::Value) -> WalkAction,
 ) -> Result<String> {
@@ -94,7 +83,7 @@ fn walk_json(
             for (i, item) in arr.iter().enumerate() {
                 let mut child_path = path.to_vec();
                 child_path.push(format!("[{i}]"));
-                items.push(walk_json(item, &child_path, decide)?);
+                items.push(walk_json::<H>(item, &child_path, decide)?);
             }
             format!("[{}]", items.join(","))
         }
@@ -108,10 +97,11 @@ fn walk_json(
                     return Err(JsonDigestError::NonNormalizedInput);
                 }
 
-                let canonical_key =
-                    walk_json(&serde_json::Value::String(key.to_owned()), &[], &mut |_, _| {
-                        WalkAction::Keep
-                    })?;
+                let canonical_key = walk_json::<H>(
+                    &serde_json::Value::String(key.to_owned()),
+                    &[],
+                    &mut |_, _| WalkAction::Keep,
+                )?;
                 let mut child_path = path.to_vec();
                 child_path.push(key.clone());
                 let value = obj
@@ -120,7 +110,7 @@ fn walk_json(
                 entries.push(format!(
                     "{}:{}",
                     canonical_key,
-                    walk_json(value, &child_path, decide)?
+                    walk_json::<H>(value, &child_path, decide)?
                 ));
             }
             format!("{{{}}}", entries.join(","))
@@ -138,7 +128,7 @@ fn walk_json(
     if matches!(data, serde_json::Value::Array(_) | serde_json::Value::Object(_))
         && decide(path, data) == WalkAction::Hash
     {
-        Ok(format!("\"{}\"", hash_str(&result)))
+        Ok(format!("\"{}\"", hash_str::<H>(&result)))
     } else {
         Ok(result)
     }
@@ -203,16 +193,37 @@ fn canonicalize_number(n: &serde_json::Number) -> String {
 ///
 /// [NFKD normalized]: https://en.wikipedia.org/wiki/Unicode_equivalence#Normal_forms
 pub fn canonical_json(data: &serde_json::Value) -> Result<String> {
-    walk_json(data, &[], &mut |_, _| WalkAction::Keep)
+    canonical_json_with::<Sha3Cj>(data)
+}
+
+/// Canonical JSON with a specific content hasher (used internally).
+fn canonical_json_with<H: ContentHasher>(data: &serde_json::Value) -> Result<String> {
+    walk_json::<H>(data, &[], &mut |_, _| WalkAction::Keep)
 }
 
 /// Replace JSON (sub)tree(s) with their multibase-encoded [Merkle-root hash] strings.
 ///
 /// Argument `keep_paths` can be created using function [`split_alternatives`] as needed.
 ///
+/// Uses SHA3-256 (legacy `"cj"` prefix).  See [`mask_json_subtree_blake3`] for BLAKE3.
+///
 /// [`split_alternatives`]: ../json_path/fn.split_alternatives.html
+/// [`mask_json_subtree_blake3`]: fn.mask_json_subtree_blake3.html
 /// [Merkle-root hash]: https://en.wikipedia.org/wiki/Merkle_tree
 pub fn mask_json_subtree<'b>(
+    data: &serde_json::Value, keep_paths: impl AsRef<[&'b str]>,
+) -> Result<serde_json::Value> {
+    mask_json_subtree_with::<Sha3Cj>(data, keep_paths)
+}
+
+/// BLAKE3 variant of [`mask_json_subtree`].
+pub fn mask_json_subtree_blake3<'b>(
+    data: &serde_json::Value, keep_paths: impl AsRef<[&'b str]>,
+) -> Result<serde_json::Value> {
+    mask_json_subtree_with::<Blake3Cm>(data, keep_paths)
+}
+
+fn mask_json_subtree_with<'b, H: ContentHasher>(
     data: &serde_json::Value, keep_paths: impl AsRef<[&'b str]>,
 ) -> Result<serde_json::Value> {
     let parsed: Vec<Vec<&'b str>> =
@@ -230,7 +241,7 @@ pub fn mask_json_subtree<'b>(
         WalkAction::Hash
     };
 
-    let result_str = walk_json(data, &[], &mut decider)?;
+    let result_str = walk_json::<H>(data, &[], &mut decider)?;
     serde_json::from_str(&result_str).map_err(Into::into)
 }
 
@@ -238,22 +249,35 @@ pub fn mask_json_subtree<'b>(
 /// Only subtrees matching the provided JSON path pattern will be kept,
 /// all other subtrees will be masked.
 ///
-/// Nearly equivalent to `mask_json_subtree(&json_value, split_alternatives(keep_paths_str))`,
-/// but always returns a string, not a `serde_json::Value`.
+/// Uses SHA3-256 (legacy `"cj"` prefix).  See [`selective_digest_json_blake3`].
+///
+/// [`selective_digest_json_blake3`]: fn.selective_digest_json_blake3.html
 pub fn selective_digest_json(
+    json_value: &serde_json::Value, keep_paths_str: &str,
+) -> Result<String> {
+    selective_digest_json_with::<Sha3Cj>(json_value, keep_paths_str)
+}
+
+/// BLAKE3 variant of [`selective_digest_json`].
+pub fn selective_digest_json_blake3(
+    json_value: &serde_json::Value, keep_paths_str: &str,
+) -> Result<String> {
+    selective_digest_json_with::<Blake3Cm>(json_value, keep_paths_str)
+}
+
+fn selective_digest_json_with<H: ContentHasher>(
     json_value: &serde_json::Value, keep_paths_str: &str,
 ) -> Result<String> {
     let keep_paths_vec = json_path::split_alternatives(keep_paths_str);
     let digest_json = match &json_value {
-        serde_json::Value::Object(_obj) => mask_json_subtree(json_value, keep_paths_vec),
-        serde_json::Value::Array(_arr) => mask_json_subtree(json_value, keep_paths_vec),
+        serde_json::Value::Object(_obj) => mask_json_subtree_with::<H>(json_value, keep_paths_vec),
+        serde_json::Value::Array(_arr) => mask_json_subtree_with::<H>(json_value, keep_paths_vec),
         serde_json::Value::String(_s) => Ok(json_value.to_owned()),
         _ => return Err(JsonDigestError::NonCompositeType),
     }?;
     match digest_json {
         serde_json::Value::String(digest) => Ok(digest),
-        // TODO probably a serde_json::to_string() would be enough and faster
-        serde_json::Value::Object(_) => canonical_json(&digest_json),
+        serde_json::Value::Object(_) => canonical_json_with::<H>(&digest_json),
         _ => {
             Err(JsonDigestError::Internal("digest should always return a string or object".into()))
         }
@@ -262,36 +286,84 @@ pub fn selective_digest_json(
 
 /// Convenience function calling [`selective_digest_json`] with arbitrary serializable types.
 ///
+/// Uses SHA3-256 (legacy `"cj"` prefix).  See [`selective_digest_data_blake3`].
+///
 /// [`selective_digest_json`]: ./fn.selective_digest_json.html
+/// [`selective_digest_data_blake3`]: fn.selective_digest_data_blake3.html
 pub fn selective_digest_data<T: serde::Serialize>(
     data: &T, keep_paths_str: &str,
 ) -> Result<String> {
+    selective_digest_data_with::<Sha3Cj, _>(data, keep_paths_str)
+}
+
+/// BLAKE3 variant of [`selective_digest_data`].
+pub fn selective_digest_data_blake3<T: serde::Serialize>(
+    data: &T, keep_paths_str: &str,
+) -> Result<String> {
+    selective_digest_data_with::<Blake3Cm, _>(data, keep_paths_str)
+}
+
+fn selective_digest_data_with<H: ContentHasher, T: serde::Serialize>(
+    data: &T, keep_paths_str: &str,
+) -> Result<String> {
     let json_value = serde_json::to_value(data)?;
-    selective_digest_json(&json_value, keep_paths_str)
+    selective_digest_json_with::<H>(&json_value, keep_paths_str)
 }
 
 /// Convenience function calling [`selective_digest_json`] with a JSON string.
 ///
+/// Uses SHA3-256 (legacy `"cj"` prefix).  See [`selective_digest_json_str_blake3`].
+///
 /// [`selective_digest_json`]: ./fn.selective_digest_json.html
+/// [`selective_digest_json_str_blake3`]: fn.selective_digest_json_str_blake3.html
 pub fn selective_digest_json_str(json_str: &str, keep_paths_str: &str) -> Result<String> {
+    selective_digest_json_str_with::<Sha3Cj>(json_str, keep_paths_str)
+}
+
+/// BLAKE3 variant of [`selective_digest_json_str`].
+pub fn selective_digest_json_str_blake3(json_str: &str, keep_paths_str: &str) -> Result<String> {
+    selective_digest_json_str_with::<Blake3Cm>(json_str, keep_paths_str)
+}
+
+fn selective_digest_json_str_with<H: ContentHasher>(
+    json_str: &str, keep_paths_str: &str,
+) -> Result<String> {
     if json_str != normalize_unicode(json_str) {
         return Err(JsonDigestError::NonNormalizedInput);
     }
 
     let json_value: serde_json::Value = serde_json::from_str(json_str)?;
-    selective_digest_json(&json_value, keep_paths_str)
+    selective_digest_json_with::<H>(&json_value, keep_paths_str)
 }
 
 const KEEP_NOTHING: &str = "";
 
 /// Convenience function for serializable types to mask the whole JSON tree into a digest, keep nothing.
+///
+/// Uses SHA3-256 (legacy `"cj"` prefix).  See [`digest_data_blake3`].
+///
+/// [`digest_data_blake3`]: fn.digest_data_blake3.html
 pub fn digest_data<T: serde::Serialize>(data: &T) -> Result<String> {
-    selective_digest_data(data, KEEP_NOTHING)
+    selective_digest_data_with::<Sha3Cj, _>(data, KEEP_NOTHING)
+}
+
+/// BLAKE3 variant of [`digest_data`].
+pub fn digest_data_blake3<T: serde::Serialize>(data: &T) -> Result<String> {
+    selective_digest_data_with::<Blake3Cm, _>(data, KEEP_NOTHING)
 }
 
 /// Convenience function for JSON strings to mask the whole JSON tree into a digest, keep nothing.
+///
+/// Uses SHA3-256 (legacy `"cj"` prefix).  See [`digest_json_str_blake3`].
+///
+/// [`digest_json_str_blake3`]: fn.digest_json_str_blake3.html
 pub fn digest_json_str(json_str: &str) -> Result<String> {
-    selective_digest_json_str(json_str, KEEP_NOTHING)
+    selective_digest_json_str_with::<Sha3Cj>(json_str, KEEP_NOTHING)
+}
+
+/// BLAKE3 variant of [`digest_json_str`].
+pub fn digest_json_str_blake3(json_str: &str) -> Result<String> {
+    selective_digest_json_str_with::<Blake3Cm>(json_str, KEEP_NOTHING)
 }
 
 #[cfg(test)]
@@ -310,6 +382,20 @@ mod tests {
     struct CompositeTestData<T> {
         z: Option<T>,
         y: Option<T>,
+    }
+
+    #[derive(Clone, Debug, Deserialize, Serialize)]
+    struct FlatData {
+        subject: String,
+        classification: String,
+    }
+
+    #[test]
+    fn blake3_digest_has_cm_prefix() -> Result<()> {
+        let obj = FlatData { subject: "Widget-123".into(), classification: "public".into() };
+        let result = digest_data_blake3(&obj)?;
+        assert!(result.starts_with("cm"), "expected cm prefix, got: {result}");
+        Ok(())
     }
 
     #[test]
@@ -382,6 +468,14 @@ mod tests {
     }
 
     #[test]
+    fn test_json_digest_blake3() -> Result<()> {
+        let test_obj = TestData { b: 1, a: 2 };
+        let digested = digest_data_blake3(&test_obj)?;
+        assert_eq!(digested, "cmursDCffzo2qmg4225E9FojsU5yn92SZfE3oufMQH2QYs");
+        Ok(())
+    }
+
+    #[test]
     fn test_selective_digesting() -> Result<()> {
         let test_obj = TestData { b: 1, a: 2 };
         let x = &test_obj;
@@ -445,6 +539,98 @@ mod tests {
     fn load_test_vectors() -> serde_json::Value {
         let data = include_str!("../canonical-json-digest.json");
         serde_json::from_str(data).expect("Failed to parse test vectors")
+    }
+
+    #[test]
+    fn test_canonical_blake3_vectors() -> Result<()> {
+        let vectors = load_test_vectors();
+        let test_cases =
+            vectors["blake3Vectors"].as_array().expect("blake3Vectors should be an array");
+
+        let mut failures = Vec::new();
+        for case in test_cases {
+            let id = case["id"].as_str().unwrap_or("<unknown>");
+            let expected_digest =
+                case["expected"]["digestHash"].as_str().expect("digestHash should be a string");
+
+            // We need the original input — look it up by id in the canonical vectors array.
+            let input = vectors["vectors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["id"] == id)
+                .map(|v| &v["input"])
+                .expect("blake3 vector references unknown canonical id");
+
+            let digest = digest_data_blake3(input)?;
+            if digest != expected_digest {
+                failures.push(format!(
+                    "[{}] blake3 digest mismatch:\n  expected: {}\n  got:      {}",
+                    id, expected_digest, digest
+                ));
+            }
+        }
+
+        if !failures.is_empty() {
+            return Err(JsonDigestError::Internal(format!(
+                "BLAKE3 vector test failures:\n{}",
+                failures.join("\n\n")
+            )));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_canonical_selective_blake3_vectors() -> Result<()> {
+        let vectors = load_test_vectors();
+        let test_cases = vectors["blake3SelectiveVectors"]
+            .as_array()
+            .expect("blake3SelectiveVectors should be an array");
+
+        let mut failures = Vec::new();
+        for case in test_cases {
+            let id = case["id"].as_str().unwrap_or("<unknown>");
+            let keep_paths = case["keepPaths"].as_str().expect("keepPaths should be a string");
+            let expected_selective = case["expected"]["selectiveDigest"]
+                .as_str()
+                .expect("selectiveDigest should be a string");
+            let expected_redigest =
+                case["expected"]["redigestHash"].as_str().expect("redigestHash should be a string");
+
+            // Look up the input in the original selective vectors array.
+            let input = vectors["selectiveVectors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|v| v["id"] == id)
+                .map(|v| &v["input"])
+                .expect("blake3 selective vector references unknown id");
+
+            let selective = selective_digest_data_blake3(input, keep_paths)?;
+            if selective != expected_selective {
+                failures.push(format!(
+                    "[{}] blake3 selectiveDigest mismatch:\n  expected: {}\n  got:      {}",
+                    id, expected_selective, selective
+                ));
+            }
+
+            let redigest =
+                digest_data_blake3(&serde_json::from_str::<serde_json::Value>(&selective)?)?;
+            if redigest != expected_redigest {
+                failures.push(format!(
+                    "[{}] blake3 redigest mismatch:\n  expected: {}\n  got:      {}",
+                    id, expected_redigest, redigest
+                ));
+            }
+        }
+
+        if !failures.is_empty() {
+            return Err(JsonDigestError::Internal(format!(
+                "BLAKE3 selective vector test failures:\n{}",
+                failures.join("\n\n")
+            )));
+        }
+        Ok(())
     }
 
     #[test]

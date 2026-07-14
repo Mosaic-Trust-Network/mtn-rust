@@ -9,26 +9,44 @@ your machine, ignore it — you do not need it to contribute to this repository.
 For core team agents only, follow the repo-local `.agents/AGENTS.md` entry point
 (via this symlink) for full doctrine.
 
-## Tech Stack
+## Workspace Crates
 
-- **Language:** Rust
-- **Build tool:** Cargo
-- **Workspace:** Cargo workspace with crates such as `json-digest`,
-  `coeus-node`, `coeus-proto`, `hydra-sdk`, and others.
+| Crate | Path | `no_std` | Purpose |
+|-------|------|----------|---------|
+| `iop-keyvault` | `keyvault/` | Yes | HD key derivation (BIP-32/39/43/44). Ed25519 + secp256k1. `multicipher` types (`MPublicKey`, `MPrivateKey`, `MSignature`, `MKeyId`) abstract over cipher suites. |
+| `json-digest` | `json-digest/` | No | Canonical JSON (sorted keys, NFKD normalization) with BLAKE3-256 Merkle-tree hashing and selective disclosure. Content IDs prefixed `cj`. |
+| `iop-vault` | `vault/` | No | Encrypted HD wallet with plugin system. Stores BIP-39 seed, `VaultPlugin` trait objects via `typetag`. `BoundPlugin<T, TPublic, TPriv>` for type-safe access. |
+| `mosaic-did-types` | `mosaic-did-types/` | Yes | `did:mosaic` types: BLAKE3-256 DID derivation, SCALE codec, 6 rights (Update, Impersonate, Delegate, Issue, Revoke, Recovery), 5 W3C key purposes, `DidState`, `DidOperation`, `SsiOperation`. |
+| `pallet-mosaic-did` | `pallet-mosaic-did/` | No | Substrate pallet: materialized `StorageMap<Did, DidState>`, atomic `submit_did_operations`, anti-censorship (any account submits for any DID). Depends on `polkadot-sdk` (forked). |
+| `iop-sdk` | `sdk/` | No | Unified re-export of keyvault, vault, mosaic-did-types, and json-digest. Single dependency entry point. |
 
-## Tools & Verification Commands
+### Dependency Graph
 
-| Command | Purpose |
-| --- | --- |
-| `cargo test` | Run tests |
-| `cargo check` | Fast compile check |
-| `cargo clippy` | Lint |
-| `cargo fmt --check` | Verify formatting |
+```
+keyvault
+├──► vault
+├──► mosaic-did-types ──► pallet-mosaic-did
+└──► json-digest
 
-## Working Conventions
+iop-sdk re-exports: keyvault, vault, mosaic-did-types, json-digest
+```
 
-- **Panopticum:** one feature, one folder, one index. Keep related code,
-  tests, and docs together.
+## Verification
+
+```bash
+./scripts/check.sh              # run all checks (format, propagate, fmt, deny, clippy, test, nostd)
+./scripts/check.sh clippy       # run a single step
+./scripts/check.sh test nostd   # run specific steps
+```
+
+## Conventions
+
+- **Edition 2024**, MSRV 1.88, workspace version `0.1.0`.
+- `no_std`: `keyvault` and `mosaic-did-types` support it. No `std`-only deps without feature gates.
+- Serde/SCALE impls are `#[cfg(feature = "...")]` — check before moving types between crates.
+- Errors: `anyhow::Result` in `std` crates. Custom error types only in `no_std`.
+- Testing: inline `#[cfg(test)] mod test`. `Seed::DEMO_PHRASE` for vault tests.
+- Crypto: keys from `Seed` via BIP-32. SHA3-256 (json-digest), BLAKE3 (mosaic DID derivation).
 - Keep cryptographic claims backed by tests and test vectors.
 - Prefer small, reviewable commits with working feature-local tests.
 

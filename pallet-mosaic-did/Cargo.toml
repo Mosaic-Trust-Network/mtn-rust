@@ -21,19 +21,19 @@ polkadot-sdk = { workspace = true, default-features = false, features = ["sp-io"
 serde_json = { workspace = true }
 
 [features]
-default = ["std"]
+default = [ "std" ]
 std = [
-    "mosaic-did-types/std",
-    "iop-keyvault/std",
-    "parity-scale-codec/std",
-    "scale-info/std",
-    "polkadot-sdk/std",
+	"iop-keyvault/std",
+	"mosaic-did-types/std",
+	"parity-scale-codec/std",
+	"polkadot-sdk/std",
+	"scale-info/std",
 ]
 
 runtime-benchmarks = [
-    "polkadot-sdk/runtime-benchmarks",
-    "polkadot-sdk/sp-io",
-    "polkadot-sdk/sp-core",
+	"polkadot-sdk/runtime-benchmarks",
+	"polkadot-sdk/sp-core",
+	"polkadot-sdk/sp-io",
 ]
 
-try-runtime = ["polkadot-sdk/try-runtime"]
+try-runtime = [ "polkadot-sdk/try-runtime" ]

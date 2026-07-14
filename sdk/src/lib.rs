@@ -17,8 +17,5 @@ pub use iop_vault as vault;
 /// Core `did:mosaic` type definitions (DID, authentication, operations, documents).
 pub use mosaic_did_types as did;
 
-/// Substrate pallet implementing the `did:mosaic` DID registry on-chain.
-pub use pallet_mosaic_did as pallet;
-
 /// Privacy-preserving JSON document digests.
 pub use json_digest;
