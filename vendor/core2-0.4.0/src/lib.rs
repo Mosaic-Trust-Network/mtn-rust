@@ -1,20 +1,3 @@
-#![cfg_attr(feature = "nightly", feature(maybe_uninit_ref))]
-#![cfg_attr(feature = "nightly", feature(never_type))]
-#![cfg_attr(all(feature = "std", feature = "nightly"), feature(read_initializer))]
-#![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(feature = "std", allow(dead_code))]
-
-#[cfg(not(feature = "std"))]
-pub mod error;
-
-#[cfg(feature = "std")]
-pub use std::error as error;
-
-#[cfg(not(feature = "std"))]
-pub mod io;
-
-#[cfg(feature = "std")]
-pub use std::io as io;
-
-#[cfg(feature = "alloc")]
-extern crate alloc;
+// Placeholder crate — never compiled, exists only so Cargo can resolve
+// the yanked core2 0.4.0 entry in Cargo.lock (pulled in transitively
+// by polkadot-sdk → litep2p → multihash 0.17.0 only with -F std).

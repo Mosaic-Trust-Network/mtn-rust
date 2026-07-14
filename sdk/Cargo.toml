@@ -1,6 +1,6 @@
 [package]
 name = "iop-sdk"
-description = "Client SDK for the IOP Stack™"
+description = "Client SDK for the IOP Stack — re-exports the core crates in this workspace"
 
 version.workspace = true
 rust-version.workspace = true
@@ -12,25 +12,10 @@ homepage.workspace = true
 
 [lib]
 name = "iop_sdk"
-crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-anyhow = { workspace = true }
-iop-coeus-proto = { workspace = true }
-iop-hydra-proto = { workspace = true }
-iop-hydra-sdk = { workspace = true }
-iop-journal-proto = { workspace = true }
-iop-keyvault = { workspace = true, features = ["std"] }
-iop-morpheus-proto = { workspace = true }
-iop-morpheus-sdk = { workspace = true }
+iop-keyvault = { workspace = true }
 iop-vault = { workspace = true }
+mosaic-did-types = { workspace = true }
+pallet-mosaic-did = { workspace = true }
 json-digest = { workspace = true }
-rand = { workspace = true }
-serde = { workspace = true }
-serde_bytes = { workspace = true }
-serde_json = { workspace = true }
-typetag = { workspace = true }
-
-[target.'cfg(target_os="android")'.dependencies]
-jni = { workspace = true }
-android_logger = { workspace = true }

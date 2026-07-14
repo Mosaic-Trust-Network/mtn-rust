@@ -1,25 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-    "coeus-node",
-    "coeus-proto",
-    "hydra-proto",
-    "hydra-sdk",
-    "journal-proto",
-    "json-digest-wasm",
     "json-digest",
     "keyvault",
-    "keyvault-wasm",
-    "morpheus-node",
-    "morpheus-proto",
-    "morpheus-sdk",
     "mosaic-did-types",
-    "node-wasm",
     "pallet-mosaic-did",
-    "proto-wasm",
     "sdk",
-    "sdk-ffi",
-    "sdk-wasm",
     "vault"
 ]
 
@@ -28,25 +14,12 @@ version = "0.0.17"
 rust-version = "1.88"
 edition = "2024"
 repository = "https://github.com/Internet-of-People/iop-rs"
-authors = ["IOP Ventures LLC <dev@iop-ventures.com>"]
 license = "LGPL-3.0-or-later"
 homepage = "https://developer.iop.technology/glossary?id=multicipher"
 
 [workspace.dependencies]
-iop-coeus-node = { version = "0.0.17" }
-iop-coeus-proto = { version = "0.0.17" }
-iop-hydra-proto = { version = "0.0.17" }
-iop-hydra-sdk = { version = "0.0.17" }
-iop-journal-proto = { version = "0.0.17" }
 iop-keyvault = { version = "0.0.17", default-features = false }
-iop-keyvault-wasm = { version = "0.0.17" }
-iop-morpheus-node = { version = "0.0.17" }
-iop-morpheus-proto = { version = "0.0.17" }
-iop-morpheus-sdk = { version = "0.0.17" }
-iop-node-wasm = { version = "0.0.17" }
-iop-proto-wasm = { version = "0.0.17" }
 iop-vault = { version = "0.0.17" }
-json-digest-wasm = { version = "0.0.17" }
 json-digest = { version = "0.0.17" }
 mosaic-did-types = { version = "0.0.17", default-features = false }
 pallet-mosaic-did = { version = "0.0.17" }
@@ -56,7 +29,6 @@ anyhow = { version = "1.0.98", default-features = false }
 blake2 = { version = "0.10.6", default-features = false }
 blake3 = { version = "1", default-features = false }
 byteorder = { version = "1.5.0" }
-chrono = { version = "0.4.41", features = ["wasmbind"] }
 digest = { version = "0.10.7", default-features = false, features = ["mac"] }
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["alloc"] }
 getrandom = { version = "0.4.1", default-features = false, features = ["wasm_js"]}
@@ -64,8 +36,6 @@ getrandom-2 = { package = "getrandom", version = "0.2", default-features = false
 hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
 hmac = { version = "0.12.1", default-features = false }
 jni = { version = "0.21.1", default-features = false }
-jwt-compact = { version = "0.8.0", default-features = false }
-js-sys = { version = "0.3" }
 k256 = { version = "0.13.4", default-features = false, features = ["alloc", "arithmetic", "ecdsa"] }
 multibase = { version = "0.9.1", default-features = false }
 orion = { version = "0.17.11" }
@@ -79,14 +49,10 @@ scale-info = { version = "2", default-features = false, features = ["derive"] }
 serde = { version = "1.0.219", default-features = false, features = ["derive", "alloc"] }
 serde_bytes = { version = "0.11.17", default-features = false, features = ["alloc"]}
 serde_json = { version = "1.0.142", default-features = false, features = ["preserve_order", "alloc"] }
-serde_repr = { version = "0.1.20", default-features = false }
-serde_str = { version = "0.1.0", default-features = false }
-serde-wasm-bindgen = { version = "0.6.5" }
 sha2 = { version = "0.10.9", default-features = false }
 bip39 = { package = "tiny-bip39", version = "2.0.0", features = ["rand"], default-features = false }
 typetag = { version = "0.2.20" }
 varint =  { version = "0.9.0" }
-wasm-bindgen = { version = "0.2.100" }
 
 # Experiment for optimizing WASM and FFI binary sizes
 [profile.release]
@@ -95,20 +61,8 @@ opt-level = 's'
 
 [patch.crates-io]
 core2 = { path = "./vendor/core2-0.4.0" }
-iop-coeus-node = { path = "./coeus-node" }
-iop-coeus-proto = { path = "./coeus-proto" }
-iop-hydra-proto = { path = "./hydra-proto" }
-iop-hydra-sdk = { path = "./hydra-sdk" }
-iop-journal-proto = { path = "./journal-proto" }
 iop-keyvault = { path = "./keyvault" }
-iop-keyvault-wasm = { path = "./keyvault-wasm" }
-iop-morpheus-node = { path = "./morpheus-node" }
-iop-morpheus-proto = { path = "./morpheus-proto" }
-iop-morpheus-sdk = { path = "./morpheus-sdk" }
-iop-node-wasm = { path = "./node-wasm" }
-iop-proto-wasm = { path = "./proto-wasm" }
 iop-vault = { path = "./vault" }
-json-digest-wasm = { path = "./json-digest-wasm" }
 json-digest = { path = "./json-digest" }
 mosaic-did-types = { path="./mosaic-did-types" }
 pallet-mosaic-did = { path="./pallet-mosaic-did" }

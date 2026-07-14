@@ -233,6 +233,7 @@ mod test {
         }
     }
 
+    #[cfg(feature = "serde")]
     mod serde_public_key {
         use crate::multicipher::MSignature;
 

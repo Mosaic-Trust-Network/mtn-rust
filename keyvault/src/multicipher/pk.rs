@@ -306,6 +306,7 @@ mod test {
         }
     }
 
+    #[cfg(feature = "serde")]
     mod serde_key_id {
         use crate::multicipher::MPublicKey;
 

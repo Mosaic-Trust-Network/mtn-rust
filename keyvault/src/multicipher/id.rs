@@ -286,6 +286,7 @@ mod test {
             assert_ne!(legacy_id, m_id);
         }
 
+        #[cfg(feature = "serde")]
         #[test]
         fn blake3_serde_roundtrip() {
             let pk_bytes =
@@ -301,6 +302,7 @@ mod test {
         }
     }
 
+    #[cfg(feature = "serde")]
     mod serde_key_id {
         use crate::multicipher::MKeyId;
 
