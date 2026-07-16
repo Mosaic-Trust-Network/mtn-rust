@@ -394,9 +394,12 @@ Announce(did, op) → deposit locked → delay window (N blocks)
 ```
 
 Only one governed operation can be pending per DID at a time. The delay, expiry,
-and deposit are shared governance parameters. The gas-wallet separation ensures
-that a compromised DID key (which announces) cannot drain the deposit — only
-the gas wallet can cancel.
+and deposit are shared governance parameters. The deposit discourages adversary
+announcements, because whoever cancels the governed operation wins the deposit
+as a bounty for stopping an attack. Since gas-wallets are unrelated to DID keys,
+hopefully not both get compromised at once. If governed operations are done in
+consensus among DID controllers, the deposit is returned to the announcer upon
+execution of the operation.
 
 The governed operations are defined by an enum:
 
@@ -422,7 +425,8 @@ A DID controller announces a `CommitmentReset` when the commitment hash chain
 needs to restart — for example, if a bug in document creation corrupts the
 chain (wrong `previousCommitment`, invalid structure) or if the controller's
 Update key is compromised and the controller needs to establish a new starting
-point for the commitment history.
+point for the commitment history after it regained control and removed the
+compromised key.
 
 The announcement carries the new `commitment` hash and `sequence` upfront.
 Key holders who have rights in the current commitment document see the
@@ -445,8 +449,8 @@ state for historical verification.
 
 Without the delay, a compromised Update key could tombstone the DID instantly,
 leaving the controller with no recourse. The delay gives the controller time to
-detect and cancel via the gas wallet, using the same deposit-separation
-mechanism as `CommitmentReset`.
+detect and cancel winning the announcement deposit, using the same
+deposit-separation mechanism as `CommitmentReset`.
 
 ##### Lifecycle rules
 
@@ -692,7 +696,7 @@ AnnounceGoverned {
 **State change:**
 
 - Sets `DidState.pending_operation = Some(PendingGovernedOp {
-  operation, announced_at_height, deposit_account })`.
+  operation, announced_at_height, deposit_account, deposit_amount })`.
 - The deposit is locked — not transferred to any account.
 
 **Event:** `GovernedOpAnnounced { did, operation: GovernedOperation,
@@ -709,15 +713,14 @@ CancelGoverned {
 **Validation:**
 
 1. A pending governed operation must exist for this DID.
-2. The transaction MUST be signed by the gas wallet matching the
-   `deposit_account` recorded in the pending operation. The DID's Update key
-   alone is insufficient — this is the cryptographic separation that protects
-   the deposit.
+2. Signer MUST hold `Right::Update`.
 
 **State change:**
 
 - Clears `DidState.pending_operation`.
-- Transfers the held deposit to the gas wallet that submitted the cancel.
+- Transfers the unheld `deposit_amount` to the gas wallet that submitted the
+  cancel (amount should be GOVERNED_OP_DEPOSIT, unless that constant was
+  changed by a runtime upgrade or dynamic parameter change).
 
 **Event:** `GovernedOpCancelled { did, previous_version_id }`.
 
@@ -1580,9 +1583,10 @@ Key decisions:
   lifecycle backed by an economic deposit. The `GovernedOperation` enum makes
   the set extensible. The mandatory delay gives affected parties time to react;
   the deposit deters frivolous use; the cryptographic separation between DID
-  keys (which announce) and gas wallets (which cancel) provides
-  defense-in-depth. Only one governed operation can be pending per DID at a
-  time, with shared delay, expiry, and deposit parameters.
+  keys (which sign operations) and gas wallets (which pay deposit) provides
+  some help if only one of the keys were compromised. Only one governed
+  operation can be pending per DID at a time, with shared delay, expiry, and
+  deposit parameters.
 - **Right maturity delay** (§4.1.1) — newly granted Update and Delegate rights
   cannot be exercised until a governance-defined number of blocks have elapsed.
   Combined with the reset deposit mechanism, this gives a controller time to
