@@ -22,7 +22,7 @@ The `rights: BoundedVec<RightGrant, 64>` in `DidState` is currently the only
 mechanism. It forces every right grant — even purely off-chain ones — to consume
 a bounded storage slot. The commitment model (§3) adds a second mechanism. The
 two coexist via **union semantics:** a right is valid if it appears in either the
-on-chain state or the current commitment document (§3.9).
+on-chain state or the current commitment document (§3.7).
 
 ---
 
@@ -42,7 +42,7 @@ The *genesis state* of any DID is:
 | `keys` | One implicit entry: `key_ref = iozABC...`, `key_type = Ed25519`, `public_key = <the pk>` |
 | `rights` | Empty (no on-chain grants) |
 | `commitment` | `None` |
-| Rights held by default key | Update, Impersonate, Delegate (implicit, per `has_right_at` check 3 in §3.9) |
+| Rights held by default key | Update, Impersonate, Delegate (implicit, per `has_right_at` check 3 in §3.7) |
 | `last_modified_at` | `(0, 0)` — genesis, no on-chain operation |
 | `tombstoned_at_height` | `None` |
 
@@ -90,6 +90,9 @@ pub struct DidState {
     pub commitment: Option<(u64, ContentId)>,
     //                     ^^^^  ^^^^^^^^^
     //                   sequence  blake3(structured(rights-document))
+
+    /// Pending governed operation, if one has been announced (§3.6.1).
+    pub pending_operation: Option<PendingGovernedOp>,
 
     /// Block height and extrinsic index of the most recent state change.
     /// Used by the rewind algorithm (§3.2) to check whether the current state
@@ -194,7 +197,9 @@ KeyRevoked         { ..., previous_version_id: Option<(u32, u32)> }
 RightAdded         { ..., previous_version_id: Option<(u32, u32)> }
 RightRevoked       { ..., previous_version_id: Option<(u32, u32)> }
 CommitmentUpdated  { ..., previous_version_id: Option<(u32, u32)> }
-DidTombstoned      { ..., previous_version_id: Option<(u32, u32)> }
+GovernedOpAnnounced { ..., previous_version_id: Option<(u32, u32)> }
+GovernedOpCancelled { ..., previous_version_id: Option<(u32, u32)> }
+GovernedOpExecuted  { ..., previous_version_id: Option<(u32, u32)> }
 ```
 
 The `previous_version_id` is the value of `last_modified_at` *before* this
@@ -213,8 +218,9 @@ enum DidOperation {
 
     /// Publish a new rights-document commitment.
     ///
-    /// Requires Right::Update. The `sequence` MUST be strictly greater than
-    /// the stored sequence (monotonic, prevents replay of older commitments).
+    /// Requires Right::Update. The `sequence` MUST equal `stored_sequence + 1`
+    /// — no gaps. Every sequence number must be anchored on-chain for the
+    /// verifier to have a provable timestamp for that version.
     UpdateCommitment {
         did: Did,
         commitment: ContentId,
@@ -242,13 +248,24 @@ CommitmentUpdated {
 2. **Signer MUST hold `Right::Update`** at the current block height.
 3. **Nonce check** — `signed_op.nonce > stored_nonce`.
 4. **Signature verification** against the signer's public key in `DidState.keys`.
-5. **Sequence MUST be > `stored_sequence`** (gaps allowed; monotonicity is sufficient).
+5. **Sequence MUST equal `stored_sequence + 1`** — gapless. The first
+   commitment must carry `sequence = 1` (`stored_sequence` defaults to 0 when
+   `commitment` is `None`). This guarantees every commitment version has a
+   provable on-chain anchor. A rights document whose sequence was never submitted
+   via a `CommitmentUpdated` event has no timestamp and is rejected in
+   time-bounded verification (§7.2 Step 4).
 
 Each `UpdateCommitment` is a **full replacement** of the rights document, not a
 delta. A new commitment implicitly revokes all rights from the previous one. To
 keep a right, the DID controller must include it in the new document. The pallet
 does not validate the commitment content — it only enforces the sequence
-monotonicity and the signer's Update right.
+continuity and the signer's Update right.
+
+The gapless rule does not make the sequence number superfluous. The pallet's
+consensus logic cannot inspect the private off-chain `previousCommitment`
+hashlink. The sequence provides the ordering signal visible to consensus; the
+hash chain provides the integrity binding visible to verifiers. They serve
+different trust domains.
 
 ### 3.5 The off-chain rights document
 
@@ -268,18 +285,19 @@ canonicalises to a `json_digest::JsonDigest`:
 }
 ```
 
-- **`sequence`** — matches the on-chain sequence; the pallet enforces monotonicity.
-- **`previousCommitment`** — hash-chains to the immediate predecessor in the
-  document chain, NOT the on-chain predecessor. If sequences 1 and 5 are
-  anchored on-chain (gap of 2, 3, 4 unanchored), document 5's
-  `previousCommitment` MUST still point to the hash of document 4 — the prior
-  document in the full chain. The verifier detects omission: if a presenter shows
-  sequence 1 as the predecessor of their sequence-5 document, the verifier sees
-  `blake3_struct(D1) ≠ D5.previousCommitment` and demands the intermediate
-  document to close the chain.
+- **`sequence`** — matches the on-chain sequence. The pallet enforces `sequence ==
+  stored_sequence + 1` (gapless — §3.4). Every sequence number is anchored
+  on-chain via a `CommitmentUpdated` event. A rights document with a sequence
+  that has no matching on-chain event has no provable timestamp and is rejected
+  in time-bounded verification.
+- **`previousCommitment`** — the content ID of the rights document at
+  `sequence - 1`. For sequence 1, `previousCommitment` is `null` (there is no
+  predecessor). For every subsequent sequence N, this MUST equal
+  `blake3_struct(D_{N-1})`. The verifier checks this chain to confirm that no
+  intermediate versions have been omitted (§3.6).
 - **`rights`** — maps key references to the set of rights that key holds.
   Update/Delegate are not duplicated here; verifiers check those against on-chain
-  state per the union model (§3.9).
+  state per the union model (§3.7).
 
 Canonicalization: `json_digest` (NFKD-normalized, sorted keys, BLAKE3-256
 Merkle tree). Produces a `ContentId::Structured(JsonDigest::Blake3(hash))`:
@@ -335,53 +353,120 @@ revocation. The hash chain closes this gap:
 
 ```
 D1: { sequence: 1, previousCommitment: null, rights: {key: impersonate} }
-    → cmAAAA
-D2: { sequence: 2, previousCommitment: "cmAAAA", rights: {} }   // revoked privately
-    → cmBBBB
+    → cmAAAA   (anchored on-chain at block 100)
+D2: { sequence: 2, previousCommitment: "cmAAAA", rights: {} }
+    → cmBBBB   (anchored on-chain at block 150 — revocation)
 D3: { sequence: 3, previousCommitment: "cmBBBB", rights: {key: impersonate} }
-    → cmCCCC  (anchored on-chain)
+    → cmCCCC   (anchored on-chain at block 200)
 ```
 
 If the presenter provides only D1 and D3 (hiding the revocation in D2):
 `blake3_struct(D1) = "cmAAAA" ≠ D3.previousCommitment = "cmBBBB"` → **gap
 detected.** The verifier demands D2, which reveals the revocation.
 
-**The indexer only records which sequences were anchored on-chain and at which
-blocks.** It does not verify the hash chain — it cannot, because the documents
+Because sequences are gapless (§3.4), every version from 1 to the current
+sequence has a `CommitmentUpdated` event on-chain with a provable block height.
+The indexer records the full timeline. A verifier doing time-bounded
+verification (§7.2 Step 4) checks every anchored commitment active in the
+interval. The hash chain ensures the presenter cannot substitute or omit any of
+them.
+
+The indexer does not verify the hash chain — it cannot, because the documents
 are private. The hash chain is for the verifier to enforce completeness when the
 presenter provides documents.
 
-A rights document that is never anchored on-chain has no provable signer
-identity and no provable timestamp. Only the `CommitmentUpdated` event provides
-both: `signer_key_ref` proves which Update-right key authorized it, and
-`block_height` proves when. This is why §7.2 Step 4 rejects unanchored sequences
-in time-bounded verification.
+For privacy, any intermediate document can have its entries masked as Merkle
+hashes (§3.5.1). The presenter receives the document from the controller with
+all entries except their own already hashed. The verifier confirms
+`blake3_struct(Di)` matches `D_{i+1}.previousCommitment` — without learning
+about other key holders.
 
-However, an unanchored document is not worthless as evidence. If D3 is anchored,
-its content ID (which includes `previousCommitment`) is permanently recorded
-on-chain. The presenter cannot alter D3 without changing its content ID, which
-would break the anchoring proof. Therefore D3's `previousCommitment`
-cryptographically binds D2: the presenter must provide the real D2 because
-`blake3_struct(D2_fake) ≠ D3.previousCommitment`.
+#### 3.6.1 Governed operations
 
-D2 thus provides:
-- **Content trust:** the hash chain prevents fabrication of rights the controller never set.
-- **Temporal bounding:** D2 was created after D1 and before D3 was anchored. The exact block height is unknown, but the order is provable.
+Certain state changes are destructive enough that a compromised Update key must
+not be able to execute them instantly. Tombstoning and commitment resets share
+this property. They follow a common **governed operation** pattern:
 
-For privacy, D2 need not reveal any rights entries. The presenter received D2
-from the controller with all entries except their own already masked as Merkle
-hashes. The verifier confirms `blake3_struct(D2)` matches
-`D3.previousCommitment` — without learning about other key holders.
+```
+Announce(did, op) → deposit locked → delay window (N blocks)
+  ├─ Cancel(did)  → deposit → gas wallet
+  └─ Execute(did) → deposit → announcer, change takes effect
+```
 
-#### 3.6.1 Chain restart
+Only one governed operation can be pending per DID at a time. The delay, expiry,
+and deposit are shared governance parameters. The gas-wallet separation ensures
+that a compromised DID key (which announces) cannot drain the deposit — only
+the gas wallet can cancel.
 
-If a bug in document creation breaks the hash chain (wrong `previousCommitment`,
-invalid structure, lost documents), the DID controller can restart the chain by
-publishing a new commitment with `previousCommitment: null`. This explicitly
-abandons all prior documents. The verifier accepts a null-predecessor document
-provided it was anchored on-chain (the `CommitmentUpdated` event proves who
-signed it and when). The `sequence` still bumps — the pallet only enforces
-monotonicity, not chain continuity.
+The governed operations are defined by an enum:
+
+```rust
+enum GovernedOperation {
+    CommitmentReset {
+        reason: ContentId,
+        commitment: ContentId,
+        sequence: u64,
+    },
+    Tombstone,
+}
+```
+
+Three generic pallet operations — `AnnounceGoverned`, `CancelGoverned`,
+`ExecuteGoverned` — drive the lifecycle for any variant. The pallet does not
+need per-variant validation; it delegates to the variant's own rules at
+execution time.
+
+##### CommitmentReset
+
+A DID controller announces a `CommitmentReset` when the commitment hash chain
+needs to restart — for example, if a bug in document creation corrupts the
+chain (wrong `previousCommitment`, invalid structure) or if the controller's
+Update key is compromised and the controller needs to establish a new starting
+point for the commitment history.
+
+The announcement carries the new `commitment` hash and `sequence` upfront.
+Key holders who have rights in the current commitment document see the
+`GovernedOpAnnounced` event and have the delay window to register `BeforeProof`s
+for their existing documents (§6.3), anchoring their rights with provable
+timestamps before the reset takes effect.
+
+When `ExecuteGoverned` fires after the delay, the pallet validates
+`sequence == stored_sequence + 1` (§3.4) and stores the new commitment. The
+`GovernedOpExecuted` event carries the `CommitmentReset` variant, telling
+verifiers that this commitment's off-chain document carries
+`previousCommitment: null` by design, not by error.
+
+##### Tombstone
+
+A Tombstone governed operation permanently deactivates the DID. After the delay
+elapses and execution succeeds, no further operations are accepted on the DID.
+The last commitment, keys, and rights remain permanently queryable from on-chain
+state for historical verification.
+
+Without the delay, a compromised Update key could tombstone the DID instantly,
+leaving the controller with no recourse. The delay gives the controller time to
+detect and cancel via the gas wallet, using the same deposit-separation
+mechanism as `CommitmentReset`.
+
+##### Lifecycle rules
+
+- **Only one pending governed operation per DID.** A second `AnnounceGoverned`
+  while one is pending is rejected.
+- **Execution window.** `ExecuteGoverned` is only valid between
+  `announcement_block + GOVERNED_OP_DELAY_BLOCKS` and
+  `announcement_block + GOVERNED_OP_EXPIRY_BLOCKS`. After expiry, the
+  announcement lapses and the deposit is forfeited.
+- **Deposit.** `GOVERNED_OP_DEPOSIT` is a governance parameter shared by all
+  variants. It must be high enough to deter frivolous use but not punitive for
+  legitimate operations.
+- **`previousCommitment: null` is only valid at sequence 1 and at a
+  `CommitmentReset`.** Any other commitment document with a null predecessor is
+  structurally invalid — the verifier rejects it.
+
+Every commitment either chains to its immediate predecessor via
+`previousCommitment`, or — at sequence 1 and at a `CommitmentReset` — carries
+`null` backed by a `GovernedOpExecuted::CommitmentReset` event proving the
+break was governed.
 
 ### 3.7 Union semantics — the commitment and on-chain rights coexist
 
@@ -454,6 +539,45 @@ DIDs that use the commitment document for off-chain rights will have few entries
 (only Update/Delegate grants, typically 1–4). DIDs that need on-chain visibility
 for all rights can still use the full budget.
 
+#### 4.1.1 Right maturity delay
+
+When a DID controller grants `Update` or `Delegate` rights to a key via
+`AddRight`, the key cannot exercise those rights immediately. A **maturity
+delay** of `RIGHT_MATURITY_BLOCKS` must elapse between the `RightAdded` event
+and the first operation signed by that key.
+
+The delay applies only to `Update` and `Delegate` — the two rights enforced by
+consensus. It does not apply to off-chain rights (Impersonate, Issue, Revoke)
+because those are checked by verifiers, not the pallet.
+
+**Why a delay?** The controller who adds a new key is typically the same entity
+that held the previous Update key. If the previous key was compromised, the
+controller needs time to detect and react. The maturity window gives the
+original controller an interval during which they can revoke a maliciously added
+key before it can sign operations. Combined with the commitment reset deposit
+mechanism (§3.6.1), this creates a defense-in-depth against single-key
+compromise.
+
+**Pallet enforcement:**
+
+- `RightAdded` event carries `matures_at_height = current_height +
+  RIGHT_MATURITY_BLOCKS`.
+- `DidState.rights` stores `matures_at_height` in the `RightGrant` struct.
+- Every operation that checks `Right::Update` or `Right::Delegate` must verify
+  that `matures_at_height ≤ current_height`. If the right has not yet matured,
+  the operation is rejected.
+- `RIGHT_MATURITY_BLOCKS` is a governance parameter. It should be long enough
+  for a diligent controller to detect and react (hours to days, not minutes).
+
+**Interaction with implicit rights:** The initial key holds implicit Update and
+Delegate from genesis (§2). These have no maturity delay — they are valid from
+height 0.
+
+**Interaction with commitment reset:** If a controller's Update key is
+compromised and the controller announces a `CommitmentReset`, the maturity delay
+on any newly added Update keys runs concurrently with the reset announcement
+delay. By the time the reset executes, the new key's rights will have matured.
+
 ### 4.2 Pruning revoked entries from bounded vectors
 
 Both `DidState.keys` (bounded at 32) and `DidState.rights` (bounded at 64)
@@ -525,14 +649,111 @@ registration by `KeyId` (the 32-byte hash): the chain stores only the hash, and
 the full public key is stored in `DidState.keys` only when the key signs its
 first on-chain operation.
 
-### 4.5 Tombstoning interaction
+### 4.5 Tombstoning
 
-After tombstoning, the `commitment` field is frozen (no more
-`UpdateCommitment` operations are accepted). A verifier evaluating a
-pre-tombstone claim uses the commitment that was active at that height
-(queried from an indexer). The tombstoned DID's last commitment remains
-permanently queryable from on-chain state, all keys and rights are effectively
-revoked on this DID though.
+Tombstoning permanently deactivates the DID. After execution, no further
+operations are accepted on the DID. The last commitment, keys, and rights
+remain permanently queryable from on-chain state for historical verification.
+
+Tombstoning uses the governed operation pattern (§3.6.1). The controller
+announces `GovernedOperation::Tombstone` via `AnnounceGoverned`, locking the
+deposit. During the delay window, a compromised Update key cannot accelerate the
+tombstone, and the legitimate controller can cancel via `CancelGoverned` using
+the gas wallet. After the delay elapses, `ExecuteGoverned` applies the
+tombstone: `DidState.tombstoned_at_height` is set to the current block height,
+the commitment field is frozen, and all keys and rights are effectively revoked.
+The deposit is released back to the announcer.
+
+A verifier evaluating a pre-tombstone claim uses the commitment that was active
+at that height (queried from an indexer). Post-tombstone resolution returns a
+deactivated DID document with `deactivated: true`.
+
+### 4.6 Governed operations — pallet logic
+
+The three operations driving the governed-operation lifecycle are generic across
+all `GovernedOperation` variants:
+
+#### 4.6.1 `AnnounceGoverned`
+
+```rust
+AnnounceGoverned {
+    did: Did,
+    operation: GovernedOperation,
+}
+```
+
+**Validation:**
+
+1. DID must exist and not be tombstoned.
+2. Signer MUST hold `Right::Update`.
+3. No pending governed operation already exists for this DID.
+4. The caller must attach a deposit ≥ `GOVERNED_OP_DEPOSIT` (held in pallet escrow).
+
+**State change:**
+
+- Sets `DidState.pending_operation = Some(PendingGovernedOp {
+  operation, announced_at_height, deposit_account })`.
+- The deposit is locked — not transferred to any account.
+
+**Event:** `GovernedOpAnnounced { did, operation: GovernedOperation,
+  announced_at_height, deposit, previous_version_id }`.
+
+#### 4.6.2 `CancelGoverned`
+
+```rust
+CancelGoverned {
+    did: Did,
+}
+```
+
+**Validation:**
+
+1. A pending governed operation must exist for this DID.
+2. The transaction MUST be signed by the gas wallet matching the
+   `deposit_account` recorded in the pending operation. The DID's Update key
+   alone is insufficient — this is the cryptographic separation that protects
+   the deposit.
+
+**State change:**
+
+- Clears `DidState.pending_operation`.
+- Transfers the held deposit to the gas wallet that submitted the cancel.
+
+**Event:** `GovernedOpCancelled { did, previous_version_id }`.
+
+#### 4.6.3 `ExecuteGoverned`
+
+```rust
+ExecuteGoverned {
+    did: Did,
+}
+```
+
+**Validation:**
+
+1. A pending governed operation must exist for this DID.
+2. `current_height` must be ≥ `announced_at_height + GOVERNED_OP_DELAY_BLOCKS`
+   and ≤ `announced_at_height + GOVERNED_OP_EXPIRY_BLOCKS`.
+3. Signer MUST hold `Right::Update`.
+4. Variant-specific validation:
+    - `CommitmentReset`: `sequence == stored_sequence + 1` (§3.4).
+    - `Tombstone`: no additional validation.
+
+If the execution window has expired, the operation is rejected. The expired
+announcement is cleaned up and the deposit is forfeited.
+
+**State change:**
+
+- Clears `DidState.pending_operation`.
+- Applies the variant-specific state change.
+- Updates `DidState.last_modified_at`.
+- Releases the deposit back to the original `deposit_account`.
+
+**Event:** `GovernedOpExecuted { did, operation: GovernedOperation,
+  signer_key_ref, block_height, previous_version_id }`.
+
+The `GovernedOpExecuted` event carries the variant discriminator — indexers and
+verifiers inspect it to determine the nature of the state change.
 
 ---
 
@@ -560,14 +781,22 @@ language-independent.
 The pallet emits the following SCALE-encoded events:
 
 ```
-CommitmentUpdated { did, commitment, sequence, signer_key_ref,
-                    block_height, previous_version_id }
-KeyAdded          { did, key_ref, key_type, public_key, purposes,
-                    block_height, previous_version_id }
-KeyRevoked        { did, key_ref, block_height, previous_version_id }
-RightAdded        { did, key_ref, right, block_height, previous_version_id }
-RightRevoked      { did, key_ref, right, block_height, previous_version_id }
-DidTombstoned     { did, block_height, previous_version_id }
+CommitmentUpdated          { did, commitment, sequence, signer_key_ref,
+                             block_height, previous_version_id }
+GovernedOpAnnounced        { did, operation: GovernedOperation,
+                             announced_at_height, deposit,
+                             previous_version_id }
+GovernedOpCancelled        { did, previous_version_id }
+GovernedOpExecuted         { did, operation: GovernedOperation,
+                             signer_key_ref, block_height,
+                             previous_version_id }
+KeyAdded                   { did, key_ref, key_type, public_key, purposes,
+                             block_height, previous_version_id }
+KeyRevoked                 { did, key_ref, block_height, previous_version_id }
+RightAdded                 { did, key_ref, right, block_height,
+                             previous_version_id }
+RightRevoked               { did, key_ref, right, block_height,
+                             previous_version_id }
 ```
 
 From this stream, the indexer builds:
@@ -633,7 +862,7 @@ impl DidHistory {
 
     /// Check whether a key held a specific right at `height`.
     ///
-    /// Union semantics (§3.9): checks on-chain `RightGrant` entries first,
+    /// Union semantics (§3.7): checks on-chain `RightGrant` entries first,
     /// then falls through to the commitment document.
     pub fn has_right_at(
         &self,
@@ -1106,10 +1335,10 @@ verify_right(presentationProof, right):
     │   Determine ALL *anchored* commitments active in [H_start,   │
     │   H_end] from the indexer's DidHistory.                      │
     │                                                              │
-    │   ⚠ Unanchored sequence rule: a commitment version without   │
-    │   an on-chain CommitmentUpdated event has no provable        │
-    │   timestamp. The verifier MUST reject if any commitment      │
-    │   active in [H_start, H_end] is unanchored.                  │
+    │   ⚠ A rights document whose sequence has no matching           │
+    │   CommitmentUpdated event on-chain is structurally invalid      │
+    │   — the pallet enforces gapless sequences (§3.4). The           │
+    │   verifier MUST reject.                                         │
     │                                                              │
     │   Case A — single anchored commitment:                       │
     │     D was active the entire interval.                        │
@@ -1117,7 +1346,7 @@ verify_right(presentationProof, right):
     │                                                              │
     │   Case B — multiple anchored commitments [C1..Ck]:           │
     │     Presenter must provide documents for ALL anchored        │
-    │     versions (gaps rejected).                                │
+    │     versions in the span.                                    │
     │     Verify hash chain: Ci+1.previousCommitment == blake3(Di) │
     │     Verify: EVERY Ci.rights grants (key_ref, right).         │
     │     Each commitment is a full replacement — if any Ci omits  │
@@ -1291,9 +1520,9 @@ consumed unnecessarily.
 
 | Scenario | On-chain right grants | Commitment overhead | Total on-chain footprint |
 |----------|:---------------------:|:-------------------:|--------------------------|
-| Minimal DID (1 key, Update+Delegate implicit) | 0 entries | `(seq, hash)` + `last_modified_at` = 8+32+8 = 48 bytes | 48 bytes |
-| Typical DID (2 keys, 1 Delegate grant on-chain, 2 Impersonate keys via commitment) | 1 entry (~77 bytes) | 48 bytes | 125 bytes |
-| All-rights-on-chain DID (3 keys, 5 rights each, 15 grants) | 15 entries (~1155 bytes) | 0 bytes (null commitment) | 1155 bytes |
+| Minimal DID (1 key, Update+Delegate implicit) | 0 entries | `(seq, hash)` + `last_modified_at` + `pending_operation` = 8+32+8+~48 = ~96 bytes | 96 bytes |
+| Typical DID (2 keys, 1 Delegate grant on-chain, 2 Impersonate keys via commitment) | 1 entry (~77 bytes) | ~96 bytes | 173 bytes |
+| All-rights-on-chain DID (3 keys, 5 rights each, 15 grants) | 15 entries (~1155 bytes) | 0 bytes (null commitment, null pending_operation) | 1155 bytes |
 
 **Key insight:** DIDs that use the commitment path save on-chain storage
 proportional to the number of off-chain rights they hold. DIDs that need all
@@ -1302,8 +1531,9 @@ overhead is zero for them.
 
 The net state addition per DID that uses commitments:
 - `commitment: Option<(u64, ContentId)>` (1 + 8 + 32 = 41 bytes if `Some`)
+- `pending_operation: Option<PendingGovernedOp>` (~48 bytes if `Some`)
 - `last_modified_at: (u32, u32)` (8 bytes)
-- Total: ~49 bytes (trivial)
+- Total: ~49 bytes when no governed operation is pending, ~97 bytes during an active one
 
 `previous_version_id` is carried in events only (§3.3), not in storage. Writes
 to different extrinsics in the same block that modify the same DID would
@@ -1316,8 +1546,9 @@ independently in the block body.
 
 This pallet has not been deployed to production. All features described in this
 document — the commitment model, union semantics, `previous_version_id` event
-chain, selective disclosure, and time-bounding composability — are part of the
-initial design, not retrofits. No migration is needed.
+chain, selective disclosure, time-bounding composability, gapless sequence
+enforcement, commitment reset protocol, and right maturity delay — are part of
+the initial design, not retrofits. No migration is needed.
 
 Key decisions:
 
@@ -1325,7 +1556,7 @@ Key decisions:
   The plan does not change it. DIDs that use the commitment path for off-chain
   rights will have fewer on-chain entries; DIDs that need all rights on-chain
   use the full budget.
-- **Union semantics** (§3.9) — on-chain `RightGrant` entries and the off-chain
+- **Union semantics** (§3.7) — on-chain `RightGrant` entries and the off-chain
   commitment document are additive. A right is valid if it appears in either.
   The pallet validates only Update and Delegate (consensus requirement); all six
   rights can be stored on-chain via `AddRight`.
@@ -1339,6 +1570,24 @@ Key decisions:
 - **`previousCommitment` hash chain** (§3.6) — prevents presenters from
   selectively omitting revocations. The indexer cannot verify it (documents are
   private), so the chain is a presenter-to-verifier guarantee.
+- **Gapless sequence enforcement** (§3.4) — every sequence number must be
+  anchored on-chain. A rights document without a matching `CommitmentUpdated`
+  event has no provable timestamp and is rejected in time-bounded verification.
+  Gaps would allow presenters to claim that an unanchored intermediate version
+  granted a right when no on-chain evidence exists for that version.
+- **Governed operation pattern** (§3.6.1) — destructive state changes
+  (commitment resets, tombstones) follow a shared Announce → Delay → Execute
+  lifecycle backed by an economic deposit. The `GovernedOperation` enum makes
+  the set extensible. The mandatory delay gives affected parties time to react;
+  the deposit deters frivolous use; the cryptographic separation between DID
+  keys (which announce) and gas wallets (which cancel) provides
+  defense-in-depth. Only one governed operation can be pending per DID at a
+  time, with shared delay, expiry, and deposit parameters.
+- **Right maturity delay** (§4.1.1) — newly granted Update and Delegate rights
+  cannot be exercised until a governance-defined number of blocks have elapsed.
+  Combined with the reset deposit mechanism, this gives a controller time to
+  detect and revoke rights added by a compromised key before those rights can be
+  used.
 - **Zero-transaction DID** (§2) — DIDs are verifiable before on-chain
   registration. The initial `AddKey` is a registration, not a creation.
 
@@ -1350,16 +1599,25 @@ Key decisions:
 
 | Change | Crate(s) | Effort |
 |--------|----------|--------|
-| Add `commitment` and `last_modified_at` to `DidState` | `mosaic-did-types` | Small — two fields on `DidState` |
+| Add `commitment`, `last_modified_at`, and `pending_operation` to `DidState` | `mosaic-did-types` | Small — three fields on `DidState` |
+| Add `matures_at_height` to `RightGrant` struct | `mosaic-did-types` | Small — one field |
+| Add `GovernedOperation` enum and `PendingGovernedOp` struct | `mosaic-did-types` | Small — new types |
 | Add `UpdateCommitment` variant to `DidOperation` | `mosaic-did-types` | Small — new enum variant |
-| Add `CommitmentUpdated` variant to pallet `Event` | `pallet-mosaic-did` | Small — new event variant |
+| Add `AnnounceGoverned`, `CancelGoverned`, `ExecuteGoverned` variants to `DidOperation` | `mosaic-did-types` | Small — three new enum variants |
+| Add `CommitmentUpdated`, `GovernedOpAnnounced`, `GovernedOpCancelled`, `GovernedOpExecuted` variants to pallet `Event` | `pallet-mosaic-did` | Small — four new event variants |
 | Add `previous_version_id` to all state-changing events | `pallet-mosaic-did` | Small — one field on each event; populated from `last_modified_at` before the state change |
-| `UpdateCommitment` validation (§3.4) | `pallet-mosaic-did/src/validation.rs` | Small — follows existing validation patterns |
+| `UpdateCommitment` validation (§3.4) — gapless sequence, right maturity check | `pallet-mosaic-did/src/validation.rs` | Small — follows existing validation patterns |
 | `UpdateCommitment` application (mutate `DidState`) | `pallet-mosaic-did/src/lib.rs` | Small — follows `AddRight`/`TombstoneDid` patterns |
+| `AnnounceGoverned` validation + escrow logic | `pallet-mosaic-did` | Medium — new deposit mechanism, pallet-held escrow |
+| `CancelGoverned` validation + deposit release | `pallet-mosaic-did` | Small — deposit transfer, gas-wallet check |
+| `ExecuteGoverned` validation + enforcement of delay window + variant dispatch | `pallet-mosaic-did` | Medium — block-height-gated execution, expiry, variant-specific state changes |
+| Right maturity delay enforcement in `AddRight` and all Update/Delegate checks | `pallet-mosaic-did` | Small — add `matures_at_height ≤ current_height` check |
 | `DidHistory`, `CommitmentVersion`, `KeyLifecycle`, `CommitmentResolver` trait | `mosaic-did-types` | Medium — new types for event-stream reconstruction; `no_std`, no pallet dependency |
 | `DidHistory::has_right_at` union fallthrough (§5.1) | `mosaic-did-types` | Small — on-chain check then `CommitmentResolver` |
 | Test vectors: commitment document → `ContentId` roundtrip | `mosaic-did-types` | Small — pinned golden vectors |
 | Test: `UpdateCommitment` extrinsic happy-path + error cases | `pallet-mosaic-did` | Small — follows existing test patterns |
+| Test: governed operation lifecycle (announce → cancel, announce → execute, announce → expiry) for both CommitmentReset and Tombstone variants | `pallet-mosaic-did` | Medium — multi-block test scenarios |
+| Test: right maturity delay (reject premature use, accept after maturity) | `pallet-mosaic-did` | Small — two core scenarios |
 
 ### Implementation order
 
