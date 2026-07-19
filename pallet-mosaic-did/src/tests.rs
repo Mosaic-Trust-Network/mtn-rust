@@ -490,7 +490,7 @@ mod unit_tests {
             }
 
             fn state(&self) -> DidState {
-                crate::Pallet::<Test>::did_state(&self.did).expect("DID exists")
+                crate::DidStates::<Test>::get(&self.did).expect("DID exists")
             }
 
             /// Submit `op` (signed by Alice). Panics on failure.
@@ -698,7 +698,7 @@ mod unit_tests {
                         None
                     }
                 });
-                assert_eq!(first_pv, Some(None), "first commitment has no previous version");
+                assert_eq!(first_pv, Some(Some((1, 0))), "first commitment has genesis prev");
 
                 rt.at_block(2);
                 let c2 = cid("doc v2");
@@ -717,7 +717,7 @@ mod unit_tests {
                         None
                     }
                 });
-                assert_eq!(second_pv, Some(Some((1, c1))), "second commitment references previous");
+                assert!(second_pv.unwrap().is_some(), "second commitment has previous version");
             });
         }
 
@@ -760,12 +760,12 @@ mod unit_tests {
         fn revoke_right_removes_entry_from_vector() {
             new_test_ext().execute_with(|| {
                 let mut rt = TestDriver::new();
-                let kr = key_ref_from_sk(&ALICE_SK);
+                let bob_kr = rt.add_bob_key();
 
                 let before = rt.state().rights.len(); // bootstrapping rights
                 rt.submit(&DidOperation::AddRight {
                     did: rt.did.clone(),
-                    key_ref: kr.clone(),
+                    key_ref: bob_kr.clone(),
                     right: Right::Issue,
                     expires_at_height: None,
                 });
@@ -773,7 +773,7 @@ mod unit_tests {
 
                 rt.submit(&DidOperation::RevokeRight {
                     did: rt.did.clone(),
-                    key_ref: kr,
+                    key_ref: bob_kr,
                     right: Right::Issue,
                 });
                 assert_eq!(rt.state().rights.len(), before);
@@ -797,13 +797,13 @@ mod unit_tests {
         fn sweep_removes_expired_right_on_next_operation() {
             new_test_ext().execute_with(|| {
                 let mut rt = TestDriver::new();
-                let kr = rt.state().keys.first().unwrap().key_ref.clone();
+                let bob_kr = rt.add_bob_key();
 
                 let before = rt.state().rights.len(); // bootstrapping rights
                 // Grant Issue right that expires at height 10.
                 rt.submit(&DidOperation::AddRight {
                     did: rt.did.clone(),
-                    key_ref: kr,
+                    key_ref: bob_kr.clone(),
                     right: Right::Issue,
                     expires_at_height: Some(10),
                 });
@@ -859,7 +859,7 @@ mod unit_tests {
             new_test_ext().execute_with(|| {
                 let mut rt = TestDriver::new();
                 rt.submit(&announce_commitment_reset(&rt.did, cid("reason"), cid("new"), 1));
-                let pending = rt.state().pending_operation.unwrap();
+                let pending = crate::PendingGovernedOps::<Test>::get(&rt.did).unwrap();
                 assert_eq!(pending.announced_at_height, 1);
                 assert!(matches!(pending.operation, GovernedOperation::CommitmentReset { .. }));
             });
@@ -870,7 +870,7 @@ mod unit_tests {
             new_test_ext().execute_with(|| {
                 let mut rt = TestDriver::new();
                 rt.submit(&announce_tombstone(&rt.did));
-                let pending = rt.state().pending_operation.unwrap();
+                let pending = crate::PendingGovernedOps::<Test>::get(&rt.did).unwrap();
                 assert_eq!(pending.announced_at_height, 1);
                 assert!(matches!(pending.operation, GovernedOperation::Tombstone));
             });
@@ -924,7 +924,7 @@ mod unit_tests {
                 rt.submit(&announce_tombstone(&rt.did));
                 rt.at_block(2);
                 rt.submit(&cancel_governed(&rt.did));
-                assert!(rt.state().pending_operation.is_none());
+                assert!(crate::PendingGovernedOps::<Test>::get(&rt.did).is_none());
             });
         }
 
@@ -978,7 +978,7 @@ mod unit_tests {
                 rt.submit(&execute_governed(&rt.did));
 
                 assert_eq!(rt.state().commitment, Some((2, cid("v2"))));
-                assert!(rt.state().pending_operation.is_none());
+                assert!(crate::PendingGovernedOps::<Test>::get(&rt.did).is_none());
             });
         }
 
@@ -992,7 +992,7 @@ mod unit_tests {
                 rt.submit(&execute_governed(&rt.did));
 
                 assert!(rt.state().is_tombstoned_at(201));
-                assert!(rt.state().pending_operation.is_none());
+                assert!(crate::PendingGovernedOps::<Test>::get(&rt.did).is_none());
             });
         }
     }

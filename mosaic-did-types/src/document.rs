@@ -16,9 +16,7 @@ use scale_info::TypeInfo;
 use serde::{Deserialize, Serialize};
 
 use crate::did::{ContentId, Did, KeyRef};
-use crate::operation::{
-    GovernedOperation, KeyPurpose, KeyType, MAX_PUBLIC_KEY_LEN, MAX_PURPOSES_PER_KEY, Right,
-};
+use crate::operation::{KeyPurpose, KeyType, MAX_PUBLIC_KEY_LEN, MAX_PURPOSES_PER_KEY, Right};
 use crate::validity::is_height_valid;
 
 // ========== PROTOCOL CONSTANTS ==========
@@ -131,24 +129,6 @@ impl RightGrant {
     }
 }
 
-/// A pending governed operation awaiting its delay window.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(
-    feature = "substrate",
-    derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
-)]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
-pub struct PendingGovernedOp {
-    /// The governed operation to execute.
-    pub operation: GovernedOperation,
-    /// Block height at which the operation was announced.
-    pub announced_at_height: u32,
-    /// Account that deposited the announcement bond.
-    pub deposit_account: [u8; 32],
-    /// Deposit amount locked for the governed operation.
-    pub deposit_amount: u128,
-}
-
 /// DID document state with bounded collections.
 ///
 /// Stored directly in pallet storage (`StorageMap<Did, DidState>`) and also
@@ -174,8 +154,6 @@ pub struct DidState {
     /// Latest rights-document commitment published by the DID controller.
     /// `(sequence, commitment_hash)`. `None` means no commitment has ever been published.
     pub commitment: Option<(u64, ContentId)>,
-    /// Pending governed operation, if one has been announced.
-    pub pending_operation: Option<PendingGovernedOp>,
     /// Block height and extrinsic index of the most recent state change.
     /// Used by the rewind algorithm to check whether the current state
     /// covers a given target height.
@@ -192,7 +170,6 @@ impl DidState {
             tombstoned_at_height: None,
             nonces: BoundedBTreeMap::default(),
             commitment: None,
-            pending_operation: None,
             last_modified_at: (0, 0),
         }
     }
@@ -464,7 +441,6 @@ mod tests {
     fn new_state_has_default_commitment_fields() {
         let state = DidState::new(Did::alice());
         assert_eq!(state.commitment, None);
-        assert_eq!(state.pending_operation, None);
         assert_eq!(state.last_modified_at, (0, 0));
     }
 

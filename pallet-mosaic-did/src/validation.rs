@@ -21,7 +21,7 @@ use mosaic_did_types::{
     Did, DidOperation, DidState, KeyType, MultiPublicKey, Right, SignedDidOperation,
 };
 
-use crate::pallet::{Config, DidStates, Error};
+use crate::pallet::{Config, DidStates, Error, PendingGovernedOps};
 
 /// Validate a signed DID operation before applying it.
 ///
@@ -75,7 +75,7 @@ pub fn validate_did_operation<T: Config>(
             }
         }
 
-        DidOperation::RevokeKey { .. } => {
+        DidOperation::RevokeKey { key_ref, .. } => {
             let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
@@ -83,10 +83,11 @@ pub fn validate_did_operation<T: Config>(
                 state.has_right_at(&signed_op.signer_key_ref, Right::Update, height_u32),
                 Error::<T>::InsufficientRight
             );
+            ensure!(signed_op.signer_key_ref != *key_ref, Error::<T>::CannotModifyOwnKey);
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
         }
 
-        DidOperation::AddRight { .. } => {
+        DidOperation::AddRight { key_ref, .. } => {
             let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
@@ -94,10 +95,11 @@ pub fn validate_did_operation<T: Config>(
                 state.has_right_at(&signed_op.signer_key_ref, Right::Delegate, height_u32),
                 Error::<T>::InsufficientRight
             );
+            ensure!(signed_op.signer_key_ref != *key_ref, Error::<T>::CannotModifyOwnKey);
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
         }
 
-        DidOperation::RevokeRight { .. } => {
+        DidOperation::RevokeRight { key_ref, .. } => {
             let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
@@ -105,6 +107,7 @@ pub fn validate_did_operation<T: Config>(
                 state.has_right_at(&signed_op.signer_key_ref, Right::Delegate, height_u32),
                 Error::<T>::InsufficientRight
             );
+            ensure!(signed_op.signer_key_ref != *key_ref, Error::<T>::CannotModifyOwnKey);
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
         }
 
@@ -145,7 +148,10 @@ pub fn validate_did_operation<T: Config>(
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
 
             // Only one pending governed operation per DID
-            ensure!(state.pending_operation.is_none(), Error::<T>::PendingGovernedOpExists);
+            ensure!(
+                PendingGovernedOps::<T>::get(did).is_none(),
+                Error::<T>::PendingGovernedOpExists
+            );
         }
 
         DidOperation::CancelGoverned { did: _ } => {
@@ -159,7 +165,7 @@ pub fn validate_did_operation<T: Config>(
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
 
             // Must have a pending operation to cancel
-            ensure!(state.pending_operation.is_some(), Error::<T>::NoPendingGovernedOp);
+            ensure!(PendingGovernedOps::<T>::get(did).is_some(), Error::<T>::NoPendingGovernedOp);
         }
 
         DidOperation::ExecuteGoverned { did: _ } => {
@@ -174,7 +180,7 @@ pub fn validate_did_operation<T: Config>(
 
             // Must have a pending operation to execute
             let pending =
-                state.pending_operation.as_ref().ok_or(Error::<T>::NoPendingGovernedOp)?;
+                PendingGovernedOps::<T>::get(did).ok_or(Error::<T>::NoPendingGovernedOp)?;
 
             // Check delay window elapsed
             let min_exec_height = pending.announced_at_height + crate::GOVERNED_OP_DELAY_BLOCKS;
