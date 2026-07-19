@@ -33,6 +33,7 @@ pub mod signature;
 pub mod signed;
 pub mod state;
 pub mod validity;
+pub mod verifier;
 
 pub use auth::*;
 pub use did::*;

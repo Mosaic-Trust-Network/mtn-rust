@@ -283,12 +283,20 @@ impl DidHistory {
     /// relationships (`authentication`, `assertionMethod`, etc.) are derived
     /// from **on-chain rights only**. Off-chain rights (from the commitment
     /// document) must be checked separately by the verifier using the
-    /// presenter-supplied rights document and the `MosaicRightsCommitment2026`
-    /// service endpoint.
+    /// presenter-supplied rights document and the commitment service endpoint.
+    ///
+    /// If `from_height` is provided, the document is filtered to the window
+    /// `[from_height, height]`:
+    /// - Keys added after `from_height` or revoked/expired before it are excluded.
+    /// - The commitment service carries the full timeline from the commit active
+    ///   at `from_height` through the one at `height`.
+    /// - `mosaic:lastModifiedAtHeight` is capped to the window.
     ///
     /// Keys with neither on-chain nor commitment rights are excluded entirely.
     #[cfg(feature = "serde")]
-    pub fn to_did_document_at(&self, height: u32) -> crate::document::DidDocument {
+    pub fn to_did_document_at(
+        &self, height: u32, from_height: Option<u32>,
+    ) -> crate::document::DidDocument {
         use crate::document::{
             DidDocument, DidDocumentService, DidDocumentVerificationMethod, key_type_to_w3c_string,
             multibase_encode_key,
@@ -303,14 +311,26 @@ impl DidHistory {
                 .collect()
         }
 
-        // Exclude keys with no on-chain rights. The commitment service endpoint
-        // tells the verifier to also check off-chain documents, but the indexer
-        // cannot resolve commitment content — it only sees hashes.
-        let valid_keys = self.valid_keys_at(height);
-        let active_commitment = self.commitment_at(height);
+        // Determine the window.
+        let window_start = from_height.unwrap_or(0);
 
+        // Exclude keys with no on-chain rights.
+        let valid_keys = self.valid_keys_at(height);
+
+        // Filter keys: must be valid at `height`, and if `from_height` is given,
+        // must have been added at or before `from_height` and not revoked/expired
+        // before `from_height` (i.e. valid throughout the window).
         let righted_keys: Vec<_> = valid_keys
             .into_iter()
+            .filter(|k| {
+                if window_start > 0 {
+                    k.added_at_height <= window_start
+                        && k.revoked_at_height.is_none_or(|h| h > window_start)
+                        && k.expires_at_height.is_none_or(|h| h > window_start)
+                } else {
+                    true
+                }
+            })
             .filter_map(|k| {
                 let onchain = key_rights(&k.key_ref, &self.rights, height);
                 if onchain.is_empty() { None } else { Some((k, onchain)) }
@@ -354,20 +374,37 @@ impl DidHistory {
             .map(|(k, _)| alloc::format!("{}#{}", did_string, k.key_ref))
             .collect();
 
-        // Mosaic rights commitment service
-        let commitment_service = active_commitment.map(|cv| {
-            let endpoint = serde_json::json!({
-                "contentId": cv.commitment.to_string(),
-                "sequence": cv.sequence,
-                "publishedAtHeight": cv.published_at_height,
-                "publishedBy": alloc::format!("#{}", cv.signer_key_ref),
-            });
-            DidDocumentService {
-                id: alloc::format!("{}#rights-commitment", did_string),
-                type_: "MosaicRightsCommitment2026".into(),
-                service_endpoint: endpoint,
+        // Commitment timeline: from the one active at window_start through height.
+        let commitment_service = {
+            let start_idx = self
+                .commitments
+                .iter()
+                .rposition(|cv| cv.published_at_height <= window_start)
+                .unwrap_or(0);
+
+            let versions: Vec<_> = self.commitments[start_idx..]
+                .iter()
+                .take_while(|cv| cv.published_at_height <= height)
+                .map(|cv| {
+                    serde_json::json!({
+                        "sequence": cv.sequence,
+                        "contentId": cv.commitment.to_string(),
+                        "publishedAtHeight": cv.published_at_height,
+                        "publishedBy": alloc::format!("#{}", cv.signer_key_ref),
+                    })
+                })
+                .collect();
+
+            if versions.is_empty() {
+                None
+            } else {
+                Some(DidDocumentService {
+                    id: alloc::format!("{}#rights-commitment", did_string),
+                    type_: "MosaicCommitmentTimeline2026".into(),
+                    service_endpoint: serde_json::json!({ "versions": versions }),
+                })
             }
-        });
+        };
 
         let created_at_height = self.keys.iter().map(|k| k.added_at_height).min();
         let last_modified_at_height = {
@@ -379,7 +416,7 @@ impl DidHistory {
                 self.commitments.iter().map(|c| c.published_at_height).max(),
                 self.tombstoned_at,
             ];
-            candidates.into_iter().flatten().max()
+            candidates.into_iter().flatten().max().map(|h| u32::min(h, height))
         };
 
         DidDocument {
@@ -881,7 +918,7 @@ mod tests {
             at_height: 100,
         });
 
-        let doc = history.to_did_document_at(150);
+        let doc = history.to_did_document_at(150, None);
 
         assert!(doc.id.starts_with("did:mosaic:ioz"));
         assert_eq!(doc.verification_method.len(), 1);
@@ -898,14 +935,18 @@ mod tests {
 
         // Commitment service
         assert_eq!(doc.service.len(), 1);
-        assert_eq!(doc.service[0].type_, "MosaicRightsCommitment2026");
+        assert_eq!(doc.service[0].type_, "MosaicCommitmentTimeline2026");
+        // Versions array in the endpoint
+        let versions = doc.service[0].service_endpoint.get("versions").unwrap().as_array().unwrap();
+        assert_eq!(versions.len(), 1);
+        assert_eq!(versions[0]["sequence"], serde_json::json!(1));
 
         // Regression: pin the JSON format
         let json = serde_json::to_string_pretty(&doc).unwrap();
         assert!(json.contains(r#""@context""#));
         assert!(json.contains(r#""did:mosaic:ioz"#));
         assert!(json.contains(r#""verificationMethod""#));
-        assert!(json.contains(r#""MosaicRightsCommitment2026""#));
+        assert!(json.contains(r#""MosaicCommitmentTimeline2026""#));
         assert!(json.contains(r#""mosaic:createdAtHeight": 10"#));
         assert!(!json.contains("tombstonedAtHeight")); // omitted when None
         // Service endpoint is a structured object
@@ -917,5 +958,77 @@ mod tests {
         assert_eq!(parsed.authentication.len(), 1);
         assert_eq!(parsed.service.len(), 1);
         assert_eq!(parsed.created_at_height, Some(10));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn to_did_document_at_with_from_height_filters_window() {
+        let mut history = DidHistory::new(test_did());
+        let kr1 = test_key_ref(1);
+        let kr2 = test_key_ref(2);
+
+        // Key at height 10
+        history.apply(DidHistoryEvent::KeyAdded {
+            key_ref: kr1.clone(),
+            key_type: KeyType::Ed25519,
+            controller: test_did(),
+            public_key: alloc::vec![1u8; 32],
+            at_height: 10,
+            expires_at_height: None,
+        });
+        history.apply(DidHistoryEvent::RightAdded {
+            key_ref: kr1.clone(),
+            right: Right::Update,
+            at_height: 10,
+            matures_at_height: None,
+            expires_at_height: None,
+        });
+
+        // Key at height 50 — added after the window start
+        history.apply(DidHistoryEvent::KeyAdded {
+            key_ref: kr2.clone(),
+            key_type: KeyType::Ed25519,
+            controller: test_did(),
+            public_key: alloc::vec![2u8; 32],
+            at_height: 50,
+            expires_at_height: None,
+        });
+        history.apply(DidHistoryEvent::RightAdded {
+            key_ref: kr2.clone(),
+            right: Right::Impersonate,
+            at_height: 50,
+            matures_at_height: None,
+            expires_at_height: None,
+        });
+
+        // Commitments at 100 and 200
+        history.apply(DidHistoryEvent::CommitmentUpdated {
+            sequence: 1,
+            commitment: test_commitment(1),
+            signer_key_ref: kr1.clone(),
+            at_height: 100,
+        });
+        history.apply(DidHistoryEvent::CommitmentUpdated {
+            sequence: 2,
+            commitment: test_commitment(2),
+            signer_key_ref: kr1.clone(),
+            at_height: 200,
+        });
+
+        // Full document at height 250 — both keys, both commitments
+        let full = history.to_did_document_at(250, None);
+        assert_eq!(full.verification_method.len(), 2);
+
+        // Filtered: from_height=150 → both keys (added before 150, not revoked/expired).
+        // Timeline starts at commit active at 150 (commit1 @ 100) + commit2 @ 200.
+        let filtered = history.to_did_document_at(250, Some(150));
+        assert_eq!(filtered.verification_method.len(), 2);
+
+        // Timeline: from_height=150 → active at 150 is commit1 (100) + commit2 (200)
+        let timeline =
+            filtered.service[0].service_endpoint.get("versions").unwrap().as_array().unwrap();
+        assert_eq!(timeline.len(), 2);
+        assert_eq!(timeline[0]["sequence"], serde_json::json!(1));
+        assert_eq!(timeline[1]["sequence"], serde_json::json!(2));
     }
 }
