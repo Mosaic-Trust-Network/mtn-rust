@@ -11,8 +11,8 @@ use super::*;
 use frame_benchmarking::v2::*;
 use frame_system::RawOrigin;
 use mosaic_did_types::{
-    Authentication, ContentId, Did, DidOperation, KeyPurpose, KeyRef, KeyType, MAX_KEYS_PER_DID,
-    Right, SignedDidOperation, SsiOperation, VerificationMethod,
+    Authentication, ContentId, Did, DidOperation, KeyRef, KeyType, MAX_KEYS_PER_DID, Right,
+    SignedDidOperation, SsiOperation, VerificationMethod,
 };
 use parity_scale_codec::{Encode, alloc::string::ToString};
 use polkadot_sdk::{sp_core::Get, sp_runtime::BoundedVec};
@@ -58,26 +58,13 @@ fn alice_key_ref() -> KeyRef {
     KeyRef::new(format!("{}", auth.key_id()).into_bytes()).expect("valid key ref")
 }
 
-fn max_purposes<T: Get<u32>>() -> BoundedVec<KeyPurpose, T> {
-    sp_std::vec![
-        KeyPurpose::Authentication,
-        KeyPurpose::AssertionMethod,
-        KeyPurpose::KeyAgreement,
-        KeyPurpose::CapabilityInvocation,
-        KeyPurpose::CapabilityDelegation
-    ]
-    .try_into()
-    .expect("purposes fit")
-}
-
 /// Create a signed AddKey operation for DID creation (first key).
 fn create_add_key_op(nonce: u64) -> SignedDidOperation {
     let did = alice_did();
     let auth = alice_auth();
     let key_ref = alice_key_ref();
 
-    let operation =
-        DidOperation::AddKey { did, auth, purposes: max_purposes(), expires_at_height: None };
+    let operation = DidOperation::AddKey { did, auth, expires_at_height: None };
 
     let signed_op = SignedDidOperation {
         operation,
@@ -179,7 +166,6 @@ fn setup_existing_did<T: Config>() {
         key_type: KeyType::Ed25519,
         controller: did.clone(),
         public_key: ALICE_PK.to_vec().try_into().expect("pk fits"),
-        purposes: max_purposes(),
         added_at_height: 1,
         expires_at_height: None,
         revoked_at_height: None,
@@ -196,7 +182,6 @@ fn setup_existing_did<T: Config>() {
                 key_type: KeyType::Ed25519,
                 controller: did.clone(),
                 public_key: [0u8; 32].to_vec().try_into().expect("pk size is known"),
-                purposes: max_purposes(),
                 added_at_height: i,
                 expires_at_height: None,
                 revoked_at_height: None,

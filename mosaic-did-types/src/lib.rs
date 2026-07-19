@@ -31,11 +31,14 @@ pub mod operation;
 pub mod rights;
 pub mod signature;
 pub mod signed;
+pub mod state;
 pub mod validity;
 
 pub use auth::*;
 pub use did::*;
+#[cfg(feature = "serde")]
 pub use document::*;
 pub use operation::*;
 pub use signature::*;
+pub use state::*;
 pub use validity::is_height_valid;

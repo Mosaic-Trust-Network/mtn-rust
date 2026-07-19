@@ -12,12 +12,9 @@
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use crate::did::{ContentId, KeyRef};
-use crate::operation::Right;
+use crate::did::{ContentId, Did, KeyRef};
+use crate::operation::{KeyType, Right};
 use crate::rights::RightsDocument;
-
-#[cfg(test)]
-use crate::operation::{KeyPurpose, KeyType};
 
 /// A commitment version in the DID history, reconstructed from events.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,17 +76,57 @@ impl RightLifecycle {
 #[derive(Clone, Debug)]
 pub struct DidHistory {
     /// The DID this history describes.
-    pub did: crate::did::Did,
+    pub did: Did,
     /// Ordered commitment versions (oldest first).
     pub commitments: Vec<CommitmentVersion>,
     /// All keys ever added to this DID, with their lifecycle events.
-    /// Uses `crate::document::VerificationMethod` which already carries
+    /// Uses `crate::state::VerificationMethod` which already carries
     /// the full key lifecycle (added_at_height, revoked_at_height, expires_at_height).
-    pub keys: Vec<crate::document::VerificationMethod>,
+    pub keys: Vec<crate::state::VerificationMethod>,
     /// On-chain right grants with lifecycle.
     pub rights: Vec<RightLifecycle>,
     /// The tombstone block, if any.
     pub tombstoned_at: Option<u32>,
+}
+
+/// A DID-history event — the `no_std` equivalent of the pallet's SCALE events.
+///
+/// Each variant carries the block height at which it occurred (`at_height`).
+/// Events are collected into `Vec<DidHistoryEvent>` (forward from an indexer or
+/// reverse-walked then `.reverse()`d from the pointer chain) and applied via
+/// `DidHistory::apply()`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DidHistoryEvent {
+    /// A key was added to the DID document.
+    KeyAdded {
+        key_ref: KeyRef,
+        key_type: KeyType,
+        controller: Did,
+        public_key: Vec<u8>,
+        at_height: u32,
+        expires_at_height: Option<u32>,
+    },
+    /// A key was revoked.
+    KeyRevoked { key_ref: KeyRef, at_height: u32 },
+    /// An on-chain right was granted.
+    RightAdded {
+        key_ref: KeyRef,
+        right: Right,
+        at_height: u32,
+        matures_at_height: Option<u32>,
+        expires_at_height: Option<u32>,
+    },
+    /// An on-chain right was revoked.
+    RightRevoked { key_ref: KeyRef, right: Right, at_height: u32 },
+    /// A rights-document commitment was published on-chain.
+    CommitmentUpdated {
+        sequence: u64,
+        commitment: ContentId,
+        signer_key_ref: KeyRef,
+        at_height: u32,
+    },
+    /// The DID was permanently deactivated.
+    DidTombstoned { at_height: u32 },
 }
 
 /// Resolves a `ContentId` to the full off-chain rights document.
@@ -105,6 +142,95 @@ pub trait CommitmentResolver {
 }
 
 impl DidHistory {
+    /// Create an empty history for the given DID.
+    pub fn new(did: Did) -> Self {
+        Self {
+            did,
+            commitments: Vec::new(),
+            keys: Vec::new(),
+            rights: Vec::new(),
+            tombstoned_at: None,
+        }
+    }
+
+    /// Apply a single history event to this DID's timeline.
+    ///
+    /// Events are applied in chronological order (oldest first). Both the
+    /// forward (indexer) and backward (light-client) paths produce events in
+    /// this order before calling `apply`.
+    pub fn apply(&mut self, event: DidHistoryEvent) {
+        match event {
+            DidHistoryEvent::KeyAdded {
+                key_ref,
+                key_type,
+                controller,
+                public_key,
+                at_height,
+                expires_at_height,
+            } => {
+                let vm = crate::state::VerificationMethod {
+                    key_ref,
+                    key_type,
+                    controller,
+                    public_key: public_key.try_into().expect("public key fits in bounded vec"),
+                    added_at_height: at_height,
+                    expires_at_height,
+                    revoked_at_height: None,
+                };
+                self.keys.push(vm);
+            }
+            DidHistoryEvent::KeyRevoked { key_ref, at_height } => {
+                if let Some(key) = self
+                    .keys
+                    .iter_mut()
+                    .find(|k| k.key_ref == key_ref && k.revoked_at_height.is_none())
+                {
+                    key.revoked_at_height = Some(at_height);
+                }
+            }
+            DidHistoryEvent::RightAdded {
+                key_ref,
+                right,
+                at_height,
+                matures_at_height,
+                expires_at_height,
+            } => {
+                let rl = RightLifecycle {
+                    key_ref,
+                    right,
+                    granted_at_height: at_height,
+                    expires_at_height,
+                    revoked_at_height: None,
+                    matures_at_height,
+                };
+                self.rights.push(rl);
+            }
+            DidHistoryEvent::RightRevoked { key_ref, right, at_height } => {
+                if let Some(rl) = self.rights.iter_mut().find(|r| {
+                    r.key_ref == key_ref && r.right == right && r.revoked_at_height.is_none()
+                }) {
+                    rl.revoked_at_height = Some(at_height);
+                }
+            }
+            DidHistoryEvent::CommitmentUpdated {
+                sequence,
+                commitment,
+                signer_key_ref,
+                at_height,
+            } => {
+                let cv = CommitmentVersion {
+                    sequence,
+                    commitment,
+                    published_at_height: at_height,
+                    signer_key_ref,
+                };
+                self.commitments.push(cv);
+            }
+            DidHistoryEvent::DidTombstoned { at_height } => {
+                self.tombstoned_at = Some(at_height);
+            }
+        }
+    }
     /// Find the commitment active at a given block height.
     ///
     /// Returns the most recent commitment whose `published_at_height <= height`,
@@ -117,7 +243,7 @@ impl DidHistory {
     ///
     /// A key is valid if it was added at or before `height` and has not been
     /// revoked or expired by that height.
-    pub fn valid_keys_at(&self, height: u32) -> Vec<&crate::document::VerificationMethod> {
+    pub fn valid_keys_at(&self, height: u32) -> Vec<&crate::state::VerificationMethod> {
         self.keys.iter().filter(|k| k.is_valid_at(height)).collect()
     }
 
@@ -234,22 +360,20 @@ mod tests {
             did,
             commitments: alloc::vec![],
             keys: alloc::vec![
-                crate::document::VerificationMethod {
+                crate::state::VerificationMethod {
                     key_ref: kr1.clone(),
                     key_type: KeyType::Ed25519,
                     controller: test_did(),
                     public_key: alloc::vec![1u8; 32].try_into().unwrap(),
-                    purposes: alloc::vec![KeyPurpose::Authentication].try_into().unwrap(),
                     added_at_height: 10,
                     expires_at_height: Some(100),
                     revoked_at_height: None,
                 },
-                crate::document::VerificationMethod {
+                crate::state::VerificationMethod {
                     key_ref: kr2.clone(),
                     key_type: KeyType::Ed25519,
                     controller: test_did(),
                     public_key: alloc::vec![2u8; 32].try_into().unwrap(),
-                    purposes: alloc::vec![KeyPurpose::Authentication].try_into().unwrap(),
                     added_at_height: 50,
                     expires_at_height: None,
                     revoked_at_height: Some(80),
@@ -389,5 +513,195 @@ mod tests {
         // None means immediate maturity — active as soon as granted
         let immediate = RightLifecycle { matures_at_height: None, ..rl };
         assert!(immediate.is_active_at(10));
+    }
+
+    // ===== DidHistoryEvent apply tests =====
+
+    #[test]
+    fn apply_key_added_adds_key_to_history() {
+        let mut history = DidHistory::new(test_did());
+        let kr = test_key_ref(1);
+        let pk: alloc::vec::Vec<u8> = alloc::vec![1u8; 32];
+
+        history.apply(DidHistoryEvent::KeyAdded {
+            key_ref: kr.clone(),
+            key_type: KeyType::Ed25519,
+            controller: test_did(),
+            public_key: pk.clone(),
+            at_height: 10,
+            expires_at_height: None,
+        });
+
+        assert_eq!(history.keys.len(), 1);
+        let key = &history.keys[0];
+        assert_eq!(key.key_ref, kr);
+        assert_eq!(key.key_type, KeyType::Ed25519);
+        assert_eq!(key.added_at_height, 10);
+        assert_eq!(&key.public_key[..], pk.as_slice());
+    }
+
+    #[test]
+    fn apply_key_revoked_sets_revoked_at_height() {
+        let mut history = DidHistory::new(test_did());
+        let kr = test_key_ref(1);
+
+        // Add a key first at height 10
+        history.apply(DidHistoryEvent::KeyAdded {
+            key_ref: kr.clone(),
+            key_type: KeyType::Ed25519,
+            controller: test_did(),
+            public_key: alloc::vec![1u8; 32],
+            at_height: 10,
+            expires_at_height: None,
+        });
+
+        // Revoke at height 50
+        history.apply(DidHistoryEvent::KeyRevoked { key_ref: kr.clone(), at_height: 50 });
+
+        let key = &history.keys[0];
+        assert_eq!(key.revoked_at_height, Some(50));
+    }
+
+    #[test]
+    fn apply_right_added_pushes_right_lifecycle() {
+        let mut history = DidHistory::new(test_did());
+        let kr = test_key_ref(1);
+
+        history.apply(DidHistoryEvent::RightAdded {
+            key_ref: kr.clone(),
+            right: Right::Impersonate,
+            at_height: 20,
+            matures_at_height: Some(50),
+            expires_at_height: Some(100),
+        });
+
+        assert_eq!(history.rights.len(), 1);
+        let rl = &history.rights[0];
+        assert_eq!(rl.key_ref, kr);
+        assert_eq!(rl.right, Right::Impersonate);
+        assert_eq!(rl.granted_at_height, 20);
+        assert_eq!(rl.matures_at_height, Some(50));
+        assert_eq!(rl.expires_at_height, Some(100));
+        assert_eq!(rl.revoked_at_height, None);
+    }
+
+    #[test]
+    fn apply_right_revoked_sets_revoked_at_height() {
+        let mut history = DidHistory::new(test_did());
+        let kr = test_key_ref(1);
+
+        history.apply(DidHistoryEvent::RightAdded {
+            key_ref: kr.clone(),
+            right: Right::Issue,
+            at_height: 10,
+            matures_at_height: None,
+            expires_at_height: None,
+        });
+        history.apply(DidHistoryEvent::RightRevoked {
+            key_ref: kr.clone(),
+            right: Right::Issue,
+            at_height: 60,
+        });
+
+        let rl = &history.rights[0];
+        assert_eq!(rl.revoked_at_height, Some(60));
+    }
+
+    #[test]
+    fn apply_commitment_updated_pushes_commitment_version() {
+        let mut history = DidHistory::new(test_did());
+        let kr = test_key_ref(1);
+        let cid = test_commitment(1);
+
+        history.apply(DidHistoryEvent::CommitmentUpdated {
+            sequence: 1,
+            commitment: cid,
+            signer_key_ref: kr.clone(),
+            at_height: 100,
+        });
+
+        assert_eq!(history.commitments.len(), 1);
+        let cv = &history.commitments[0];
+        assert_eq!(cv.sequence, 1);
+        assert_eq!(cv.commitment, cid);
+        assert_eq!(cv.published_at_height, 100);
+        assert_eq!(cv.signer_key_ref, kr);
+    }
+
+    #[test]
+    fn apply_did_tombstoned_sets_tombstoned_at() {
+        let mut history = DidHistory::new(test_did());
+
+        history.apply(DidHistoryEvent::DidTombstoned { at_height: 500 });
+
+        assert_eq!(history.tombstoned_at, Some(500));
+    }
+
+    #[test]
+    fn apply_event_stream_builds_complete_history() {
+        let mut history = DidHistory::new(test_did());
+        let kr1 = test_key_ref(1);
+        let kr2 = test_key_ref(2);
+        let cid1 = test_commitment(1);
+
+        // Simulate a full event stream
+        let events = alloc::vec![
+            DidHistoryEvent::KeyAdded {
+                key_ref: kr1.clone(),
+                key_type: KeyType::Ed25519,
+                controller: test_did(),
+                public_key: alloc::vec![1u8; 32],
+                at_height: 10,
+                expires_at_height: None,
+            },
+            DidHistoryEvent::RightAdded {
+                key_ref: kr1.clone(),
+                right: Right::Update,
+                at_height: 10,
+                matures_at_height: None,
+                expires_at_height: None,
+            },
+            DidHistoryEvent::KeyAdded {
+                key_ref: kr2.clone(),
+                key_type: KeyType::Ed25519,
+                controller: test_did(),
+                public_key: alloc::vec![2u8; 32],
+                at_height: 50,
+                expires_at_height: Some(200),
+            },
+            DidHistoryEvent::CommitmentUpdated {
+                sequence: 1,
+                commitment: cid1,
+                signer_key_ref: kr1.clone(),
+                at_height: 100,
+            },
+            DidHistoryEvent::RightRevoked {
+                key_ref: kr1.clone(),
+                right: Right::Update,
+                at_height: 150,
+            },
+            DidHistoryEvent::KeyRevoked { key_ref: kr2.clone(), at_height: 180 },
+            DidHistoryEvent::DidTombstoned { at_height: 500 },
+        ];
+
+        for event in events {
+            history.apply(event);
+        }
+
+        assert_eq!(history.keys.len(), 2);
+        assert_eq!(history.rights.len(), 1);
+        assert_eq!(history.commitments.len(), 1);
+        assert_eq!(history.tombstoned_at, Some(500));
+
+        // Key 1 added at 10, never revoked
+        assert!(history.valid_keys_at(15).iter().any(|k| k.key_ref == kr1));
+        // Key 2 revoked at 180, not valid after
+        assert!(history.valid_keys_at(55).iter().any(|k| k.key_ref == kr2));
+        assert!(!history.valid_keys_at(181).iter().any(|k| k.key_ref == kr2));
+
+        // Right revoked at 150
+        let resolver = TestResolver::new();
+        assert!(history.has_right_at(&kr1, Right::Update, 50, &resolver));
+        assert!(!history.has_right_at(&kr1, Right::Update, 151, &resolver));
     }
 }

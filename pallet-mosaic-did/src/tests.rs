@@ -104,14 +104,8 @@ mod unit_tests {
     fn operation_creates_correct_types() {
         let did = alice_did();
 
-        let add_key = DidOperation::AddKey {
-            did: did.clone(),
-            auth: alice_auth(),
-            purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
-                .try_into()
-                .unwrap(),
-            expires_at_height: None,
-        };
+        let add_key =
+            DidOperation::AddKey { did: did.clone(), auth: alice_auth(), expires_at_height: None };
 
         assert_eq!(add_key.did(), &did);
         assert_eq!(add_key.required_right(), Right::Update);
@@ -169,12 +163,7 @@ mod unit_tests {
         let signer_key_ref = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
 
         let signed_op = SignedDidOperation {
-            operation: DidOperation::AddKey {
-                did: did.clone(),
-                auth,
-                purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
-                expires_at_height: None,
-            },
+            operation: DidOperation::AddKey { did: did.clone(), auth, expires_at_height: None },
             signer_key_ref,
             signature: MultiSignature::ed25519([1u8; 64]),
             nonce: 1,
@@ -191,12 +180,7 @@ mod unit_tests {
         let signer_key_ref = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
 
         let did_op = SsiOperation::Did(SignedDidOperation {
-            operation: DidOperation::AddKey {
-                did: did.clone(),
-                auth,
-                purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
-                expires_at_height: None,
-            },
+            operation: DidOperation::AddKey { did: did.clone(), auth, expires_at_height: None },
             signer_key_ref,
             signature: MultiSignature::ed25519([1u8; 64]),
             nonce: 1,
@@ -220,7 +204,6 @@ mod unit_tests {
 
     mod state_tests {
         use super::*;
-        use frame_support::BoundedVec;
 
         fn make_test_state() -> DidState {
             let did = alice_did();
@@ -233,9 +216,6 @@ mod unit_tests {
                 key_type: KeyType::Ed25519,
                 controller: did,
                 public_key: pk.to_vec().try_into().unwrap(),
-                purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
-                    .try_into()
-                    .unwrap(),
                 added_at_height: 1,
                 expires_at_height: None,
                 revoked_at_height: None,
@@ -280,7 +260,6 @@ mod unit_tests {
                 key_type: KeyType::Ed25519,
                 controller: bob_did(),
                 public_key: vec![0u8; 32].try_into().unwrap(),
-                purposes: BoundedVec::default(),
                 added_at_height: 10,
                 expires_at_height: Some(100),
                 revoked_at_height: None,
@@ -300,7 +279,6 @@ mod unit_tests {
                 key_type: KeyType::Ed25519,
                 controller: bob_did(),
                 public_key: vec![0u8; 32].try_into().unwrap(),
-                purposes: BoundedVec::default(),
                 added_at_height: 10,
                 expires_at_height: None,
                 revoked_at_height: Some(50),
@@ -377,9 +355,6 @@ mod unit_tests {
                     key_type: KeyType::Ed25519,
                     controller: did.clone(),
                     public_key: vec![1u8; 32].try_into().unwrap(),
-                    purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
-                        .try_into()
-                        .unwrap(),
                     added_at_height: 1,
                     expires_at_height: None,
                     revoked_at_height: None,
@@ -394,9 +369,6 @@ mod unit_tests {
                     key_type: KeyType::Ed25519,
                     controller: did,
                     public_key: vec![2u8; 32].try_into().unwrap(),
-                    purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
-                        .try_into()
-                        .unwrap(),
                     added_at_height: 50,
                     expires_at_height: None,
                     revoked_at_height: None,
@@ -479,7 +451,6 @@ mod unit_tests {
                 this.submit(&DidOperation::AddKey {
                     did: this.did.clone(),
                     auth: auth_from_sk(&ALICE_SK),
-                    purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
                     expires_at_height: None,
                 });
                 this
@@ -566,7 +537,6 @@ mod unit_tests {
                 self.submit(&DidOperation::AddKey {
                     did: self.did.clone(),
                     auth: auth_from_sk(&BOB_SK),
-                    purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
                     expires_at_height,
                 });
                 bob_kr
@@ -731,7 +701,6 @@ mod unit_tests {
                 rt.submit(&DidOperation::AddKey {
                     did: rt.did.clone(),
                     auth: auth_from_sk(&BOB_SK),
-                    purposes: vec![KeyPurpose::AssertionMethod].try_into().unwrap(),
                     expires_at_height: None,
                 });
 
@@ -1004,14 +973,7 @@ mod unit_tests {
         let signer_key_ref = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
 
         let create_op = SsiOperation::Did(SignedDidOperation {
-            operation: DidOperation::AddKey {
-                did: signer_did,
-                auth,
-                purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
-                    .try_into()
-                    .unwrap(),
-                expires_at_height: None,
-            },
+            operation: DidOperation::AddKey { did: signer_did, auth, expires_at_height: None },
             signer_key_ref,
             signature: MultiSignature::ed25519([1u8; 64]),
             nonce: 1,

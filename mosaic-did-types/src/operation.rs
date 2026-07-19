@@ -3,8 +3,6 @@
 //! All SSI state changes flow through signed operations submitted in atomic batches.
 //! Phase 1 (MVP) implements the 5 core DID operations + BeforeProof.
 
-use bounded_collections::{BoundedVec, ConstU32};
-
 #[cfg(feature = "substrate")]
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 #[cfg(feature = "substrate")]
@@ -18,8 +16,6 @@ use crate::signature::MultiSignature;
 
 /// Maximum public key size in bytes.
 pub const MAX_PUBLIC_KEY_LEN: u32 = 64;
-/// Maximum number of key purposes per verification method.
-pub const MAX_PURPOSES_PER_KEY: u32 = 5;
 
 /// Rights that can be assigned to keys in a DID Document.
 ///
@@ -220,7 +216,6 @@ pub enum DidOperation {
     AddKey {
         did: Did,
         auth: Authentication,
-        purposes: BoundedVec<KeyPurpose, ConstU32<MAX_PURPOSES_PER_KEY>>,
         /// Optional block height at which this key expires.
         expires_at_height: Option<u32>,
     },
@@ -412,14 +407,8 @@ mod tests {
     fn operation_did_accessor() {
         let did = Did::alice();
 
-        let op = DidOperation::AddKey {
-            did: did.clone(),
-            auth: test_auth(),
-            purposes: alloc::vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
-                .try_into()
-                .unwrap(),
-            expires_at_height: None,
-        };
+        let op =
+            DidOperation::AddKey { did: did.clone(), auth: test_auth(), expires_at_height: None };
 
         assert_eq!(op.did(), &did);
         assert_eq!(op.required_right(), Right::Update);
@@ -432,12 +421,7 @@ mod tests {
         let key_ref = KeyRef::new(format!("{}", auth.key_id()).into_bytes()).unwrap();
 
         let ops = alloc::vec![
-            DidOperation::AddKey {
-                did: did.clone(),
-                auth: test_auth(),
-                purposes: BoundedVec::default(),
-                expires_at_height: None,
-            },
+            DidOperation::AddKey { did: did.clone(), auth: test_auth(), expires_at_height: None },
             DidOperation::RevokeKey { did: did.clone(), key_ref: key_ref.clone() },
             DidOperation::AddRight {
                 did: did.clone(),

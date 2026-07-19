@@ -45,8 +45,8 @@ pub mod pallet {
     use sp_std::vec::Vec;
 
     use mosaic_did_types::{
-        ContentId, Did, DidOperation, DidState, GovernedOperation, KeyPurpose, KeyRef, KeyType,
-        Right, RightGrant, SignedDidOperation, SsiOperation, VerificationMethod,
+        ContentId, Did, DidOperation, DidState, GovernedOperation, KeyRef, KeyType, Right,
+        RightGrant, SignedDidOperation, SsiOperation, VerificationMethod,
     };
 
     use crate::state::BeforeProofRecord;
@@ -115,7 +115,6 @@ pub mod pallet {
             key_ref: Vec<u8>,
             key_type: KeyType,
             public_key: Vec<u8>,
-            purposes: Vec<KeyPurpose>,
             expires_at_height: Option<u32>,
             previous_version_id: Option<(u32, u32)>,
         },
@@ -322,7 +321,7 @@ pub mod pallet {
             let did = signed_op.operation.did().clone();
 
             match &signed_op.operation {
-                DidOperation::AddKey { did: _, auth, purposes, expires_at_height } => {
+                DidOperation::AddKey { did: _, auth, expires_at_height } => {
                     let mpk = auth.to_multi_public_key().ok_or(Error::<T>::InvalidPublicKey)?;
                     let key_type = mpk.key_type().ok_or(Error::<T>::InvalidPublicKey)?;
                     let raw_bytes: Vec<u8> = mpk.raw_bytes();
@@ -336,7 +335,6 @@ pub mod pallet {
                         public_key: raw_bytes
                             .try_into()
                             .map_err(|_| Error::<T>::InvalidPublicKey)?,
-                        purposes: purposes.clone(),
                         added_at_height: height_u32,
                         expires_at_height: *expires_at_height,
                         revoked_at_height: None,
@@ -377,7 +375,6 @@ pub mod pallet {
                         key_ref: key_ref.as_bytes().to_vec(),
                         key_type,
                         public_key: mpk.raw_bytes(),
-                        purposes: purposes.to_vec(),
                         expires_at_height: *expires_at_height,
                         previous_version_id,
                     });
