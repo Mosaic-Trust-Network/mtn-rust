@@ -125,7 +125,7 @@ impl PublicKey<MultiCipher> for MPublicKey {
 
 #[cfg(feature = "serde")]
 impl serde::Serialize for MPublicKey {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -141,7 +141,7 @@ fn deser(erased: crate::multicipher::ErasedBytes) -> Result<MPublicKey> {
 
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for MPublicKey {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {

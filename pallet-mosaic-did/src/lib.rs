@@ -46,7 +46,8 @@ pub mod pallet {
 
     use mosaic_did_types::{
         ContentId, Did, DidOperation, DidState, GovernedOperation, KeyRef, KeyType, Right,
-        RightGrant, SignedDidOperation, SsiOperation, VerificationMethod,
+        RightGrant, SignedDidOperation, SsiOperation, VerificationMethod, public_key_raw_bytes,
+        public_key_to_key_type,
     };
 
     use crate::state::BeforeProofRecord;
@@ -323,8 +324,9 @@ pub mod pallet {
             match &signed_op.operation {
                 DidOperation::AddKey { did: _, auth, expires_at_height } => {
                     let mpk = auth.to_multi_public_key().ok_or(Error::<T>::InvalidPublicKey)?;
-                    let key_type = mpk.key_type().ok_or(Error::<T>::InvalidPublicKey)?;
-                    let raw_bytes: Vec<u8> = mpk.raw_bytes();
+                    let key_type =
+                        public_key_to_key_type(&mpk).ok_or(Error::<T>::InvalidPublicKey)?;
+                    let raw_bytes: Vec<u8> = public_key_raw_bytes(&mpk);
                     let key_ref = KeyRef::new(format!("{}", auth.key_id()).into_bytes())
                         .map_err(|_| Error::<T>::InvalidPublicKey)?;
 
@@ -374,7 +376,7 @@ pub mod pallet {
                         did,
                         key_ref: key_ref.as_bytes().to_vec(),
                         key_type,
-                        public_key: mpk.raw_bytes(),
+                        public_key: public_key_raw_bytes(&mpk),
                         expires_at_height: *expires_at_height,
                         previous_version_id,
                     });

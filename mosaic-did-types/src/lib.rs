@@ -39,6 +39,9 @@ pub use did::*;
 #[cfg(feature = "serde")]
 pub use document::*;
 pub use operation::*;
-pub use signature::*;
+pub use signature::{
+    ed25519_blake3_signature, public_key_from_key_type, public_key_raw_bytes,
+    public_key_to_key_type, secp256k1_signature,
+};
 pub use state::*;
 pub use validity::is_height_valid;

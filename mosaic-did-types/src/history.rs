@@ -276,6 +276,133 @@ impl DidHistory {
 
         false
     }
+
+    /// Produce a W3C-compliant DID Document at the given block height.
+    ///
+    /// All valid keys appear in `verificationMethod`. W3C verification
+    /// relationships (`authentication`, `assertionMethod`, etc.) are derived
+    /// from **on-chain rights only**. Off-chain rights (from the commitment
+    /// document) must be checked separately by the verifier using the
+    /// presenter-supplied rights document and the `MosaicRightsCommitment2026`
+    /// service endpoint.
+    ///
+    /// Keys with neither on-chain nor commitment rights are excluded entirely.
+    #[cfg(feature = "serde")]
+    pub fn to_did_document_at(&self, height: u32) -> crate::document::DidDocument {
+        use crate::document::{
+            DidDocument, DidDocumentService, DidDocumentVerificationMethod, key_type_to_w3c_string,
+            multibase_encode_key,
+        };
+
+        // Collect on-chain rights per key
+        fn key_rights(key_ref: &KeyRef, rights: &[RightLifecycle], height: u32) -> Vec<Right> {
+            rights
+                .iter()
+                .filter(|rl| rl.key_ref == *key_ref && rl.is_active_at(height))
+                .map(|rl| rl.right)
+                .collect()
+        }
+
+        // Exclude keys with no on-chain rights. The commitment service endpoint
+        // tells the verifier to also check off-chain documents, but the indexer
+        // cannot resolve commitment content — it only sees hashes.
+        let valid_keys = self.valid_keys_at(height);
+        let active_commitment = self.commitment_at(height);
+
+        let righted_keys: Vec<_> = valid_keys
+            .into_iter()
+            .filter_map(|k| {
+                let onchain = key_rights(&k.key_ref, &self.rights, height);
+                if onchain.is_empty() { None } else { Some((k, onchain)) }
+            })
+            .collect();
+
+        let did_string = self.did.to_did_string();
+
+        let verification_methods: Vec<DidDocumentVerificationMethod> = righted_keys
+            .iter()
+            .map(|(k, _)| DidDocumentVerificationMethod {
+                id: alloc::format!("{}#{}", did_string, k.key_ref),
+                type_: key_type_to_w3c_string(k.key_type),
+                controller: did_string.clone(),
+                public_key_multibase: multibase_encode_key(&k.public_key),
+            })
+            .collect();
+
+        // W3C relationships derived from on-chain rights
+        let authentication: Vec<alloc::string::String> = righted_keys
+            .iter()
+            .filter(|(_, rs)| !rs.is_empty())
+            .map(|(k, _)| alloc::format!("{}#{}", did_string, k.key_ref))
+            .collect();
+
+        let assertion_method: Vec<alloc::string::String> = righted_keys
+            .iter()
+            .filter(|(_, rs)| rs.contains(&Right::Issue) || rs.contains(&Right::Impersonate))
+            .map(|(k, _)| alloc::format!("{}#{}", did_string, k.key_ref))
+            .collect();
+
+        let capability_invocation: Vec<alloc::string::String> = righted_keys
+            .iter()
+            .filter(|(_, rs)| rs.contains(&Right::Update))
+            .map(|(k, _)| alloc::format!("{}#{}", did_string, k.key_ref))
+            .collect();
+
+        let capability_delegation: Vec<alloc::string::String> = righted_keys
+            .iter()
+            .filter(|(_, rs)| rs.contains(&Right::Delegate))
+            .map(|(k, _)| alloc::format!("{}#{}", did_string, k.key_ref))
+            .collect();
+
+        // Mosaic rights commitment service
+        let commitment_service = active_commitment.map(|cv| {
+            let endpoint = serde_json::json!({
+                "contentId": cv.commitment.to_string(),
+                "sequence": cv.sequence,
+                "publishedAtHeight": cv.published_at_height,
+                "publishedBy": alloc::format!("#{}", cv.signer_key_ref),
+            });
+            DidDocumentService {
+                id: alloc::format!("{}#rights-commitment", did_string),
+                type_: "MosaicRightsCommitment2026".into(),
+                service_endpoint: endpoint,
+            }
+        });
+
+        let created_at_height = self.keys.iter().map(|k| k.added_at_height).min();
+        let last_modified_at_height = {
+            let candidates: [Option<u32>; 6] = [
+                self.keys.iter().map(|k| k.added_at_height).max(),
+                self.keys.iter().filter_map(|k| k.revoked_at_height).max(),
+                self.rights.iter().map(|r| r.granted_at_height).max(),
+                self.rights.iter().filter_map(|r| r.revoked_at_height).max(),
+                self.commitments.iter().map(|c| c.published_at_height).max(),
+                self.tombstoned_at,
+            ];
+            candidates.into_iter().flatten().max()
+        };
+
+        DidDocument {
+            context: alloc::vec![
+                "https://www.w3.org/ns/did/v1".into(),
+                "https://mosaic-trust.net/ns/did/v1".into(),
+            ],
+            id: did_string,
+            controller: None, // DID is self-controlled
+            also_known_as: None,
+            verification_method: verification_methods,
+            authentication,
+            assertion_method,
+            key_agreement: Vec::new(),
+            capability_invocation,
+            capability_delegation,
+            service: commitment_service.into_iter().collect(),
+            deactivated: self.tombstoned_at.is_some_and(|h| height >= h),
+            created_at_height,
+            last_modified_at_height,
+            tombstoned_at_height: self.tombstoned_at,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -308,9 +435,21 @@ mod tests {
     }
 
     fn test_key_ref(n: u8) -> KeyRef {
-        let mut bytes = alloc::vec![0u8; 32];
-        bytes[0] = n;
-        KeyRef::new(bytes).unwrap()
+        use iop_keyvault::PrivateKey;
+        use iop_keyvault::PublicKey;
+        use iop_keyvault::ed25519::EdPrivateKey;
+
+        // Deterministic seed from n
+        let mut seed = [0u8; 32];
+        seed[0] = n;
+        seed[31] = 1;
+
+        let sk = EdPrivateKey::from_bytes(&seed).unwrap();
+        let pk = sk.public_key();
+        let mpk =
+            crate::signature::public_key_from_key_type(KeyType::Ed25519, &pk.to_bytes()).unwrap();
+        let key_id = alloc::format!("{}", mpk.key_id());
+        KeyRef::new(key_id.into_bytes()).unwrap()
     }
 
     fn test_commitment(n: u8) -> ContentId {
@@ -703,5 +842,80 @@ mod tests {
         let resolver = TestResolver::new();
         assert!(history.has_right_at(&kr1, Right::Update, 50, &resolver));
         assert!(!history.has_right_at(&kr1, Right::Update, 151, &resolver));
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn to_did_document_at_produces_w3c_document() {
+        let mut history = DidHistory::new(test_did());
+        let kr = test_key_ref(1);
+        let cid = test_commitment(1);
+
+        // Add key + on-chain rights + commitment
+        history.apply(DidHistoryEvent::KeyAdded {
+            key_ref: kr.clone(),
+            key_type: KeyType::Ed25519,
+            controller: test_did(),
+            public_key: alloc::vec![1u8; 32],
+            at_height: 10,
+            expires_at_height: None,
+        });
+        history.apply(DidHistoryEvent::RightAdded {
+            key_ref: kr.clone(),
+            right: Right::Update,
+            at_height: 10,
+            matures_at_height: None,
+            expires_at_height: None,
+        });
+        history.apply(DidHistoryEvent::RightAdded {
+            key_ref: kr.clone(),
+            right: Right::Impersonate,
+            at_height: 10,
+            matures_at_height: None,
+            expires_at_height: None,
+        });
+        history.apply(DidHistoryEvent::CommitmentUpdated {
+            sequence: 1,
+            commitment: cid,
+            signer_key_ref: kr.clone(),
+            at_height: 100,
+        });
+
+        let doc = history.to_did_document_at(150);
+
+        assert!(doc.id.starts_with("did:mosaic:ioz"));
+        assert_eq!(doc.verification_method.len(), 1);
+        assert_eq!(doc.authentication.len(), 1);
+        assert_eq!(doc.assertion_method.len(), 1); // Impersonate → assertionMethod
+        assert_eq!(doc.capability_invocation.len(), 1); // Update → capabilityInvocation
+        assert_eq!(doc.capability_delegation.len(), 0); // No Delegate right
+        assert!(!doc.deactivated);
+
+        // Mosaic extensions
+        assert_eq!(doc.created_at_height, Some(10));
+        assert!(doc.last_modified_at_height.is_some());
+        assert_eq!(doc.tombstoned_at_height, None); // not tombstoned
+
+        // Commitment service
+        assert_eq!(doc.service.len(), 1);
+        assert_eq!(doc.service[0].type_, "MosaicRightsCommitment2026");
+
+        // Regression: pin the JSON format
+        let json = serde_json::to_string_pretty(&doc).unwrap();
+        assert!(json.contains(r#""@context""#));
+        assert!(json.contains(r#""did:mosaic:ioz"#));
+        assert!(json.contains(r#""verificationMethod""#));
+        assert!(json.contains(r#""MosaicRightsCommitment2026""#));
+        assert!(json.contains(r#""mosaic:createdAtHeight": 10"#));
+        assert!(!json.contains("tombstonedAtHeight")); // omitted when None
+        // Service endpoint is a structured object
+        assert!(json.contains(r#""serviceEndpoint": {"#));
+        // Round-trip: parse the JSON back
+        let parsed: crate::document::DidDocument = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.id, doc.id);
+        assert_eq!(parsed.verification_method.len(), 1);
+        assert_eq!(parsed.authentication.len(), 1);
+        assert_eq!(parsed.service.len(), 1);
+        assert_eq!(parsed.created_at_height, Some(10));
     }
 }

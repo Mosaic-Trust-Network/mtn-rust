@@ -20,6 +20,7 @@ scale-info = { workspace = true, optional = true }
 
 # Optional serde serialization
 serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 # IOP reuse (keyvault crypto is blockchain-agnostic)
 iop-keyvault.workspace = true
@@ -43,7 +44,12 @@ std = [
 	"scale-info?/std",
 	"serde?/std",
 ]
-serde = [ "bounded-collections/serde", "dep:serde" ]
+serde = [
+	"bounded-collections/serde",
+	"dep:serde",
+	"dep:serde_json",
+	"iop-keyvault/serde",
+]
 substrate = [
 	"iop-keyvault/substrate",
 	"json-digest/substrate",

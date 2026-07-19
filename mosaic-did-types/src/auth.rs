@@ -32,15 +32,15 @@ pub enum Authentication {
 impl Authentication {
     /// Construct a `PublicKey` variant from a [`KeyType`] and raw public key bytes.
     ///
-    /// Maps `KeyType` to the correct keyvault cipher suite via [`MultiPublicKey`].
+    /// Maps `KeyType` to the correct keyvault cipher suite via [`public_key_from_key_type`].
     /// Returns `None` for unsupported key types or invalid bytes.
     ///
-    /// [`MultiPublicKey`]: crate::signature::MultiPublicKey
+    /// [`public_key_from_key_type`]: crate::signature::public_key_from_key_type
     pub fn from_key_type_and_bytes(
         key_type: crate::operation::KeyType, bytes: &[u8],
     ) -> Option<Self> {
-        let pk = crate::signature::MultiPublicKey::from_key_type_and_bytes(key_type, bytes)?;
-        Some(Authentication::PublicKey(pk.0))
+        let pk = crate::signature::public_key_from_key_type(key_type, bytes)?;
+        Some(Authentication::PublicKey(pk))
     }
 
     /// Resolve the key ID, deriving it from the public key if necessary.
@@ -64,13 +64,11 @@ impl Authentication {
         }
     }
 
-    /// Wrap the public key as a [`MultiPublicKey`] for verification.
+    /// Extract the public key for verification.
     ///
     /// Returns `None` if this is the `KeyId` variant.
-    ///
-    /// [`MultiPublicKey`]: crate::signature::MultiPublicKey
-    pub fn to_multi_public_key(&self) -> Option<crate::signature::MultiPublicKey> {
-        self.public_key().map(|pk| crate::signature::MultiPublicKey(pk.clone()))
+    pub fn to_multi_public_key(&self) -> Option<MPublicKey> {
+        self.public_key().cloned()
     }
 }
 

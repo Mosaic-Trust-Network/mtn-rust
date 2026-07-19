@@ -15,6 +15,9 @@ use alloc::vec::Vec;
 // ========== W3C DID DOCUMENT TYPES ==========
 
 /// W3C DID Core 1.0 compliant DID Document for external consumption.
+///
+/// Mosaic extensions (prefixed `mosaic:`) are added as top-level properties.
+/// Unknown consumers safely ignore them per W3C DID Core §4.1.
 #[cfg(feature = "serde")]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DidDocument {
@@ -23,22 +26,37 @@ pub struct DidDocument {
     pub id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub controller: Option<String>,
+    /// Optional reference to the full rights document.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub also_known_as: Option<String>,
     #[serde(rename = "verificationMethod")]
+    #[serde(default)]
     pub verification_method: Vec<DidDocumentVerificationMethod>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub authentication: Vec<String>,
-    #[serde(rename = "assertionMethod", skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "assertionMethod", default, skip_serializing_if = "Vec::is_empty")]
     pub assertion_method: Vec<String>,
-    #[serde(rename = "keyAgreement", skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "keyAgreement", default, skip_serializing_if = "Vec::is_empty")]
     pub key_agreement: Vec<String>,
-    #[serde(rename = "capabilityInvocation", skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "capabilityInvocation", default, skip_serializing_if = "Vec::is_empty")]
     pub capability_invocation: Vec<String>,
-    #[serde(rename = "capabilityDelegation", skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "capabilityDelegation", default, skip_serializing_if = "Vec::is_empty")]
     pub capability_delegation: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub service: Vec<DidDocumentService>,
-    #[serde(skip_serializing_if = "core::ops::Not::not")]
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub deactivated: bool,
+
+    // --- Mosaic extensions (plan §5.2) ---
+    /// Block height at which the DID was created (first `KeyAdded`).
+    #[serde(rename = "mosaic:createdAtHeight", skip_serializing_if = "Option::is_none")]
+    pub created_at_height: Option<u32>,
+    /// Block height at which the most recent state change occurred.
+    #[serde(rename = "mosaic:lastModifiedAtHeight", skip_serializing_if = "Option::is_none")]
+    pub last_modified_at_height: Option<u32>,
+    /// Block height at which the DID was deactivated, if tombstoned.
+    #[serde(rename = "mosaic:tombstonedAtHeight", skip_serializing_if = "Option::is_none")]
+    pub tombstoned_at_height: Option<u32>,
 }
 
 /// A verification method entry in the W3C DID Document.
@@ -54,6 +72,10 @@ pub struct DidDocumentVerificationMethod {
 }
 
 /// A service endpoint in the W3C DID Document.
+///
+/// `service_endpoint` uses `serde_json::Value` to accommodate both
+/// plain strings (standard services) and structured objects (mosaic extension
+/// services like `MosaicRightsCommitment2026`).
 #[cfg(feature = "serde")]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DidDocumentService {
@@ -61,7 +83,7 @@ pub struct DidDocumentService {
     #[serde(rename = "type")]
     pub type_: String,
     #[serde(rename = "serviceEndpoint")]
-    pub service_endpoint: String,
+    pub service_endpoint: serde_json::Value,
 }
 
 // ========== RENDERING HELPERS ==========

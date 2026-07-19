@@ -6,8 +6,9 @@
 
 use alloc::vec::Vec;
 
+use iop_keyvault::multicipher::MSignature;
+
 use crate::did::ContentId;
-use crate::signature::MultiSignature;
 
 /// A generic signed envelope: content + cryptographic proof.
 ///
@@ -37,27 +38,21 @@ pub struct SignedEnvelope {
 
 impl<T> Signed<T> {
     /// Create a new signed envelope.
-    pub fn new(content: T, public_key_bytes: Vec<u8>, signature: MultiSignature) -> Self {
+    pub fn new(content: T, public_key_bytes: Vec<u8>, signature: MSignature) -> Self {
         Self {
             content,
-            signature: SignedEnvelope {
-                public_key: public_key_bytes,
-                bytes: signature.0.to_bytes(),
-            },
+            signature: SignedEnvelope { public_key: public_key_bytes, bytes: signature.to_bytes() },
             nonce: None,
         }
     }
 
     /// Create a new signed envelope with a nonce.
     pub fn new_with_nonce(
-        content: T, public_key_bytes: Vec<u8>, signature: MultiSignature, nonce: u64,
+        content: T, public_key_bytes: Vec<u8>, signature: MSignature, nonce: u64,
     ) -> Self {
         Self {
             content,
-            signature: SignedEnvelope {
-                public_key: public_key_bytes,
-                bytes: signature.0.to_bytes(),
-            },
+            signature: SignedEnvelope { public_key: public_key_bytes, bytes: signature.to_bytes() },
             nonce: Some(nonce),
         }
     }
@@ -121,13 +116,16 @@ pub struct AfterEnvelope<T> {
 }
 
 #[cfg(test)]
+use crate::signature::ed25519_blake3_signature;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn signed_envelope_construction() {
         let pk_bytes = b"test-public-key-bytes".to_vec();
-        let sig = MultiSignature::ed25519([0u8; 64]);
+        let sig = ed25519_blake3_signature([0u8; 64]);
 
         let signed = Signed::new("hello", pk_bytes.clone(), sig);
         assert_eq!(signed.nonce, None);
@@ -137,7 +135,7 @@ mod tests {
     #[test]
     fn signed_envelope_with_nonce() {
         let pk_bytes = b"test-public-key".to_vec();
-        let sig = MultiSignature::ed25519([0u8; 64]);
+        let sig = ed25519_blake3_signature([0u8; 64]);
 
         let signed = Signed::new_with_nonce("hello", pk_bytes, sig, 42);
         assert_eq!(signed.nonce, Some(42));
@@ -147,7 +145,7 @@ mod tests {
     #[test]
     fn signed_json_roundtrip() {
         let pk_bytes = b"test-public-key".to_vec();
-        let sig = MultiSignature::ed25519([0u8; 64]);
+        let sig = ed25519_blake3_signature([0u8; 64]);
 
         let signed = Signed::new("hello", pk_bytes, sig);
         let json = serde_json::to_string(&signed).unwrap();
@@ -162,7 +160,7 @@ mod tests {
     #[test]
     fn signed_json_omits_none_nonce() {
         let pk_bytes = b"key".to_vec();
-        let sig = MultiSignature::ed25519([0u8; 64]);
+        let sig = ed25519_blake3_signature([0u8; 64]);
 
         let signed = Signed::new("x", pk_bytes, sig);
         let json = serde_json::to_string(&signed).unwrap();

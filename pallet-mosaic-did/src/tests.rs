@@ -7,6 +7,7 @@ use polkadot_sdk::*;
 mod unit_tests {
     use super::*;
     use crate::state::BeforeProofRecord;
+    use iop_keyvault::multicipher::MSignature;
     use mosaic_did_types::*;
 
     // ===== Module-level secret keys (RFC 8032 test vectors) =====
@@ -145,15 +146,15 @@ mod unit_tests {
 
     #[test]
     fn multi_signature_types() {
-        let ed_sig = MultiSignature::ed25519([42u8; 64]);
-        assert_eq!(ed_sig.algorithm(), "Ed25519Blake3");
+        let ed_sig = ed25519_blake3_signature([42u8; 64]);
+        assert!(matches!(ed_sig, MSignature::Ed25519Blake3(_)));
 
         // r=1, s=1 are valid non-zero secp256k1 scalars
         let mut secp_bytes = [0u8; 64];
         secp_bytes[31] = 1;
         secp_bytes[63] = 1;
-        let secp_sig = MultiSignature::secp256k1(secp_bytes);
-        assert_eq!(secp_sig.algorithm(), "secp256k1");
+        let secp_sig = secp256k1_signature(secp_bytes);
+        assert!(matches!(secp_sig, MSignature::Secp256k1(_)));
     }
 
     #[test]
@@ -165,7 +166,7 @@ mod unit_tests {
         let signed_op = SignedDidOperation {
             operation: DidOperation::AddKey { did: did.clone(), auth, expires_at_height: None },
             signer_key_ref,
-            signature: MultiSignature::ed25519([1u8; 64]),
+            signature: ed25519_blake3_signature([1u8; 64]),
             nonce: 1,
         };
 
@@ -182,7 +183,7 @@ mod unit_tests {
         let did_op = SsiOperation::Did(SignedDidOperation {
             operation: DidOperation::AddKey { did: did.clone(), auth, expires_at_height: None },
             signer_key_ref,
-            signature: MultiSignature::ed25519([1u8; 64]),
+            signature: ed25519_blake3_signature([1u8; 64]),
             nonce: 1,
         });
 
@@ -402,14 +403,12 @@ mod unit_tests {
         use sp_runtime::BoundedVec;
 
         /// Sign a message with a given Ed25519 secret key via iop_keyvault.
-        fn sign_with_key(sk: &[u8; 32], message: &[u8]) -> mosaic_did_types::MultiSignature {
+        fn sign_with_key(sk: &[u8; 32], message: &[u8]) -> MSignature {
             use iop_keyvault::PrivateKey;
             use iop_keyvault::ed25519::EdPrivateKey;
             let sk = EdPrivateKey::from_bytes(sk).expect("valid sk");
             let sig = sk.sign(message);
-            mosaic_did_types::MultiSignature::from(
-                iop_keyvault::multicipher::MSignature::Ed25519Blake3(sig),
-            )
+            MSignature::Ed25519Blake3(sig)
         }
 
         /// Build a signed operation, signing with Alice's real key.
@@ -424,7 +423,7 @@ mod unit_tests {
             let signed_op = SignedDidOperation {
                 operation,
                 signer_key_ref: key_ref,
-                signature: mosaic_did_types::MultiSignature::ed25519([0u8; 64]),
+                signature: ed25519_blake3_signature([0u8; 64]),
                 nonce,
             };
             let message =
@@ -975,7 +974,7 @@ mod unit_tests {
         let create_op = SsiOperation::Did(SignedDidOperation {
             operation: DidOperation::AddKey { did: signer_did, auth, expires_at_height: None },
             signer_key_ref,
-            signature: MultiSignature::ed25519([1u8; 64]),
+            signature: ed25519_blake3_signature([1u8; 64]),
             nonce: 1,
         });
 

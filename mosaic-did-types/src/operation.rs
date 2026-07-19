@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::Authentication;
 use crate::did::{ContentId, Did, KeyRef};
-use crate::signature::MultiSignature;
+use iop_keyvault::multicipher::MSignature;
 
 /// Maximum public key size in bytes.
 pub const MAX_PUBLIC_KEY_LEN: u32 = 64;
@@ -348,7 +348,7 @@ pub struct SignedDidOperation {
     /// The key reference of the signer within the target DID document.
     pub signer_key_ref: KeyRef,
     /// Cryptographic signature over the operation.
-    pub signature: MultiSignature,
+    pub signature: MSignature,
     /// Monotonic nonce for replay protection (per-DID, per-key).
     pub nonce: u64,
 }
