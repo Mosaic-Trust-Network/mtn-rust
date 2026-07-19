@@ -481,7 +481,7 @@ mod tests {
         seed[0] = n;
         seed[31] = 1;
 
-        let sk = EdPrivateKey::from_bytes(&seed).unwrap();
+        let sk = EdPrivateKey::from_bytes(seed).unwrap();
         let pk = sk.public_key();
         let mpk =
             crate::signature::public_key_from_key_type(KeyType::Ed25519, &pk.to_bytes()).unwrap();

@@ -5,7 +5,7 @@
 //! verification relationship arrays and off-chain rights from presenter-
 //! supplied `RightsDocument`s whose hashes match the commitment timeline.
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 #[cfg(feature = "serde")]

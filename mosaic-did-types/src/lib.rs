@@ -31,6 +31,8 @@ pub mod operation;
 pub mod rights;
 pub mod signature;
 pub mod signed;
+#[cfg(feature = "serde")]
+pub mod smt;
 pub mod state;
 pub mod validity;
 pub mod verifier;
