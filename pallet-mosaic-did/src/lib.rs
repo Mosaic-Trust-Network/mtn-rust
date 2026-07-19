@@ -123,6 +123,8 @@ pub mod pallet {
             key_ref: Vec<u8>,
             right: Right,
             expires_at_height: Option<u32>,
+            /// Block height at which this right becomes exercisable (Update/Delegate only).
+            matures_at_height: Option<u32>,
             block_height: BlockNumberFor<T>,
         },
 
@@ -270,6 +272,7 @@ pub mod pallet {
             for op in &operations {
                 match op {
                     SsiOperation::Did(signed_op) => {
+                        Self::sweep_expired(&signed_op.operation.did().clone(), height_u32)?;
                         validation::validate_did_operation::<T>(signed_op, height_u32)?;
                         Self::apply_did_operation(signed_op, height_u32, block_height, &submitter)?;
                     }
@@ -307,6 +310,33 @@ pub mod pallet {
     // ========== INTERNAL METHODS ==========
 
     impl<T: Config> Pallet<T> {
+        /// Create a `DidState` pre-populated with a bootstrapping key and the
+        /// three implicit rights (Update, Impersonate, Delegate). Used by
+        /// `AddKey` for DID creation; reusable by future registration paths
+        /// (e.g. `AddKey` with `KeyId` variant per `keyvault-plan.md`).
+        fn bootstrap_did_state(
+            did: &Did, vm: VerificationMethod, height_u32: u32,
+        ) -> Result<DidState, DispatchError> {
+            let key_ref = vm.key_ref.clone();
+            let mut state = DidState::new(did.clone());
+            state.keys.try_push(vm).map_err(|_| Error::<T>::StorageBoundsExceeded)?;
+
+            for right in [Right::Update, Right::Impersonate, Right::Delegate] {
+                state
+                    .rights
+                    .try_push(RightGrant {
+                        key_ref: key_ref.clone(),
+                        right,
+                        granted_at_height: height_u32,
+                        expires_at_height: None,
+                        revoked_at_height: None,
+                        matures_at_height: None,
+                    })
+                    .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
+            }
+            Ok(state)
+        }
+
         /// Apply a single signed DID operation by mutating `DidState` in place.
         ///
         /// Types are already bounded — no conversion needed at the pallet boundary.
@@ -340,11 +370,24 @@ pub mod pallet {
                     };
 
                     DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
-                        let state = maybe_state.get_or_insert_with(|| DidState::new(did.clone()));
-
-                        ensure!(state.find_key(&key_ref).is_none(), Error::<T>::KeyAlreadyExists);
-
-                        state.keys.try_push(vm).map_err(|_| Error::<T>::StorageBoundsExceeded)?;
+                        match maybe_state {
+                            None => {
+                                *maybe_state =
+                                    Some(Self::bootstrap_did_state(&did, vm, height_u32)?);
+                            }
+                            Some(state) => {
+                                ensure!(
+                                    state.find_key(&key_ref).is_none(),
+                                    Error::<T>::KeyAlreadyExists
+                                );
+                                state
+                                    .keys
+                                    .try_push(vm)
+                                    .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
+                            }
+                        }
+                        // Update nonce in the state (works for both creation and existing).
+                        let state = maybe_state.as_mut().unwrap();
                         state
                             .update_nonce(&signed_op.signer_key_ref, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
@@ -363,15 +406,22 @@ pub mod pallet {
                 }
 
                 DidOperation::RevokeKey { did: _, key_ref } => {
-                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
-                        let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                        let key = state.find_key_mut(key_ref).ok_or(Error::<T>::KeyNotFound)?;
-                        key.revoked_at_height = Some(height_u32);
-                        state
-                            .update_nonce(&signed_op.signer_key_ref, signed_op.nonce)
-                            .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
-                        Ok(())
-                    })?;
+                    let removed_key = DidStates::<T>::try_mutate(
+                        &did,
+                        |maybe_state| -> Result<VerificationMethod, DispatchError> {
+                            let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
+                            let pos = state
+                                .keys
+                                .iter()
+                                .position(|k| k.key_ref == *key_ref)
+                                .ok_or(Error::<T>::KeyNotFound)?;
+                            let removed = state.keys.remove(pos);
+                            state
+                                .update_nonce(&signed_op.signer_key_ref, signed_op.nonce)
+                                .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
+                            Ok(removed)
+                        },
+                    )?;
 
                     Self::deposit_event(Event::KeyRevoked {
                         did: did.clone(),
@@ -381,13 +431,18 @@ pub mod pallet {
                 }
 
                 DidOperation::AddRight { did: _, key_ref, right, expires_at_height } => {
+                    let matures_at_height = if matches!(right, Right::Update | Right::Delegate) {
+                        Some(height_u32 + RIGHT_MATURITY_BLOCKS)
+                    } else {
+                        None
+                    };
                     let grant = RightGrant {
                         key_ref: key_ref.clone(),
                         right: *right,
                         granted_at_height: height_u32,
                         expires_at_height: *expires_at_height,
                         revoked_at_height: None,
-                        matures_at_height: None,
+                        matures_at_height,
                     };
 
                     DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
@@ -407,6 +462,7 @@ pub mod pallet {
                         key_ref: key_ref.as_bytes().to_vec(),
                         right: *right,
                         expires_at_height: *expires_at_height,
+                        matures_at_height,
                         block_height,
                     });
                 }
@@ -414,17 +470,12 @@ pub mod pallet {
                 DidOperation::RevokeRight { did: _, key_ref, right } => {
                     DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
                         let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                        let grant = state
+                        let pos = state
                             .rights
-                            .iter_mut()
-                            .rev()
-                            .find(|rg| {
-                                rg.key_ref == *key_ref
-                                    && rg.right == *right
-                                    && rg.revoked_at_height.is_none()
-                            })
+                            .iter()
+                            .rposition(|rg| rg.key_ref == *key_ref && rg.right == *right)
                             .ok_or(Error::<T>::RightNotFound)?;
-                        grant.revoked_at_height = Some(height_u32);
+                        state.rights.remove(pos);
                         state
                             .update_nonce(&signed_op.signer_key_ref, signed_op.nonce)
                             .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
@@ -618,6 +669,54 @@ pub mod pallet {
             let len = encoded.len().min(32);
             buf[..len].copy_from_slice(&encoded[..len]);
             buf
+        }
+
+        /// Sweep expired keys and right grants from a DID's state.
+        ///
+        /// Called before every state-changing operation (§4.2). Removes entries
+        /// where `expires_at_height ≤ current_height` and emits synthetic
+        /// `KeyRevoked`/`RightRevoked` events so indexers record the expiration.
+        /// Returns silently if the DID does not exist (no-op).
+        fn sweep_expired(did: &Did, current_height: u32) -> Result<(), sp_runtime::DispatchError> {
+            DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
+                let state = match maybe_state.as_mut() {
+                    Some(s) => s,
+                    None => return Ok(()), // DID not registered yet — nothing to sweep
+                };
+
+                // Sweep expired keys.
+                let mut i = 0;
+                while i < state.keys.len() {
+                    if state.keys[i].expires_at_height.is_some_and(|h| current_height >= h) {
+                        let removed = state.keys.swap_remove(i);
+                        Self::deposit_event(Event::KeyRevoked {
+                            did: did.clone(),
+                            key_ref: removed.key_ref.as_bytes().to_vec(),
+                            block_height: BlockNumberFor::<T>::from(current_height),
+                        });
+                    } else {
+                        i += 1;
+                    }
+                }
+
+                // Sweep expired right grants.
+                let mut i = 0;
+                while i < state.rights.len() {
+                    if state.rights[i].expires_at_height.is_some_and(|h| current_height >= h) {
+                        let removed = state.rights.swap_remove(i);
+                        Self::deposit_event(Event::RightRevoked {
+                            did: did.clone(),
+                            key_ref: removed.key_ref.as_bytes().to_vec(),
+                            right: removed.right,
+                            block_height: BlockNumberFor::<T>::from(current_height),
+                        });
+                    } else {
+                        i += 1;
+                    }
+                }
+
+                Ok(())
+            })
         }
     }
 }

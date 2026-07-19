@@ -227,19 +227,6 @@ impl DidState {
     /// Both the key itself and the right grant must be valid at the given height.
     /// A revoked or expired key has no rights, even if the grant is still active.
     pub fn has_right_at(&self, key_ref: &KeyRef, right: Right, height: u32) -> bool {
-        // The initial key (first key added) implicitly has Update, Impersonate, and
-        // Delegate rights. Delegate is required to bootstrap the rights system (grant
-        // rights to other keys). Without it, AddRight/RevokeRight are unreachable.
-        if let Some(first_key) = self.keys.first()
-            && first_key.key_ref == *key_ref
-            && first_key.is_valid_at(height)
-            && matches!(right, Right::Update | Right::Impersonate | Right::Delegate)
-        {
-            return true;
-        }
-
-        // For explicit rights: the key must be valid AND the grant must be active.
-        // A revoked/expired key is cryptographically dead -- no rights survive revocation.
         let key_valid = self.keys.iter().any(|k| k.key_ref == *key_ref && k.is_valid_at(height));
 
         key_valid
@@ -413,22 +400,46 @@ mod tests {
     use super::*;
     use bounded_collections::BoundedVec;
 
+    fn test_pk_bytes() -> [u8; 32] {
+        hex::decode("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+            .unwrap()
+            .try_into()
+            .unwrap()
+    }
+
+    fn test_key_ref() -> KeyRef {
+        let auth = crate::auth::Authentication::from_key_type_and_bytes(
+            KeyType::Ed25519,
+            &test_pk_bytes(),
+        )
+        .unwrap();
+        KeyRef::new(format!("{}", auth.key_id()).into_bytes()).unwrap()
+    }
+
+    fn test_key_ref_2() -> KeyRef {
+        let pk: [u8; 32] =
+            hex::decode("fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025")
+                .unwrap()
+                .try_into()
+                .unwrap();
+        let auth =
+            crate::auth::Authentication::from_key_type_and_bytes(KeyType::Ed25519, &pk).unwrap();
+        KeyRef::new(format!("{}", auth.key_id()).into_bytes()).unwrap()
+    }
+
     fn make_test_state() -> DidState {
         let did = Did::alice();
         let mut state = DidState::new(did.clone());
+        let pk: BoundedVec<u8, ConstU32<MAX_PUBLIC_KEY_LEN>> =
+            test_pk_bytes().to_vec().try_into().unwrap();
 
         state
             .keys
             .try_push(VerificationMethod {
-                key_ref: "key-1".parse().unwrap(),
+                key_ref: test_key_ref(),
                 key_type: KeyType::Ed25519,
                 controller: did,
-                public_key: hex::decode(
-                    "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-                )
-                .unwrap()
-                .try_into()
-                .unwrap(),
+                public_key: pk,
                 purposes: alloc::vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
                     .try_into()
                     .unwrap(),
@@ -466,7 +477,7 @@ mod tests {
     #[test]
     fn key_validity_at_height() {
         let vm = VerificationMethod {
-            key_ref: "key-1".parse().unwrap(),
+            key_ref: test_key_ref(),
             key_type: KeyType::Ed25519,
             controller: Did::bob(),
             public_key: alloc::vec![0u8; 32].try_into().unwrap(),
@@ -486,7 +497,7 @@ mod tests {
     #[test]
     fn key_revoked_at_height() {
         let vm = VerificationMethod {
-            key_ref: "key-1".parse().unwrap(),
+            key_ref: test_key_ref(),
             key_type: KeyType::Ed25519,
             controller: Did::bob(),
             public_key: alloc::vec![0u8; 32].try_into().unwrap(),
@@ -513,9 +524,24 @@ mod tests {
     }
 
     #[test]
-    fn initial_key_has_implicit_rights() {
-        let state = make_test_state();
-        let key_ref = "key-1".parse().unwrap();
+    fn bootstrap_rights_granted_implicitly() {
+        let mut state = make_test_state();
+        let key_ref: KeyRef = test_key_ref();
+
+        // Simulates what the pallet does on DID creation: push bootstrapping rights.
+        for right in [Right::Update, Right::Impersonate, Right::Delegate] {
+            state
+                .rights
+                .try_push(RightGrant {
+                    key_ref: key_ref.clone(),
+                    right,
+                    granted_at_height: 1,
+                    expires_at_height: None,
+                    revoked_at_height: None,
+                    matures_at_height: None,
+                })
+                .unwrap();
+        }
 
         assert!(state.has_right_at(&key_ref, Right::Update, 1));
         assert!(state.has_right_at(&key_ref, Right::Impersonate, 1));
@@ -526,7 +552,7 @@ mod tests {
     #[test]
     fn explicit_right_grant() {
         let mut state = make_test_state();
-        let key_ref: KeyRef = "key-1".parse().unwrap();
+        let key_ref = test_key_ref();
 
         state
             .rights
@@ -549,7 +575,7 @@ mod tests {
     #[test]
     fn right_grant_maturity_delay() {
         let grant = RightGrant {
-            key_ref: "key-1".parse().unwrap(),
+            key_ref: test_key_ref(),
             right: Right::Update,
             granted_at_height: 10,
             expires_at_height: None,
@@ -573,7 +599,7 @@ mod tests {
     #[test]
     fn activated_at_height_from_added_at() {
         let vm = VerificationMethod {
-            key_ref: "key-1".parse().unwrap(),
+            key_ref: test_key_ref(),
             key_type: KeyType::Ed25519,
             controller: Did::alice(),
             public_key: alloc::vec![0u8; 32].try_into().unwrap(),
@@ -589,7 +615,7 @@ mod tests {
     #[test]
     fn activated_at_height_from_maturity() {
         let vm = VerificationMethod {
-            key_ref: "key-1".parse().unwrap(),
+            key_ref: test_key_ref(),
             key_type: KeyType::Ed25519,
             controller: Did::alice(),
             public_key: alloc::vec![0u8; 32].try_into().unwrap(),
@@ -599,7 +625,7 @@ mod tests {
             revoked_at_height: None,
         };
         let rights = alloc::vec![RightGrant {
-            key_ref: "key-1".parse().unwrap(),
+            key_ref: test_key_ref(),
             right: Right::Update,
             granted_at_height: 10,
             expires_at_height: None,
@@ -613,7 +639,7 @@ mod tests {
     #[test]
     fn activated_at_height_ignores_other_keys() {
         let vm = VerificationMethod {
-            key_ref: "key-1".parse().unwrap(),
+            key_ref: test_key_ref(),
             key_type: KeyType::Ed25519,
             controller: Did::alice(),
             public_key: alloc::vec![0u8; 32].try_into().unwrap(),
@@ -623,7 +649,7 @@ mod tests {
             revoked_at_height: None,
         };
         let rights = alloc::vec![RightGrant {
-            key_ref: "key-2".parse().unwrap(),
+            key_ref: test_key_ref_2(),
             right: Right::Update,
             granted_at_height: 10,
             expires_at_height: None,
@@ -637,7 +663,7 @@ mod tests {
     #[test]
     fn nonce_defaults_to_zero() {
         let state = make_test_state();
-        let key_ref = "key-1".parse().unwrap();
+        let key_ref = test_key_ref();
         assert_eq!(state.nonce_for_key(&key_ref), 0);
 
         let unknown = "key-nonexistent".parse().unwrap();
@@ -655,7 +681,7 @@ mod tests {
         state
             .keys
             .try_push(VerificationMethod {
-                key_ref: "key-1".parse().unwrap(),
+                key_ref: test_key_ref(),
                 key_type: KeyType::Ed25519,
                 controller: did,
                 public_key: pk_bytes.try_into().unwrap(),

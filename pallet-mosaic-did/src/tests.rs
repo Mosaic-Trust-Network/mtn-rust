@@ -225,10 +225,11 @@ mod unit_tests {
         fn make_test_state() -> DidState {
             let did = alice_did();
             let pk = pk_bytes(&ALICE_SK);
+            let key_ref = alice_keyid();
             let mut state = DidState::new(did.clone());
 
             let vm = VerificationMethod {
-                key_ref: alice_keyid(),
+                key_ref: key_ref.clone(),
                 key_type: KeyType::Ed25519,
                 controller: did,
                 public_key: pk.to_vec().try_into().unwrap(),
@@ -240,6 +241,22 @@ mod unit_tests {
                 revoked_at_height: None,
             };
             state.keys.try_push(vm).unwrap();
+
+            // Bootstrapping rights (mirrors pallet's AddKey creation path).
+            for right in [Right::Update, Right::Impersonate, Right::Delegate] {
+                state
+                    .rights
+                    .try_push(RightGrant {
+                        key_ref: key_ref.clone(),
+                        right,
+                        granted_at_height: 1,
+                        expires_at_height: None,
+                        revoked_at_height: None,
+                        matures_at_height: None,
+                    })
+                    .unwrap();
+            }
+
             state
         }
 
@@ -305,7 +322,7 @@ mod unit_tests {
         }
 
         #[test]
-        fn initial_key_has_implicit_rights() {
+        fn bootstrap_rights_are_granted_on_creation() {
             let state = make_test_state();
             let key_ref = alice_keyid();
 
@@ -348,13 +365,15 @@ mod unit_tests {
         #[test]
         fn key_rotation_flow() {
             let did = alice_did();
+            let key_old = alice_keyid();
+            let key_new = key_ref_from_sk(&BOB_SK);
             let mut state = DidState::new(did.clone());
 
             // Add old key at height 1
             state
                 .keys
                 .try_push(VerificationMethod {
-                    key_ref: "key-old".parse().unwrap(),
+                    key_ref: key_old.clone(),
                     key_type: KeyType::Ed25519,
                     controller: did.clone(),
                     public_key: vec![1u8; 32].try_into().unwrap(),
@@ -371,7 +390,7 @@ mod unit_tests {
             state
                 .keys
                 .try_push(VerificationMethod {
-                    key_ref: "key-new".parse().unwrap(),
+                    key_ref: key_new.clone(),
                     key_type: KeyType::Ed25519,
                     controller: did,
                     public_key: vec![2u8; 32].try_into().unwrap(),
@@ -389,11 +408,11 @@ mod unit_tests {
 
             // Before rotation: only old key valid
             assert_eq!(state.valid_keys_at(49).len(), 1);
-            assert_eq!(state.valid_keys_at(49)[0].key_ref.as_bytes(), b"key-old");
+            assert_eq!(state.valid_keys_at(49)[0].key_ref, key_old);
 
             // After rotation: only new key valid
             assert_eq!(state.valid_keys_at(50).len(), 1);
-            assert_eq!(state.valid_keys_at(50)[0].key_ref.as_bytes(), b"key-new");
+            assert_eq!(state.valid_keys_at(50)[0].key_ref, key_new);
         }
     }
 
@@ -405,7 +424,7 @@ mod unit_tests {
         use frame_support::{assert_noop, assert_ok, traits::ConstU32};
         use frame_system::RawOrigin;
         use mosaic_did_types::{
-            ContentId, DidOperation, GovernedOperation, SignedDidOperation, SsiOperation,
+            ContentId, DidOperation, GovernedOperation, KeyRef, SignedDidOperation, SsiOperation,
         };
         use parity_scale_codec::Encode;
         use sp_runtime::BoundedVec;
@@ -423,16 +442,22 @@ mod unit_tests {
 
         /// Build a signed operation, signing with Alice's real key.
         fn sign_op(operation: DidOperation, nonce: u64) -> SignedDidOperation {
-            let signer_key_ref = key_ref_from_sk(&ALICE_SK);
+            sign_op_with_key(&ALICE_SK, key_ref_from_sk(&ALICE_SK), operation, nonce)
+        }
+
+        /// Build a signed operation with an explicit key and key_ref.
+        fn sign_op_with_key(
+            sk: &[u8; 32], key_ref: KeyRef, operation: DidOperation, nonce: u64,
+        ) -> SignedDidOperation {
             let signed_op = SignedDidOperation {
                 operation,
-                signer_key_ref: signer_key_ref.clone(),
+                signer_key_ref: key_ref,
                 signature: mosaic_did_types::MultiSignature::ed25519([0u8; 64]),
                 nonce,
             };
             let message =
                 (&signed_op.operation, &signed_op.signer_key_ref, &signed_op.nonce).encode();
-            let signature = sign_with_key(&ALICE_SK, &message);
+            let signature = sign_with_key(sk, &message);
             SignedDidOperation { signature, ..signed_op }
         }
 
@@ -495,6 +520,56 @@ mod unit_tests {
                     ),
                     error
                 );
+            }
+
+            /// Submit `op` signed by an explicit key. Panics on failure.
+            fn submit_as(&mut self, sk: &[u8; 32], key_ref: &KeyRef, op: &DidOperation) {
+                let nonce = self.next_nonce;
+                self.next_nonce = nonce + 1;
+                let signed = sign_op_with_key(sk, key_ref.clone(), op.clone(), nonce);
+                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
+                    vec![SsiOperation::Did(signed)].try_into().unwrap();
+                assert_ok!(crate::Pallet::<Test>::submit_did_operations(
+                    RawOrigin::Signed(1u64).into(),
+                    batch,
+                ));
+            }
+
+            /// Submit `op` signed by an explicit key and expect `error`.
+            fn submit_as_fails(
+                &mut self, sk: &[u8; 32], key_ref: &KeyRef, op: &DidOperation,
+                error: crate::Error<Test>,
+            ) {
+                let nonce = self.next_nonce;
+                self.next_nonce = nonce + 1;
+                let signed = sign_op_with_key(sk, key_ref.clone(), op.clone(), nonce);
+                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
+                    vec![SsiOperation::Did(signed)].try_into().unwrap();
+                assert_noop!(
+                    crate::Pallet::<Test>::submit_did_operations(
+                        RawOrigin::Signed(1u64).into(),
+                        batch,
+                    ),
+                    error
+                );
+            }
+
+            /// Add Bob's Ed25519 key with `Authentication` purpose.
+            /// Returns Bob's key_ref. Caller may add additional rights.
+            fn add_bob_key(&mut self) -> KeyRef {
+                self.add_bob_key_expiring(None)
+            }
+
+            /// Add Bob's key with an optional expiry height.
+            fn add_bob_key_expiring(&mut self, expires_at_height: Option<u32>) -> KeyRef {
+                let bob_kr = key_ref_from_sk(&BOB_SK);
+                self.submit(&DidOperation::AddKey {
+                    did: self.did.clone(),
+                    auth: auth_from_sk(&BOB_SK),
+                    purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
+                    expires_at_height,
+                });
+                bob_kr
             }
         }
 
@@ -651,38 +726,131 @@ mod unit_tests {
             new_test_ext().execute_with(|| {
                 let mut rt = TestDriver::new();
 
-                // Add Bob's key (Alice signs, she has Update).
-                let bob_auth = auth_from_sk(&BOB_SK);
+                // Add Bob's key with only AssertionMethod (no Update right at all).
                 let bob_kr = key_ref_from_sk(&BOB_SK);
                 rt.submit(&DidOperation::AddKey {
                     did: rt.did.clone(),
-                    auth: bob_auth,
+                    auth: auth_from_sk(&BOB_SK),
                     purposes: vec![KeyPurpose::AssertionMethod].try_into().unwrap(),
                     expires_at_height: None,
                 });
 
-                // Bob tries UpdateCommitment — must fail.
                 rt.at_block(2);
-                let op = update_commitment(&rt.did, cid("doc"), 1);
-                let signed_op = SignedDidOperation {
-                    operation: op,
-                    signer_key_ref: bob_kr,
-                    signature: mosaic_did_types::MultiSignature::ed25519([0u8; 64]),
-                    nonce: 1,
-                };
-                let message =
-                    (&signed_op.operation, &signed_op.signer_key_ref, &signed_op.nonce).encode();
-                let signed_op =
-                    SignedDidOperation { signature: sign_with_key(&BOB_SK, &message), ..signed_op };
-                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
-                    vec![SsiOperation::Did(signed_op)].try_into().unwrap();
-                assert_noop!(
-                    crate::Pallet::<Test>::submit_did_operations(
-                        RawOrigin::Signed(1u64).into(),
-                        batch,
-                    ),
-                    crate::Error::<Test>::InsufficientRight
+                rt.submit_as_fails(
+                    &BOB_SK,
+                    &bob_kr,
+                    &update_commitment(&rt.did, cid("doc"), 1),
+                    crate::Error::<Test>::InsufficientRight,
                 );
+            });
+        }
+
+        #[test]
+        fn revoke_key_removes_entry_from_vector() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                let bob_kr = rt.add_bob_key();
+                assert_eq!(rt.state().keys.len(), 2);
+                rt.submit(&DidOperation::RevokeKey { did: rt.did.clone(), key_ref: bob_kr });
+                assert_eq!(rt.state().keys.len(), 1);
+            });
+        }
+
+        #[test]
+        fn revoke_right_removes_entry_from_vector() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                let kr = key_ref_from_sk(&ALICE_SK);
+
+                let before = rt.state().rights.len(); // bootstrapping rights
+                rt.submit(&DidOperation::AddRight {
+                    did: rt.did.clone(),
+                    key_ref: kr.clone(),
+                    right: Right::Issue,
+                    expires_at_height: None,
+                });
+                assert_eq!(rt.state().rights.len(), before + 1);
+
+                rt.submit(&DidOperation::RevokeRight {
+                    did: rt.did.clone(),
+                    key_ref: kr,
+                    right: Right::Issue,
+                });
+                assert_eq!(rt.state().rights.len(), before);
+            });
+        }
+
+        #[test]
+        fn sweep_removes_expired_key_on_next_operation() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.add_bob_key_expiring(Some(10));
+                assert_eq!(rt.state().keys.len(), 2);
+
+                rt.at_block(11);
+                rt.submit(&update_commitment(&rt.did, cid("v1"), 1));
+                assert_eq!(rt.state().keys.len(), 1); // Bob's key swept
+            });
+        }
+
+        #[test]
+        fn sweep_removes_expired_right_on_next_operation() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                let kr = rt.state().keys.first().unwrap().key_ref.clone();
+
+                let before = rt.state().rights.len(); // bootstrapping rights
+                // Grant Issue right that expires at height 10.
+                rt.submit(&DidOperation::AddRight {
+                    did: rt.did.clone(),
+                    key_ref: kr,
+                    right: Right::Issue,
+                    expires_at_height: Some(10),
+                });
+                assert_eq!(rt.state().rights.len(), before + 1);
+
+                // At block 11, right should be swept.
+                rt.at_block(11);
+                rt.submit(&update_commitment(&rt.did, cid("v1"), 1));
+                assert_eq!(rt.state().rights.len(), before);
+            });
+        }
+
+        #[test]
+        fn right_maturity_blocks_immature_update_right() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                let bob_kr = rt.add_bob_key();
+
+                // Grant Bob the Update right. Maturity = 1 + 100 = 101.
+                rt.submit(&DidOperation::AddRight {
+                    did: rt.did.clone(),
+                    key_ref: bob_kr.clone(),
+                    right: Right::Update,
+                    expires_at_height: None,
+                });
+                assert_eq!(
+                    rt.state()
+                        .rights
+                        .iter()
+                        .find(|rg| rg.key_ref == bob_kr)
+                        .unwrap()
+                        .matures_at_height,
+                    Some(1 + 100)
+                );
+
+                // Immature — rejected.
+                rt.at_block(1);
+                rt.submit_as_fails(
+                    &BOB_SK,
+                    &bob_kr,
+                    &update_commitment(&rt.did, cid("doc"), 1),
+                    crate::Error::<Test>::InsufficientRight,
+                );
+
+                // Matured — accepted.
+                rt.at_block(101);
+                rt.submit_as(&BOB_SK, &bob_kr, &update_commitment(&rt.did, cid("doc"), 1));
             });
         }
 

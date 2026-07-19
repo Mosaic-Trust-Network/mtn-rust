@@ -216,6 +216,32 @@ impl fmt::Display for DidParseError {
     )
 )]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+/// A key reference (document-fragment identifier) within a DID document.
+///
+/// # Convention
+///
+/// `KeyRef` SHOULD be the **string representation of an `MKeyId`** (multicipher
+/// key ID). Multicipher key IDs use the format `i<suite>z<base58btc-bytes>`:
+///
+/// | Position | Meaning | Examples |
+/// |---|---|---|
+/// | `i` | key-ID prefix (distinguishes from `p` public key and `s` signature) | always `i` |
+/// | `<suite>` | cipher suite | `e` = Ed25519, `o` = Ed25519Blake3, `s` = secp256k1 |
+/// | `z` | multibase base58btc prefix | always `z` |
+/// | `<bytes>` | inner key-ID bytes in base58btc | 32-byte blake3 hash for `o`, 20-byte ripemd160 for `s` |
+///
+/// The `Authentication` type carried by `DidOperation::AddKey` wraps the
+/// `MKeyId`, so callers derive the `KeyRef` from that. The pallet extracts
+/// the `MKeyId` from the `PublicKey` variant (currently the only supported
+/// variant; `keyvault-plan.md` describes future `KeyId`-variant registration
+/// where the public key is not revealed on-chain immediately).
+///
+/// `KeyRef` does NOT enforce the MKeyId convention at the type level — it is
+/// a bounded byte vector (`BoundedVec<u8, 64>`) that accepts any bytes. This
+/// flexibility is intentional:
+/// - It lets the indexer reconstruct `KeyRef` values from SCALE-encoded events
+///   without depending on `iop_keyvault`.
+/// - It keeps `mosaic-did-types` independent of specific cipher-suite formats.
 pub struct KeyRef(BoundedVec<u8, ConstU32<MAX_KEY_REF_LEN>>);
 
 impl KeyRef {

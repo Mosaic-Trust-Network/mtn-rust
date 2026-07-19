@@ -428,7 +428,8 @@ mod tests {
     #[test]
     fn operation_type_conversion() {
         let did = Did::alice();
-        let key_ref: KeyRef = "key-1".parse().unwrap();
+        let auth = test_auth();
+        let key_ref = KeyRef::new(format!("{}", auth.key_id()).into_bytes()).unwrap();
 
         let ops = alloc::vec![
             DidOperation::AddKey {
