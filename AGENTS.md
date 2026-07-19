@@ -1,5 +1,74 @@
 # IoP Rust — Agent Orientation
 
+## Hard Rules — read and follow these on every turn
+
+These rules survive context compaction. They apply to ALL coding agents (DeepSeek,
+OpenCode BigPickle, Claude, etc.). Violating any of them wastes the user's time.
+
+### 1. Bash commands MUST NOT start with `cd`
+
+The `cd <path> && <command>` pattern triggers permission prompts that interrupt
+your work. Use the `workdir` parameter instead — it is faster, safer, and avoids
+disruption.
+
+| WRONG (will trigger permission prompt) | CORRECT (use workdir) |
+|---|---|
+| `cd /home/wigy/work/mtn/iop-rs && cargo test` | `workdir="/home/wigy/work/mtn/iop-rs"`, command: `cargo test` |
+| `cd /home/wigy/work/mtn/iop-rs && ./scripts/check.sh` | `workdir="/home/wigy/work/mtn/iop-rs"`, command: `./scripts/check.sh` |
+| `cd $PWD && cargo fmt` | `workdir="$PWD"`, command: `cargo fmt` |
+
+Do not write a command that starts with the characters `cd ` — not even as a
+harmless prefix. Strip it entirely. The tool already positions the working
+directory via `workdir`.
+
+### 2. Verification MUST use `./scripts/check.sh`
+
+Never run raw `cargo test`, `cargo clippy`, or `cargo fmt` directly. These skip
+the project's verification pipeline.
+
+| WRONG (skips pipeline) | CORRECT (uses project pipeline) |
+|---|---|
+| `cargo test -p pallet-mosaic-did` | `./scripts/check.sh test` |
+| `cargo clippy --all-targets` | `./scripts/check.sh clippy` |
+| `cargo fmt` | `./scripts/check.sh fmt` |
+| `cargo test --workspace` | `./scripts/check.sh test` |
+
+The full pipeline runs format, propagate, fmt, deny, clippy, test, and `no_std`:
+
+```bash
+./scripts/check.sh              # run all steps
+./scripts/check.sh clippy       # run a single step
+./scripts/check.sh test nostd   # run specific steps
+```
+
+Run the full `./scripts/check.sh` before considering work done.
+
+### 2b. Tight TDD loops: use `check.sh test:<filter>`
+
+For rapid red-green-refactor cycles, append a test filter with `:` to avoid
+running every test in the workspace:
+
+```bash
+./scripts/check.sh test:announce_governed    # run only matching tests
+./scripts/check.sh test:history              # run only matching tests
+```
+
+This still builds the full workspace (consistent features, no flip-flop in
+`target/`) but only executes tests matching the filter. Never use
+`cargo test -p <crate>` — it resolves features differently and triggers
+massive recompilation when you switch back to `./scripts/check.sh test`.<
+
+### 3. Conventions below are mandatory, not advisory
+
+All conventions in the "Conventions" section must be followed. Specifically:
+
+- Test-driven development: write a failing test first, confirm it fails, then
+  write minimum code to pass, then refactor. Never write untested production code.
+- `#[cfg(test)] mod test` for test modules.
+- Small, reviewable commits with working feature-local tests.
+
+---
+
 ## For External Contributors
 
 This repository is part of the Mosaic Trust Network workspace. The `.agents`
@@ -31,24 +100,14 @@ keyvault
 iop-sdk re-exports: keyvault, vault, mosaic-did-types, json-digest
 ```
 
-## Verification
-
-```bash
-./scripts/check.sh              # run all checks (format, propagate, fmt, deny, clippy, test, nostd)
-./scripts/check.sh clippy       # run a single step
-./scripts/check.sh test nostd   # run specific steps
-```
-
 ## Conventions
 
 - **Edition 2024**, MSRV 1.88, workspace version `0.1.0`.
 - `no_std`: `keyvault` and `mosaic-did-types` support it. No `std`-only deps without feature gates.
 - Serde/SCALE impls are `#[cfg(feature = "...")]` — check before moving types between crates.
 - Errors: `anyhow::Result` in `std` crates. Custom error types only in `no_std`.
-- Testing: inline `#[cfg(test)] mod test`. `Seed::DEMO_PHRASE` for vault tests.
 - Crypto: keys from `Seed` via BIP-32. SHA3-256 (json-digest), BLAKE3 (mosaic DID derivation).
 - Keep cryptographic claims backed by tests and test vectors.
-- Prefer small, reviewable commits with working feature-local tests.
 
 ## Sober
 

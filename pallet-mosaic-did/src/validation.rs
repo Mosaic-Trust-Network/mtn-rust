@@ -134,7 +134,56 @@ pub fn validate_did_operation<T: Config>(
             ensure!(*sequence == stored_sequence + 1, Error::<T>::InvalidCommitmentSequence);
         }
 
-        _ => return Err(Error::<T>::UnsupportedOperation.into()),
+        DidOperation::AnnounceGoverned { did: _, operation: _ } => {
+            let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
+            ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
+            validate_nonce::<T>(state, signed_op)?;
+            ensure!(
+                state.has_right_at(&signed_op.signer_key_ref, Right::Update, height_u32),
+                Error::<T>::InsufficientRight
+            );
+            validate_signature_from_state::<T>(signed_op, state, height_u32)?;
+
+            // Only one pending governed operation per DID
+            ensure!(state.pending_operation.is_none(), Error::<T>::PendingGovernedOpExists);
+        }
+
+        DidOperation::CancelGoverned { did: _ } => {
+            let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
+            // Cancel is allowed even on a tombstoned DID (to release a pending op)
+            validate_nonce::<T>(state, signed_op)?;
+            ensure!(
+                state.has_right_at(&signed_op.signer_key_ref, Right::Update, height_u32),
+                Error::<T>::InsufficientRight
+            );
+            validate_signature_from_state::<T>(signed_op, state, height_u32)?;
+
+            // Must have a pending operation to cancel
+            ensure!(state.pending_operation.is_some(), Error::<T>::NoPendingGovernedOp);
+        }
+
+        DidOperation::ExecuteGoverned { did: _ } => {
+            let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
+            ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
+            validate_nonce::<T>(state, signed_op)?;
+            ensure!(
+                state.has_right_at(&signed_op.signer_key_ref, Right::Update, height_u32),
+                Error::<T>::InsufficientRight
+            );
+            validate_signature_from_state::<T>(signed_op, state, height_u32)?;
+
+            // Must have a pending operation to execute
+            let pending =
+                state.pending_operation.as_ref().ok_or(Error::<T>::NoPendingGovernedOp)?;
+
+            // Check delay window elapsed
+            let min_exec_height = pending.announced_at_height + crate::GOVERNED_OP_DELAY_BLOCKS;
+            ensure!(height_u32 >= min_exec_height, Error::<T>::GovernedOpNotYetExecutable);
+
+            // Check not yet expired
+            let max_exec_height = pending.announced_at_height + crate::GOVERNED_OP_EXPIRY_BLOCKS;
+            ensure!(height_u32 <= max_exec_height, Error::<T>::GovernedOpExpired);
+        }
     }
 
     Ok(())

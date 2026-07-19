@@ -11,6 +11,9 @@ pub trait WeightInfo {
     fn revoke_right() -> Weight;
     fn tombstone_did() -> Weight;
     fn update_commitment() -> Weight;
+    fn announce_governed_op() -> Weight;
+    fn cancel_governed_op() -> Weight;
+    fn execute_governed_op() -> Weight;
     fn register_before_proof() -> Weight;
 }
 
@@ -77,6 +80,27 @@ impl WeightInfo for () {
         // Same pattern as tombstone_did: one read + one write on DidStates.
         Weight::from_parts(368_094_000, 18182)
             .saturating_add(RocksDbWeight::get().reads(1_u64))
+            .saturating_add(RocksDbWeight::get().writes(1_u64))
+    }
+    /// Storage: `Did::DidStates` (r:2 w:1) — one read for pending op, one write to update.
+    /// Proof: `Did::DidStates` (`max_values`: None, `max_size`: Some(14717), added: 17192, mode: `MaxEncodedLen`)
+    fn announce_governed_op() -> Weight {
+        Weight::from_parts(400_000_000, 18182)
+            .saturating_add(RocksDbWeight::get().reads(1_u64))
+            .saturating_add(RocksDbWeight::get().writes(1_u64))
+    }
+    /// Storage: `Did::DidStates` (r:1 w:1)
+    /// Proof: `Did::DidStates` (`max_values`: None, `max_size`: Some(14717), added: 17192, mode: `MaxEncodedLen`)
+    fn cancel_governed_op() -> Weight {
+        Weight::from_parts(368_094_000, 18182)
+            .saturating_add(RocksDbWeight::get().reads(1_u64))
+            .saturating_add(RocksDbWeight::get().writes(1_u64))
+    }
+    /// Storage: `Did::DidStates` (r:2 w:1) — one read for pending op, one write to apply + clear.
+    /// Proof: `Did::DidStates` (`max_values`: None, `max_size`: Some(14717), added: 17192, mode: `MaxEncodedLen`)
+    fn execute_governed_op() -> Weight {
+        Weight::from_parts(420_000_000, 18182)
+            .saturating_add(RocksDbWeight::get().reads(2_u64))
             .saturating_add(RocksDbWeight::get().writes(1_u64))
     }
     /// Storage: `Did::BeforeProofs` (r:1 w:1)

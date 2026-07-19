@@ -404,7 +404,9 @@ mod unit_tests {
         use crate::mock::{RuntimeEvent, System, Test, new_test_ext};
         use frame_support::{assert_noop, assert_ok, traits::ConstU32};
         use frame_system::RawOrigin;
-        use mosaic_did_types::{ContentId, DidOperation, KeyRef, SignedDidOperation, SsiOperation};
+        use mosaic_did_types::{
+            ContentId, DidOperation, GovernedOperation, SignedDidOperation, SsiOperation,
+        };
         use parity_scale_codec::Encode;
         use sp_runtime::BoundedVec;
 
@@ -434,82 +436,56 @@ mod unit_tests {
             SignedDidOperation { signature, ..signed_op }
         }
 
-        /// Create Alice's DID on-chain at height 1 and return (did, key_ref).
-        fn setup_alice_did() -> (Did, KeyRef) {
-            let did = did_from_sk(&ALICE_SK);
-            let key_ref = key_ref_from_sk(&ALICE_SK);
+        // ===== Test driver (eliminates boilerplate: block-number, setup, submit, state) =====
 
-            let add_key_op = DidOperation::AddKey {
-                did: did.clone(),
-                auth: auth_from_sk(&ALICE_SK),
-                purposes: vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
-                    .try_into()
-                    .unwrap(),
-                expires_at_height: None,
-            };
-            let signed = sign_op(add_key_op, 1);
-            let batch: BoundedVec<SsiOperation, ConstU32<100>> =
-                vec![SsiOperation::Did(signed)].try_into().unwrap();
-            assert_ok!(crate::Pallet::<Test>::submit_did_operations(
-                RawOrigin::Signed(1u64).into(),
-                batch,
-            ));
-
-            (did, key_ref)
+        /// Thin wrapper around Alice's DID inside an already-active test ext.
+        /// The caller MUST wrap tests in `new_test_ext().execute_with(|| { … })`.
+        struct TestDriver {
+            did: Did,
+            next_nonce: u64,
         }
 
-        #[test]
-        fn update_commitment_happy_path() {
-            new_test_ext().execute_with(|| {
+        impl TestDriver {
+            /// Register Alice's DID at block 1. Returns the driver.
+            fn new() -> Self {
+                let did = did_from_sk(&ALICE_SK);
                 System::set_block_number(1);
+                let mut this = Self { did, next_nonce: 1 };
+                this.submit(&DidOperation::AddKey {
+                    did: this.did.clone(),
+                    auth: auth_from_sk(&ALICE_SK),
+                    purposes: vec![KeyPurpose::Authentication].try_into().unwrap(),
+                    expires_at_height: None,
+                });
+                this
+            }
 
-                let (did, _key_ref) = setup_alice_did();
+            fn at_block(&self, n: u64) {
+                System::set_block_number(n);
+            }
 
-                // Submit UpdateCommitment with sequence=1 (first commitment)
-                let commitment = ContentId::from_bytes(b"rights document v1");
-                let update_op =
-                    DidOperation::UpdateCommitment { did: did.clone(), commitment, sequence: 1 };
-                let signed = sign_op(update_op, 2);
+            fn state(&self) -> DidState {
+                crate::Pallet::<Test>::did_state(&self.did).expect("DID exists")
+            }
+
+            /// Submit `op` (signed by Alice). Panics on failure.
+            fn submit(&mut self, op: &DidOperation) {
+                let nonce = self.next_nonce;
+                self.next_nonce = nonce + 1;
+                let signed = sign_op(op.clone(), nonce);
                 let batch: BoundedVec<SsiOperation, ConstU32<100>> =
                     vec![SsiOperation::Did(signed)].try_into().unwrap();
                 assert_ok!(crate::Pallet::<Test>::submit_did_operations(
                     RawOrigin::Signed(1u64).into(),
                     batch,
                 ));
+            }
 
-                // Verify state was updated
-                let state = crate::Pallet::<Test>::did_state(&did).expect("DID exists");
-                assert_eq!(state.commitment, Some((1, commitment)));
-
-                // Verify event was emitted
-                let events: Vec<_> = System::read_events_no_consensus().collect();
-                let commitment_updated = events.iter().any(|e| {
-                    matches!(
-                        &e.event,
-                        RuntimeEvent::MosaicDid(crate::Event::CommitmentUpdated {
-                            did: d,
-                            commitment: c,
-                            sequence: 1,
-                            ..
-                        }) if *d == did && *c == commitment
-                    )
-                });
-                assert!(commitment_updated, "CommitmentUpdated event must be emitted");
-            });
-        }
-
-        #[test]
-        fn update_commitment_rejects_sequence_gap() {
-            new_test_ext().execute_with(|| {
-                System::set_block_number(1);
-
-                let (did, _key_ref) = setup_alice_did();
-
-                // Try sequence=2 when stored=0 — should fail
-                let commitment = ContentId::from_bytes(b"rights document v1");
-                let update_op =
-                    DidOperation::UpdateCommitment { did: did.clone(), commitment, sequence: 2 };
-                let signed = sign_op(update_op, 2);
+            /// Submit and expect `error`.
+            fn submit_fails(&mut self, op: &DidOperation, error: crate::Error<Test>) {
+                let nonce = self.next_nonce;
+                self.next_nonce = nonce + 1;
+                let signed = sign_op(op.clone(), nonce);
                 let batch: BoundedVec<SsiOperation, ConstU32<100>> =
                     vec![SsiOperation::Did(signed)].try_into().unwrap();
                 assert_noop!(
@@ -517,7 +493,68 @@ mod unit_tests {
                         RawOrigin::Signed(1u64).into(),
                         batch,
                     ),
-                    crate::Error::<Test>::InvalidCommitmentSequence
+                    error
+                );
+            }
+        }
+
+        // ===== Operation constructors (keep test bodies about intent, not struct syntax) =====
+
+        fn cid(label: &str) -> ContentId {
+            ContentId::from_bytes(label.as_bytes())
+        }
+
+        fn update_commitment(did: &Did, commitment: ContentId, sequence: u64) -> DidOperation {
+            DidOperation::UpdateCommitment { did: did.clone(), commitment, sequence }
+        }
+
+        fn tombstone_did(did: &Did) -> DidOperation {
+            DidOperation::TombstoneDid { did: did.clone() }
+        }
+
+        fn announce_tombstone(did: &Did) -> DidOperation {
+            DidOperation::AnnounceGoverned {
+                did: did.clone(),
+                operation: GovernedOperation::Tombstone,
+            }
+        }
+
+        fn announce_commitment_reset(
+            did: &Did, reason: ContentId, commitment: ContentId, sequence: u64,
+        ) -> DidOperation {
+            DidOperation::AnnounceGoverned {
+                did: did.clone(),
+                operation: GovernedOperation::CommitmentReset { reason, commitment, sequence },
+            }
+        }
+
+        fn cancel_governed(did: &Did) -> DidOperation {
+            DidOperation::CancelGoverned { did: did.clone() }
+        }
+
+        fn execute_governed(did: &Did) -> DidOperation {
+            DidOperation::ExecuteGoverned { did: did.clone() }
+        }
+
+        // ===== Tests =====
+
+        #[test]
+        fn update_commitment_happy_path() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                let c = cid("doc v1");
+                rt.submit(&update_commitment(&rt.did, c, 1));
+                assert_eq!(rt.state().commitment, Some((1, c)));
+            });
+        }
+
+        #[test]
+        fn update_commitment_rejects_sequence_gap() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit_fails(
+                    &update_commitment(&rt.did, cid("doc"), 2),
+                    crate::Error::<Test>::InvalidCommitmentSequence,
                 );
             });
         }
@@ -526,12 +563,8 @@ mod unit_tests {
         fn update_commitment_rejects_nonexistent_did() {
             new_test_ext().execute_with(|| {
                 System::set_block_number(1);
-
                 let did = did_from_sk(&ALICE_SK);
-                let commitment = ContentId::from_bytes(b"rights document v1");
-                let update_op =
-                    DidOperation::UpdateCommitment { did: did.clone(), commitment, sequence: 1 };
-                let signed = sign_op(update_op, 1);
+                let signed = sign_op(update_commitment(&did, cid("doc"), 1), 1);
                 let batch: BoundedVec<SsiOperation, ConstU32<100>> =
                     vec![SsiOperation::Did(signed)].try_into().unwrap();
                 assert_noop!(
@@ -547,34 +580,12 @@ mod unit_tests {
         #[test]
         fn update_commitment_rejects_tombstoned_did() {
             new_test_ext().execute_with(|| {
-                System::set_block_number(1);
-
-                let (did, _key_ref) = setup_alice_did();
-
-                // Tombstone the DID at height 2
-                let tombstone_op = DidOperation::TombstoneDid { did: did.clone() };
-                let signed = sign_op(tombstone_op, 2);
-                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
-                    vec![SsiOperation::Did(signed)].try_into().unwrap();
-                assert_ok!(crate::Pallet::<Test>::submit_did_operations(
-                    RawOrigin::Signed(1u64).into(),
-                    batch,
-                ));
-
-                // Try UpdateCommitment on tombstoned DID at height 3
-                System::set_block_number(3);
-                let commitment = ContentId::from_bytes(b"rights document v1");
-                let update_op =
-                    DidOperation::UpdateCommitment { did: did.clone(), commitment, sequence: 1 };
-                let signed = sign_op(update_op, 3);
-                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
-                    vec![SsiOperation::Did(signed)].try_into().unwrap();
-                assert_noop!(
-                    crate::Pallet::<Test>::submit_did_operations(
-                        RawOrigin::Signed(1u64).into(),
-                        batch,
-                    ),
-                    crate::Error::<Test>::DidTombstoned
+                let mut rt = TestDriver::new();
+                rt.submit(&tombstone_did(&rt.did));
+                rt.at_block(3);
+                rt.submit_fails(
+                    &update_commitment(&rt.did, cid("doc"), 1),
+                    crate::Error::<Test>::DidTombstoned,
                 );
             });
         }
@@ -582,73 +593,28 @@ mod unit_tests {
         #[test]
         fn update_commitment_accepts_gapless_sequence() {
             new_test_ext().execute_with(|| {
-                System::set_block_number(1);
-
-                let (did, _key_ref) = setup_alice_did();
-
-                // seq=1
-                let c1 = ContentId::from_bytes(b"rights document v1");
-                let op1 = DidOperation::UpdateCommitment {
-                    did: did.clone(),
-                    commitment: c1,
-                    sequence: 1,
-                };
-                let signed1 = sign_op(op1, 2);
-                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
-                    vec![SsiOperation::Did(signed1)].try_into().unwrap();
-                assert_ok!(crate::Pallet::<Test>::submit_did_operations(
-                    RawOrigin::Signed(1u64).into(),
-                    batch,
-                ));
-
-                // seq=2 — should succeed
-                System::set_block_number(2);
-                let c2 = ContentId::from_bytes(b"rights document v2");
-                let op2 = DidOperation::UpdateCommitment {
-                    did: did.clone(),
-                    commitment: c2,
-                    sequence: 2,
-                };
-                let signed2 = sign_op(op2, 3);
-                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
-                    vec![SsiOperation::Did(signed2)].try_into().unwrap();
-                assert_ok!(crate::Pallet::<Test>::submit_did_operations(
-                    RawOrigin::Signed(1u64).into(),
-                    batch,
-                ));
-
-                // Verify state
-                let state = crate::Pallet::<Test>::did_state(&did).expect("DID exists");
-                assert_eq!(state.commitment, Some((2, c2)));
+                let mut rt = TestDriver::new();
+                let c1 = cid("doc v1");
+                rt.submit(&update_commitment(&rt.did, c1, 1));
+                rt.at_block(2);
+                let c2 = cid("doc v2");
+                rt.submit(&update_commitment(&rt.did, c2, 2));
+                assert_eq!(rt.state().commitment, Some((2, c2)));
             });
         }
 
         #[test]
         fn update_commitment_event_previous_version_id() {
             new_test_ext().execute_with(|| {
-                System::set_block_number(1);
-
-                let (did, _key_ref) = setup_alice_did();
-
-                // First commitment: previous_version_id should be None
-                let c1 = ContentId::from_bytes(b"doc v1");
-                let op1 = DidOperation::UpdateCommitment {
-                    did: did.clone(),
-                    commitment: c1,
-                    sequence: 1,
-                };
-                let signed1 = sign_op(op1, 2);
-                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
-                    vec![SsiOperation::Did(signed1)].try_into().unwrap();
-                assert_ok!(crate::Pallet::<Test>::submit_did_operations(
-                    RawOrigin::Signed(1u64).into(),
-                    batch,
-                ));
+                let mut rt = TestDriver::new();
+                let c1 = cid("doc v1");
+                rt.submit(&update_commitment(&rt.did, c1, 1));
 
                 let events: Vec<_> = System::read_events_no_consensus().collect();
-                let first_event = events.iter().find_map(|e| {
+                let first_pv = events.iter().find_map(|e| {
                     if let RuntimeEvent::MosaicDid(crate::Event::CommitmentUpdated {
                         previous_version_id,
+                        sequence: 1,
                         ..
                     }) = &e.event
                     {
@@ -657,26 +623,14 @@ mod unit_tests {
                         None
                     }
                 });
-                assert_eq!(first_event, Some(None), "first commitment has no previous version");
+                assert_eq!(first_pv, Some(None), "first commitment has no previous version");
 
-                // Second commitment: previous_version_id should be Some((1, c1))
-                System::set_block_number(2);
-                let c2 = ContentId::from_bytes(b"doc v2");
-                let op2 = DidOperation::UpdateCommitment {
-                    did: did.clone(),
-                    commitment: c2,
-                    sequence: 2,
-                };
-                let signed2 = sign_op(op2, 3);
-                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
-                    vec![SsiOperation::Did(signed2)].try_into().unwrap();
-                assert_ok!(crate::Pallet::<Test>::submit_did_operations(
-                    RawOrigin::Signed(1u64).into(),
-                    batch,
-                ));
+                rt.at_block(2);
+                let c2 = cid("doc v2");
+                rt.submit(&update_commitment(&rt.did, c2, 2));
 
                 let events: Vec<_> = System::read_events_no_consensus().collect();
-                let second_event = events.iter().find_map(|e| {
+                let second_pv = events.iter().find_map(|e| {
                     if let RuntimeEvent::MosaicDid(crate::Event::CommitmentUpdated {
                         previous_version_id,
                         sequence: 2,
@@ -688,46 +642,28 @@ mod unit_tests {
                         None
                     }
                 });
-                assert_eq!(
-                    second_event,
-                    Some(Some((1, c1))),
-                    "second commitment references previous"
-                );
+                assert_eq!(second_pv, Some(Some((1, c1))), "second commitment references previous");
             });
         }
 
         #[test]
         fn update_commitment_rejects_key_without_update_right() {
             new_test_ext().execute_with(|| {
-                System::set_block_number(1);
+                let mut rt = TestDriver::new();
 
-                // Create DID with Alice (initial key has implicit Update)
-                let (did, _alice_kr) = setup_alice_did();
-
-                // Add Bob's key with only AssertionMethod purpose (no Update)
+                // Add Bob's key (Alice signs, she has Update).
                 let bob_auth = auth_from_sk(&BOB_SK);
                 let bob_kr = key_ref_from_sk(&BOB_SK);
-
-                let add_bob = DidOperation::AddKey {
-                    did: did.clone(),
+                rt.submit(&DidOperation::AddKey {
+                    did: rt.did.clone(),
                     auth: bob_auth,
                     purposes: vec![KeyPurpose::AssertionMethod].try_into().unwrap(),
                     expires_at_height: None,
-                };
-                // Sign as Alice (who has Update right)
-                let signed = sign_op(add_bob, 2);
-                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
-                    vec![SsiOperation::Did(signed)].try_into().unwrap();
-                assert_ok!(crate::Pallet::<Test>::submit_did_operations(
-                    RawOrigin::Signed(1u64).into(),
-                    batch,
-                ));
+                });
 
-                // Now try UpdateCommitment signed by Bob (who has no Update right)
-                System::set_block_number(2);
-                let commitment = ContentId::from_bytes(b"doc v1");
-                let op =
-                    DidOperation::UpdateCommitment { did: did.clone(), commitment, sequence: 1 };
+                // Bob tries UpdateCommitment — must fail.
+                rt.at_block(2);
+                let op = update_commitment(&rt.did, cid("doc"), 1);
                 let signed_op = SignedDidOperation {
                     operation: op,
                     signer_key_ref: bob_kr,
@@ -738,7 +674,6 @@ mod unit_tests {
                     (&signed_op.operation, &signed_op.signer_key_ref, &signed_op.nonce).encode();
                 let signed_op =
                     SignedDidOperation { signature: sign_with_key(&BOB_SK, &message), ..signed_op };
-
                 let batch: BoundedVec<SsiOperation, ConstU32<100>> =
                     vec![SsiOperation::Did(signed_op)].try_into().unwrap();
                 assert_noop!(
@@ -748,6 +683,148 @@ mod unit_tests {
                     ),
                     crate::Error::<Test>::InsufficientRight
                 );
+            });
+        }
+
+        #[test]
+        fn announce_commitment_reset_stores_pending_op() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit(&announce_commitment_reset(&rt.did, cid("reason"), cid("new"), 1));
+                let pending = rt.state().pending_operation.unwrap();
+                assert_eq!(pending.announced_at_height, 1);
+                assert!(matches!(pending.operation, GovernedOperation::CommitmentReset { .. }));
+            });
+        }
+
+        #[test]
+        fn announce_tombstone_stores_pending_op() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit(&announce_tombstone(&rt.did));
+                let pending = rt.state().pending_operation.unwrap();
+                assert_eq!(pending.announced_at_height, 1);
+                assert!(matches!(pending.operation, GovernedOperation::Tombstone));
+            });
+        }
+
+        #[test]
+        fn announce_rejects_second_pending() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit(&announce_tombstone(&rt.did));
+                rt.at_block(2);
+                rt.submit_fails(
+                    &announce_tombstone(&rt.did),
+                    crate::Error::<Test>::PendingGovernedOpExists,
+                );
+            });
+        }
+
+        #[test]
+        fn announce_rejects_tombstoned_did() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit(&tombstone_did(&rt.did));
+                rt.at_block(2);
+                rt.submit_fails(&announce_tombstone(&rt.did), crate::Error::<Test>::DidTombstoned);
+            });
+        }
+
+        #[test]
+        fn announce_rejects_nonexistent_did() {
+            new_test_ext().execute_with(|| {
+                System::set_block_number(1);
+                let did = did_from_sk(&ALICE_SK);
+                let signed = sign_op(announce_tombstone(&did), 1);
+                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
+                    vec![SsiOperation::Did(signed)].try_into().unwrap();
+                assert_noop!(
+                    crate::Pallet::<Test>::submit_did_operations(
+                        RawOrigin::Signed(1u64).into(),
+                        batch,
+                    ),
+                    crate::Error::<Test>::DidNotFound
+                );
+            });
+        }
+
+        #[test]
+        fn cancel_clears_pending_op() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit(&announce_tombstone(&rt.did));
+                rt.at_block(2);
+                rt.submit(&cancel_governed(&rt.did));
+                assert!(rt.state().pending_operation.is_none());
+            });
+        }
+
+        #[test]
+        fn cancel_rejects_no_pending() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit_fails(
+                    &cancel_governed(&rt.did),
+                    crate::Error::<Test>::NoPendingGovernedOp,
+                );
+            });
+        }
+
+        #[test]
+        fn execute_rejects_before_delay() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit(&announce_tombstone(&rt.did));
+                rt.at_block(50);
+                rt.submit_fails(
+                    &execute_governed(&rt.did),
+                    crate::Error::<Test>::GovernedOpNotYetExecutable,
+                );
+            });
+        }
+
+        #[test]
+        fn execute_rejects_after_expiry() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit(&announce_tombstone(&rt.did));
+                rt.at_block(402);
+                rt.submit_fails(
+                    &execute_governed(&rt.did),
+                    crate::Error::<Test>::GovernedOpExpired,
+                );
+            });
+        }
+
+        #[test]
+        fn execute_commitment_reset_updates_state() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit(&update_commitment(&rt.did, cid("v1"), 1));
+
+                rt.at_block(2);
+                rt.submit(&announce_commitment_reset(&rt.did, cid("reason"), cid("v2"), 2));
+
+                rt.at_block(202); // delay = 200
+                rt.submit(&execute_governed(&rt.did));
+
+                assert_eq!(rt.state().commitment, Some((2, cid("v2"))));
+                assert!(rt.state().pending_operation.is_none());
+            });
+        }
+
+        #[test]
+        fn execute_tombstone_sets_deactivation() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit(&announce_tombstone(&rt.did));
+
+                rt.at_block(201);
+                rt.submit(&execute_governed(&rt.did));
+
+                assert!(rt.state().is_tombstoned_at(201));
+                assert!(rt.state().pending_operation.is_none());
             });
         }
     }
