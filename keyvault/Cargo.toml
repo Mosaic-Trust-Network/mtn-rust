@@ -30,6 +30,8 @@ serde = { workspace = true, optional = true }
 serde_bytes = { workspace = true, optional = true }
 sha2 = { workspace = true }
 bip39 = { workspace = true, default-features = false, features = ["default-langs"], optional = true }
+parity-scale-codec = { workspace = true, optional = true }
+scale-info = { workspace = true, optional = true }
 
 [dev-dependencies]
 rmp-serde = { workspace = true }
@@ -44,7 +46,10 @@ std = [
 	"dep:orion",
 	"getrandom/std",
 	"hex/std",
+	"parity-scale-codec?/std",
 	"rand",
+	"scale-info?/std",
 	"thiserror/std",
 ]
 serde = [ "dep:serde", "dep:serde_bytes", "std" ]
+substrate = [ "dep:parity-scale-codec", "dep:scale-info" ]

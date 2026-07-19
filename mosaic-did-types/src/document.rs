@@ -15,8 +15,8 @@ use scale_info::TypeInfo;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-use crate::did::{Did, KeyRef};
-use crate::operation::{KeyPurpose, KeyType, MAX_PUBLIC_KEY_LEN, MAX_PURPOSES_PER_KEY, Right};
+use crate::did::{ContentId, Did, KeyRef};
+use crate::operation::{GovernedOperation, KeyPurpose, KeyType, MAX_PUBLIC_KEY_LEN, MAX_PURPOSES_PER_KEY, Right};
 use crate::validity::is_height_valid;
 
 // ========== PROTOCOL CONSTANTS ==========
@@ -38,7 +38,7 @@ pub const MAX_NONCES_PER_DID: u32 = 32;
 )]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct VerificationMethod {
-    /// Key reference (document fragment), e.g. "key-1".
+    /// Key reference (document fragment), e.g. "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH".
     pub key_ref: KeyRef,
     /// Algorithm type.
     pub key_type: KeyType,
@@ -67,6 +67,25 @@ impl VerificationMethod {
             self.revoked_at_height,
         )
     }
+
+    /// Compute the block height at which this key becomes fully activated.
+    ///
+    /// Returns `added_at_height` unless the key has Update/Delegate rights
+    /// with a maturity delay, in which case it returns the maximum of
+    /// `added_at_height` and those maturity heights. Pass the full rights
+    /// vector from the containing `DidState` or `DidHistory`.
+    pub fn activated_at_height(&self, rights: &[RightGrant]) -> u32 {
+        let max_maturity = rights
+            .iter()
+            .filter(|rg| {
+                rg.key_ref == self.key_ref
+                    && matches!(rg.right, Right::Update | Right::Delegate)
+                    && rg.matures_at_height.is_some()
+            })
+            .filter_map(|rg| rg.matures_at_height)
+            .max();
+        max_maturity.unwrap_or(self.added_at_height)
+    }
 }
 
 /// A right grant record.
@@ -87,10 +106,18 @@ pub struct RightGrant {
     pub expires_at_height: Option<u32>,
     /// Block height at which this right was revoked (None if still active).
     pub revoked_at_height: Option<u32>,
+    /// Block height at which this right becomes exercisable.
+    /// For Update and Delegate rights, the key cannot exercise them until
+    /// this height. None means immediate (implicit initial key rights).
+    pub matures_at_height: Option<u32>,
 }
 
 impl RightGrant {
-    /// Returns whether this right grant is active at the given height.
+    /// Returns whether this right grant is active and matured at the given height.
+    ///
+    /// A right is active only if it has been granted, has not been revoked or
+    /// expired, and (for Update/Delegate rights) the maturity delay has elapsed.
+    /// `matures_at_height: None` means immediate maturity (implicit initial key rights).
     #[inline]
     pub fn is_active_at(&self, height: u32) -> bool {
         is_height_valid(
@@ -98,8 +125,26 @@ impl RightGrant {
             self.granted_at_height,
             self.expires_at_height,
             self.revoked_at_height,
-        )
+        ) && self.matures_at_height.is_none_or(|m| height >= m)
     }
+}
+
+/// A pending governed operation awaiting its delay window.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "substrate",
+    derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
+)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct PendingGovernedOp {
+    /// The governed operation to execute.
+    pub operation: GovernedOperation,
+    /// Block height at which the operation was announced.
+    pub announced_at_height: u32,
+    /// Account that deposited the announcement bond.
+    pub deposit_account: [u8; 32],
+    /// Deposit amount locked for the governed operation.
+    pub deposit_amount: u128,
 }
 
 /// DID document state with bounded collections.
@@ -124,6 +169,15 @@ pub struct DidState {
     pub tombstoned_at_height: Option<u32>,
     /// Per-key nonce for replay protection.
     pub nonces: BoundedBTreeMap<KeyRef, u64, ConstU32<MAX_NONCES_PER_DID>>,
+    /// Latest rights-document commitment published by the DID controller.
+    /// `(sequence, commitment_hash)`. `None` means no commitment has ever been published.
+    pub commitment: Option<(u64, ContentId)>,
+    /// Pending governed operation, if one has been announced.
+    pub pending_operation: Option<PendingGovernedOp>,
+    /// Block height and extrinsic index of the most recent state change.
+    /// Used by the rewind algorithm to check whether the current state
+    /// covers a given target height.
+    pub last_modified_at: (u32, u32),
 }
 
 impl DidState {
@@ -135,6 +189,9 @@ impl DidState {
             rights: BoundedVec::default(),
             tombstoned_at_height: None,
             nonces: BoundedBTreeMap::default(),
+            commitment: None,
+            pending_operation: None,
+            last_modified_at: (0, 0),
         }
     }
 
@@ -265,7 +322,7 @@ impl DidState {
         DidDocument {
             context: alloc::vec![
                 "https://www.w3.org/ns/did/v1".into(),
-                "https://mosaic.network/ns/did/v1".into(),
+                "https://mosaic-trust.net/ns/did/v1".into(),
             ],
             id: self.did.to_did_string(),
             controller: Some(self.did.to_did_string()),
@@ -391,6 +448,14 @@ mod tests {
     }
 
     #[test]
+    fn new_state_has_default_commitment_fields() {
+        let state = DidState::new(Did::alice());
+        assert_eq!(state.commitment, None);
+        assert_eq!(state.pending_operation, None);
+        assert_eq!(state.last_modified_at, (0, 0));
+    }
+
+    #[test]
     fn state_with_key_exists() {
         let state = make_test_state();
         assert!(state.exists());
@@ -469,6 +534,7 @@ mod tests {
                 granted_at_height: 10,
                 expires_at_height: Some(100),
                 revoked_at_height: None,
+                matures_at_height: None,
             })
             .unwrap();
 
@@ -476,6 +542,97 @@ mod tests {
         assert!(state.has_right_at(&key_ref, Right::Issue, 10));
         assert!(state.has_right_at(&key_ref, Right::Issue, 99));
         assert!(!state.has_right_at(&key_ref, Right::Issue, 100));
+    }
+
+    #[test]
+    fn right_grant_maturity_delay() {
+        let grant = RightGrant {
+            key_ref: "key-1".parse().unwrap(),
+            right: Right::Update,
+            granted_at_height: 10,
+            expires_at_height: None,
+            revoked_at_height: None,
+            matures_at_height: Some(50),
+        };
+
+        // Not yet mature — not active even though grant started
+        assert!(!grant.is_active_at(10));
+        assert!(!grant.is_active_at(49));
+
+        // Mature at height 50 — now active
+        assert!(grant.is_active_at(50));
+        assert!(grant.is_active_at(100));
+
+        // None means immediate maturity — active as soon as granted
+        let immediate = RightGrant {
+            matures_at_height: None,
+            ..grant.clone()
+        };
+        assert!(immediate.is_active_at(10));
+    }
+
+    #[test]
+    fn activated_at_height_from_added_at() {
+        let vm = VerificationMethod {
+            key_ref: "key-1".parse().unwrap(),
+            key_type: KeyType::Ed25519,
+            controller: Did::alice(),
+            public_key: alloc::vec![0u8; 32].try_into().unwrap(),
+            purposes: BoundedVec::default(),
+            added_at_height: 10,
+            expires_at_height: None,
+            revoked_at_height: None,
+        };
+        // No rights → activated_at = added_at
+        assert_eq!(vm.activated_at_height(&[]), 10);
+    }
+
+    #[test]
+    fn activated_at_height_from_maturity() {
+        let vm = VerificationMethod {
+            key_ref: "key-1".parse().unwrap(),
+            key_type: KeyType::Ed25519,
+            controller: Did::alice(),
+            public_key: alloc::vec![0u8; 32].try_into().unwrap(),
+            purposes: BoundedVec::default(),
+            added_at_height: 10,
+            expires_at_height: None,
+            revoked_at_height: None,
+        };
+        let rights = alloc::vec![RightGrant {
+            key_ref: "key-1".parse().unwrap(),
+            right: Right::Update,
+            granted_at_height: 10,
+            expires_at_height: None,
+            revoked_at_height: None,
+            matures_at_height: Some(50),
+        }];
+        // Maturity at 50 > added_at 10 → activated_at = 50
+        assert_eq!(vm.activated_at_height(&rights), 50);
+    }
+
+    #[test]
+    fn activated_at_height_ignores_other_keys() {
+        let vm = VerificationMethod {
+            key_ref: "key-1".parse().unwrap(),
+            key_type: KeyType::Ed25519,
+            controller: Did::alice(),
+            public_key: alloc::vec![0u8; 32].try_into().unwrap(),
+            purposes: BoundedVec::default(),
+            added_at_height: 10,
+            expires_at_height: None,
+            revoked_at_height: None,
+        };
+        let rights = alloc::vec![RightGrant {
+            key_ref: "key-2".parse().unwrap(),
+            right: Right::Update,
+            granted_at_height: 10,
+            expires_at_height: None,
+            revoked_at_height: None,
+            matures_at_height: Some(100),
+        }];
+        // key-2 maturity does not affect key-1
+        assert_eq!(vm.activated_at_height(&rights), 10);
     }
 
     #[test]
@@ -519,7 +676,7 @@ mod tests {
         let doc = state.to_did_document_at(1);
 
         assert_eq!(doc.context[0], "https://www.w3.org/ns/did/v1");
-        assert_eq!(doc.context[1], "https://mosaic.network/ns/did/v1");
+        assert_eq!(doc.context[1], "https://mosaic-trust.net/ns/did/v1");
         assert!(doc.id.starts_with("did:mosaic:ioz"));
         assert_eq!(doc.verification_method.len(), 1);
         assert_eq!(doc.verification_method[0].type_, "Ed25519VerificationKey2020");

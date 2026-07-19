@@ -355,8 +355,9 @@ fn rights_bitflags() {
 #[test]
 fn initial_key_has_implicit_rights() {
     let state = make_test_state(); // Direct OnChainDidState construction
-    assert!(state.has_right_at(b"key-1", Rights::UPDATE, 1));
-    assert!(state.has_right_at(b"key-1", Rights::DELEGATE, 1));
+    let key_ref: KeyRef = "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH".parse().unwrap();
+    assert!(state.has_right_at(&key_ref, Right::Update, 1));
+    assert!(state.has_right_at(&key_ref, Right::Delegate, 1));
 }
 ```
 

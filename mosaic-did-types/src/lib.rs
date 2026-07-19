@@ -26,8 +26,11 @@ extern crate alloc;
 pub mod auth;
 pub mod did;
 pub mod document;
+pub mod history;
 pub mod operation;
+pub mod rights;
 pub mod signature;
+pub mod signed;
 pub mod validity;
 
 pub use auth::*;

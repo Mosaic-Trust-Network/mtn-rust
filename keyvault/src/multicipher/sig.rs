@@ -146,6 +146,50 @@ impl From<SecpSignature> for MSignature {
     }
 }
 
+// ========== SCALE codec (Substrate) ==========
+
+#[cfg(feature = "substrate")]
+mod scale_impls {
+    use super::*;
+    use alloc::vec::Vec;
+    use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, EncodeLike};
+    use scale_info::TypeInfo;
+
+    impl EncodeLike for MSignature {}
+
+    impl Encode for MSignature {
+        fn encode_to<W: parity_scale_codec::Output + ?Sized>(&self, dest: &mut W) {
+            let bytes = self.to_bytes();
+            Encode::encode_to(&bytes, dest);
+        }
+    }
+
+    impl Decode for MSignature {
+        fn decode<I: parity_scale_codec::Input>(
+            input: &mut I,
+        ) -> core::result::Result<Self, parity_scale_codec::Error> {
+            let bytes = Vec::<u8>::decode(input)
+                .map_err(|_| parity_scale_codec::Error::from("failed to decode MSignature bytes"))?;
+            MSignature::from_bytes(bytes)
+                .map_err(|_| parity_scale_codec::Error::from("invalid multicipher signature"))
+        }
+    }
+
+    impl DecodeWithMemTracking for MSignature {}
+
+    impl TypeInfo for MSignature {
+        type Identity = Self;
+        fn type_info() -> scale_info::Type {
+            scale_info::Type::builder()
+                .path(scale_info::Path::new("MSignature", "iop_keyvault::multicipher"))
+                .composite(
+                    scale_info::build::Fields::unnamed()
+                        .field(|f| f.ty::<Vec<u8>>().type_name("MSignature")),
+                )
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     mod parse_signature {
@@ -409,6 +453,32 @@ mod test {
             // Cross-suite verification fails (type mismatch)
             assert!(!legacy_pk.verify(msg.as_ref(), &blake3_sig));
             assert!(!blake3_pk.verify(msg.as_ref(), &legacy_sig));
+        }
+    }
+
+    #[cfg(feature = "substrate")]
+    mod scale_roundtrip {
+        use parity_scale_codec::{Decode, Encode};
+        use crate::multicipher::MSignature;
+
+        #[test]
+        fn ed25519_signature_scale_roundtrip() {
+            let sig_str = "sezAhoNep8B9HTRCAYaJFPL1hNgqxfjM72UD4B75s258aF6pPCtDf5trXm7mppZVzT6ynpC3jyH6h3Li7r9Rw4yjeG2";
+            let sig = sig_str.parse::<MSignature>().unwrap();
+            let encoded = sig.encode();
+            let decoded = MSignature::decode(&mut &encoded[..]).unwrap();
+            assert_eq!(sig, decoded);
+            assert_eq!(decoded.to_string(), sig_str);
+        }
+
+        #[test]
+        fn secp256k1_signature_scale_roundtrip() {
+            let sig_str = "ssz8XFYUjuSro2dzq4mkMMCMJkPH2SEEc6CVJ9VCG9AUXVvRP9QHKY78BnSvpb9zyz5yZf8Pzcq82DzZwLC7xSeGNgq";
+            let sig = sig_str.parse::<MSignature>().unwrap();
+            let encoded = sig.encode();
+            let decoded = MSignature::decode(&mut &encoded[..]).unwrap();
+            assert_eq!(sig, decoded);
+            assert_eq!(decoded.to_string(), sig_str);
         }
     }
 }

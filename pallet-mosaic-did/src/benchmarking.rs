@@ -224,6 +224,7 @@ fn setup_did_with_right<T: Config>() {
                 granted_at_height: 1,
                 expires_at_height: None,
                 revoked_at_height: None,
+                matures_at_height: None,
             })
             .expect("right fits");
     });

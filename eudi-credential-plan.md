@@ -311,10 +311,10 @@ The plan's rights document (§3.5) is:
 
 ```json
 {
-  "$schema": "https://mosaic.network/ns/did-rights/v1",
+  "$schema": "https://mosaic-trust.net/ns/did-rights/v1",
   "rights": [
-    { "keyRef": "key-impersonate-1", "rights": ["impersonate"] },
-    { "keyRef": "key-issuer-1",  "rights": ["issue", "revoke"] }
+    { "keyRef": "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH", "rights": ["impersonate"] },
+    { "keyRef": "iozXyZ9AbC3DfG7HjK2MnP5QrSt8UvW1Yz4BcE6FgH9Jk",  "rights": ["issue", "revoke"] }
   ]
 }
 ```

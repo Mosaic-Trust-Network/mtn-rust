@@ -202,7 +202,7 @@ impl fmt::Display for DidParseError {
 
 /// Key identifier within a DID document.
 ///
-/// References a specific verification method, e.g. `"key-1"`, `"key-recovery"`.
+/// References a specific verification method, e.g. `"ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH"`.
 /// Stored as bounded bytes with a maximum length of 64.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(

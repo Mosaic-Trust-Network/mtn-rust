@@ -118,6 +118,8 @@ pub fn validate_did_operation<T: Config>(
             );
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
         }
+
+        _ => return Err(Error::<T>::UnsupportedOperation.into()),
     }
 
     Ok(())

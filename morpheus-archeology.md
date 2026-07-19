@@ -276,7 +276,7 @@ The plan needs this for the `fingerprint` computation in §6.4 (SMT leaf =
 
 The current `DidDocument` struct lacks the mosaic-specific properties described in §5.2:
 
-**Custom mosaic properties** (registered under `https://mosaic.network/ns/did/v1`):
+**Custom mosaic properties** (registered under `https://mosaic-trust.net/ns/did/v1`):
 - `mosaic:createdAtHeight` — block at which the DID was created
 - `mosaic:lastModifiedAtHeight` — block at which the most recent state change occurred
 - `mosaic:tombstonedAtHeight` — block at which the DID was deactivated (null if alive)

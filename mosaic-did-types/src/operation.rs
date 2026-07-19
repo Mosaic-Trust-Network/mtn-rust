@@ -247,6 +247,36 @@ pub enum DidOperation {
     /// - No further operations are accepted
     /// - Historical state remains queryable
     TombstoneDid { did: Did },
+
+    /// Publish a new rights-document commitment.
+    ///
+    /// Requires `Right::Update`. The `sequence` MUST equal `stored_sequence + 1`
+    /// — no gaps. Every sequence number must be anchored on-chain for the
+    /// verifier to have a provable timestamp for that version.
+    UpdateCommitment {
+        did: Did,
+        commitment: ContentId,
+        sequence: u64,
+    },
+
+    /// Announce a governed operation (commitment reset or tombstone).
+    ///
+    /// Locks a deposit and starts a delay window. Only one governed operation
+    /// can be pending per DID at a time.
+    AnnounceGoverned {
+        did: Did,
+        operation: GovernedOperation,
+    },
+
+    /// Cancel a pending governed operation.
+    ///
+    /// Releases the deposit to the gas wallet that submitted the cancel.
+    CancelGoverned { did: Did },
+
+    /// Execute a previously announced governed operation.
+    ///
+    /// Only valid after the delay window has elapsed and before expiry.
+    ExecuteGoverned { did: Did },
 }
 
 impl DidOperation {
@@ -258,6 +288,10 @@ impl DidOperation {
             DidOperation::AddRight { did, .. } => did,
             DidOperation::RevokeRight { did, .. } => did,
             DidOperation::TombstoneDid { did } => did,
+            DidOperation::UpdateCommitment { did, .. } => did,
+            DidOperation::AnnounceGoverned { did, .. } => did,
+            DidOperation::CancelGoverned { did } => did,
+            DidOperation::ExecuteGoverned { did } => did,
         }
     }
 
@@ -269,8 +303,36 @@ impl DidOperation {
             DidOperation::AddRight { .. } => Right::Delegate,
             DidOperation::RevokeRight { .. } => Right::Delegate,
             DidOperation::TombstoneDid { .. } => Right::Update,
+            DidOperation::UpdateCommitment { .. } => Right::Update,
+            DidOperation::AnnounceGoverned { .. } => Right::Update,
+            DidOperation::CancelGoverned { .. } => Right::Update,
+            DidOperation::ExecuteGoverned { .. } => Right::Update,
         }
     }
+}
+
+/// A governed operation that requires a delay window before execution.
+///
+/// Destructive state changes (commitment resets, tombstones) follow a shared
+/// Announce → Delay → Execute lifecycle backed by an economic deposit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "substrate",
+    derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
+)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub enum GovernedOperation {
+    /// Reset the commitment hash chain to a new starting point.
+    CommitmentReset {
+        /// Content ID of a document explaining the reason for the reset.
+        reason: ContentId,
+        /// The new commitment hash.
+        commitment: ContentId,
+        /// The new sequence number (must equal stored_sequence + 1).
+        sequence: u64,
+    },
+    /// Permanently deactivate the DID.
+    Tombstone,
 }
 
 /// A top-level SSI operation: either a DID operation or a BeforeProof timestamp.
@@ -316,6 +378,10 @@ pub enum DidOperationType {
     AddRight,
     RevokeRight,
     TombstoneDid,
+    UpdateCommitment,
+    AnnounceGoverned,
+    CancelGoverned,
+    ExecuteGoverned,
 }
 
 impl From<&DidOperation> for DidOperationType {
@@ -326,6 +392,10 @@ impl From<&DidOperation> for DidOperationType {
             DidOperation::AddRight { .. } => DidOperationType::AddRight,
             DidOperation::RevokeRight { .. } => DidOperationType::RevokeRight,
             DidOperation::TombstoneDid { .. } => DidOperationType::TombstoneDid,
+            DidOperation::UpdateCommitment { .. } => DidOperationType::UpdateCommitment,
+            DidOperation::AnnounceGoverned { .. } => DidOperationType::AnnounceGoverned,
+            DidOperation::CancelGoverned { .. } => DidOperationType::CancelGoverned,
+            DidOperation::ExecuteGoverned { .. } => DidOperationType::ExecuteGoverned,
         }
     }
 }
@@ -435,5 +505,73 @@ mod tests {
         assert!("admin".parse::<Right>().is_err());
         assert!("rsa".parse::<KeyType>().is_err());
         assert!("signing".parse::<KeyPurpose>().is_err());
+    }
+
+    #[test]
+    fn update_commitment_operation() {
+        let did = Did::alice();
+        let commitment = ContentId::from_bytes(b"test commitment");
+        let op = DidOperation::UpdateCommitment {
+            did: did.clone(),
+            commitment,
+            sequence: 1,
+        };
+        assert_eq!(op.did(), &did);
+        assert_eq!(op.required_right(), Right::Update);
+    }
+
+    #[test]
+    fn governed_operation_variants() {
+        let did = Did::alice();
+        let commitment = ContentId::from_bytes(b"new commitment");
+        let reason = ContentId::from_bytes(b"reason doc");
+
+        let announce = DidOperation::AnnounceGoverned {
+            did: did.clone(),
+            operation: GovernedOperation::CommitmentReset {
+                reason,
+                commitment,
+                sequence: 1,
+            },
+        };
+        assert_eq!(announce.did(), &did);
+        assert_eq!(announce.required_right(), Right::Update);
+
+        let cancel = DidOperation::CancelGoverned { did: did.clone() };
+        assert_eq!(cancel.did(), &did);
+        assert_eq!(cancel.required_right(), Right::Update);
+
+        let execute = DidOperation::ExecuteGoverned { did: did.clone() };
+        assert_eq!(execute.did(), &did);
+        assert_eq!(execute.required_right(), Right::Update);
+    }
+
+    #[test]
+    fn governed_operation_type_conversion() {
+        let did = Did::alice();
+        let ops = alloc::vec![
+            DidOperation::UpdateCommitment {
+                did: did.clone(),
+                commitment: ContentId::from_bytes(b"c1"),
+                sequence: 1,
+            },
+            DidOperation::AnnounceGoverned {
+                did: did.clone(),
+                operation: GovernedOperation::Tombstone,
+            },
+            DidOperation::CancelGoverned { did: did.clone() },
+            DidOperation::ExecuteGoverned { did },
+        ];
+
+        let types: Vec<DidOperationType> = ops.iter().map(DidOperationType::from).collect();
+        assert_eq!(
+            types,
+            alloc::vec![
+                DidOperationType::UpdateCommitment,
+                DidOperationType::AnnounceGoverned,
+                DidOperationType::CancelGoverned,
+                DidOperationType::ExecuteGoverned,
+            ]
+        );
     }
 }

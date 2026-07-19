@@ -44,4 +44,9 @@ std = [
 	"serde?/std",
 ]
 serde = [ "bounded-collections/serde", "dep:serde" ]
-substrate = [ "json-digest/substrate", "parity-scale-codec", "scale-info" ]
+substrate = [
+	"iop-keyvault/substrate",
+	"json-digest/substrate",
+	"parity-scale-codec",
+	"scale-info",
+]

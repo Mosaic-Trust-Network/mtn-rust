@@ -286,6 +286,7 @@ mod unit_tests {
                 granted_at_height: 10,
                 expires_at_height: Some(100),
                 revoked_at_height: None,
+                matures_at_height: None,
             };
             state.rights.try_push(grant).unwrap();
 

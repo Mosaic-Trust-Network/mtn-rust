@@ -156,6 +156,8 @@ pub mod pallet {
         InvalidPublicKey,
         /// Storage bounds exceeded (too many keys, rights, or nonces).
         StorageBoundsExceeded,
+        /// Operation not yet implemented in this pallet version.
+        UnsupportedOperation,
     }
 
     // ========== EXTRINSICS ==========
@@ -175,6 +177,7 @@ pub mod pallet {
                         DidOperation::AddRight { .. } => T::WeightInfo::add_right(),
                         DidOperation::RevokeRight { .. } => T::WeightInfo::revoke_right(),
                         DidOperation::TombstoneDid { .. } => T::WeightInfo::tombstone_did(),
+                        _ => T::WeightInfo::tombstone_did(), // placeholder for new variants
                     },
                     SsiOperation::BeforeProof(_) => T::WeightInfo::register_before_proof(),
                 };
@@ -312,6 +315,7 @@ pub mod pallet {
                         granted_at_height: height_u32,
                         expires_at_height: *expires_at_height,
                         revoked_at_height: None,
+                        matures_at_height: None,
                     };
 
                     DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
@@ -375,6 +379,8 @@ pub mod pallet {
 
                     Self::deposit_event(Event::DidTombstoned { did, block_height });
                 }
+
+                _ => return Err(Error::<T>::UnsupportedOperation.into()),
             }
 
             Ok(())
