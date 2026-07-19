@@ -119,6 +119,21 @@ pub fn validate_did_operation<T: Config>(
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
         }
 
+        DidOperation::UpdateCommitment { did: _, commitment: _, sequence } => {
+            let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
+            ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
+            validate_nonce::<T>(state, signed_op)?;
+            ensure!(
+                state.has_right_at(&signed_op.signer_key_ref, Right::Update, height_u32),
+                Error::<T>::InsufficientRight
+            );
+            validate_signature_from_state::<T>(signed_op, state, height_u32)?;
+
+            // Sequence must equal stored_sequence + 1 (gapless).
+            let stored_sequence = state.commitment.map(|(seq, _)| seq).unwrap_or(0);
+            ensure!(*sequence == stored_sequence + 1, Error::<T>::InvalidCommitmentSequence);
+        }
+
         _ => return Err(Error::<T>::UnsupportedOperation.into()),
     }
 

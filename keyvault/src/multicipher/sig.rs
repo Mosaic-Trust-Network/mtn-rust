@@ -168,8 +168,9 @@ mod scale_impls {
         fn decode<I: parity_scale_codec::Input>(
             input: &mut I,
         ) -> core::result::Result<Self, parity_scale_codec::Error> {
-            let bytes = Vec::<u8>::decode(input)
-                .map_err(|_| parity_scale_codec::Error::from("failed to decode MSignature bytes"))?;
+            let bytes = Vec::<u8>::decode(input).map_err(|_| {
+                parity_scale_codec::Error::from("failed to decode MSignature bytes")
+            })?;
             MSignature::from_bytes(bytes)
                 .map_err(|_| parity_scale_codec::Error::from("invalid multicipher signature"))
         }
@@ -458,8 +459,8 @@ mod test {
 
     #[cfg(feature = "substrate")]
     mod scale_roundtrip {
-        use parity_scale_codec::{Decode, Encode};
         use crate::multicipher::MSignature;
+        use parity_scale_codec::{Decode, Encode};
 
         #[test]
         fn ed25519_signature_scale_roundtrip() {

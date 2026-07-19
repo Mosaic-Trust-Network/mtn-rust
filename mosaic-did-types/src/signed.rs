@@ -171,10 +171,7 @@ mod tests {
 
     #[test]
     fn after_proof_construction() {
-        let proof = AfterProof {
-            block_height: 42,
-            block_hash: b"0x0400abcdef".to_vec(),
-        };
+        let proof = AfterProof { block_height: 42, block_hash: b"0x0400abcdef".to_vec() };
         assert_eq!(proof.block_height, 42);
         assert_eq!(proof.block_hash, b"0x0400abcdef");
     }
@@ -187,14 +184,8 @@ mod tests {
             height: u32,
         }
 
-        let content = SmtContent {
-            root: "cjuXXXX".into(),
-            height: 10,
-        };
-        let proof = AfterProof {
-            block_height: 42,
-            block_hash: b"0x0400".to_vec(),
-        };
+        let content = SmtContent { root: "cjuXXXX".into(), height: 10 };
+        let proof = AfterProof { block_height: 42, block_hash: b"0x0400".to_vec() };
         let envelope = AfterEnvelope { content: content.clone(), proof: proof.clone() };
         assert_eq!(envelope.content, content);
         assert_eq!(envelope.proof, proof);
@@ -202,10 +193,7 @@ mod tests {
 
     #[test]
     fn after_envelope_h_start_calculation() {
-        let proof = AfterProof {
-            block_height: 42,
-            block_hash: b"hash".to_vec(),
-        };
+        let proof = AfterProof { block_height: 42, block_hash: b"hash".to_vec() };
         // H_start = block_height + 1 per §6.2
         let h_start = proof.block_height + 1;
         assert_eq!(h_start, 43);

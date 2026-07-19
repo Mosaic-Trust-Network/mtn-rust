@@ -253,20 +253,13 @@ pub enum DidOperation {
     /// Requires `Right::Update`. The `sequence` MUST equal `stored_sequence + 1`
     /// — no gaps. Every sequence number must be anchored on-chain for the
     /// verifier to have a provable timestamp for that version.
-    UpdateCommitment {
-        did: Did,
-        commitment: ContentId,
-        sequence: u64,
-    },
+    UpdateCommitment { did: Did, commitment: ContentId, sequence: u64 },
 
     /// Announce a governed operation (commitment reset or tombstone).
     ///
     /// Locks a deposit and starts a delay window. Only one governed operation
     /// can be pending per DID at a time.
-    AnnounceGoverned {
-        did: Did,
-        operation: GovernedOperation,
-    },
+    AnnounceGoverned { did: Did, operation: GovernedOperation },
 
     /// Cancel a pending governed operation.
     ///
@@ -511,11 +504,7 @@ mod tests {
     fn update_commitment_operation() {
         let did = Did::alice();
         let commitment = ContentId::from_bytes(b"test commitment");
-        let op = DidOperation::UpdateCommitment {
-            did: did.clone(),
-            commitment,
-            sequence: 1,
-        };
+        let op = DidOperation::UpdateCommitment { did: did.clone(), commitment, sequence: 1 };
         assert_eq!(op.did(), &did);
         assert_eq!(op.required_right(), Right::Update);
     }
@@ -528,11 +517,7 @@ mod tests {
 
         let announce = DidOperation::AnnounceGoverned {
             did: did.clone(),
-            operation: GovernedOperation::CommitmentReset {
-                reason,
-                commitment,
-                sequence: 1,
-            },
+            operation: GovernedOperation::CommitmentReset { reason, commitment, sequence: 1 },
         };
         assert_eq!(announce.did(), &did);
         assert_eq!(announce.required_right(), Right::Update);

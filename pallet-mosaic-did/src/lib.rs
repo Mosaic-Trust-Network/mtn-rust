@@ -122,6 +122,17 @@ pub mod pallet {
 
         /// BeforeProof timestamp registered.
         BeforeProofRegistered { content_id: ContentId, block_height: BlockNumberFor<T> },
+
+        /// A rights-document commitment was published on-chain.
+        CommitmentUpdated {
+            did: Did,
+            commitment: ContentId,
+            sequence: u64,
+            signer_key_ref: Vec<u8>,
+            block_height: BlockNumberFor<T>,
+            /// Previous state before this update: `Some((sequence, commitment))` or `None`.
+            previous_version_id: Option<(u64, ContentId)>,
+        },
     }
 
     // ========== ERRORS ==========
@@ -158,6 +169,8 @@ pub mod pallet {
         StorageBoundsExceeded,
         /// Operation not yet implemented in this pallet version.
         UnsupportedOperation,
+        /// Commitment sequence does not equal stored_sequence + 1 (gap or duplicate).
+        InvalidCommitmentSequence,
     }
 
     // ========== EXTRINSICS ==========
@@ -177,6 +190,7 @@ pub mod pallet {
                         DidOperation::AddRight { .. } => T::WeightInfo::add_right(),
                         DidOperation::RevokeRight { .. } => T::WeightInfo::revoke_right(),
                         DidOperation::TombstoneDid { .. } => T::WeightInfo::tombstone_did(),
+                        DidOperation::UpdateCommitment { .. } => T::WeightInfo::update_commitment(),
                         _ => T::WeightInfo::tombstone_did(), // placeholder for new variants
                     },
                     SsiOperation::BeforeProof(_) => T::WeightInfo::register_before_proof(),
@@ -378,6 +392,33 @@ pub mod pallet {
                     })?;
 
                     Self::deposit_event(Event::DidTombstoned { did, block_height });
+                }
+
+                DidOperation::UpdateCommitment { did: _, commitment, sequence } => {
+                    let previous_version_id = DidStates::<T>::try_mutate(
+                        &did,
+                        |maybe_state| -> Result<_, DispatchError> {
+                            let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
+
+                            let prev = state.commitment;
+
+                            state.commitment = Some((*sequence, *commitment));
+                            state.last_modified_at = (height_u32, 0); // TODO: extrinsic index
+                            state
+                                .update_nonce(&signed_op.signer_key_ref, signed_op.nonce)
+                                .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
+                            Ok(prev)
+                        },
+                    )?;
+
+                    Self::deposit_event(Event::CommitmentUpdated {
+                        did,
+                        commitment: *commitment,
+                        sequence: *sequence,
+                        signer_key_ref: signed_op.signer_key_ref.as_bytes().to_vec(),
+                        block_height,
+                        previous_version_id,
+                    });
                 }
 
                 _ => return Err(Error::<T>::UnsupportedOperation.into()),

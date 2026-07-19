@@ -374,8 +374,8 @@ mod test {
 
     #[cfg(feature = "substrate")]
     mod scale_roundtrip {
-        use parity_scale_codec::{Decode, Encode};
         use crate::multicipher::MKeyId;
+        use parity_scale_codec::{Decode, Encode};
 
         #[test]
         fn ed25519_key_id_scale_roundtrip() {

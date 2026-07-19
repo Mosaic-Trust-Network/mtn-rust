@@ -10,6 +10,7 @@ pub trait WeightInfo {
     fn add_right() -> Weight;
     fn revoke_right() -> Weight;
     fn tombstone_did() -> Weight;
+    fn update_commitment() -> Weight;
     fn register_before_proof() -> Weight;
 }
 
@@ -66,6 +67,14 @@ impl WeightInfo for () {
         //  Measured:  `3325`
         //  Estimated: `18182`
         // Minimum execution time: 358_223_000 picoseconds.
+        Weight::from_parts(368_094_000, 18182)
+            .saturating_add(RocksDbWeight::get().reads(1_u64))
+            .saturating_add(RocksDbWeight::get().writes(1_u64))
+    }
+    /// Storage: `Did::DidStates` (r:1 w:1)
+    /// Proof: `Did::DidStates` (`max_values`: None, `max_size`: Some(14717), added: 17192, mode: `MaxEncodedLen`)
+    fn update_commitment() -> Weight {
+        // Same pattern as tombstone_did: one read + one write on DidStates.
         Weight::from_parts(368_094_000, 18182)
             .saturating_add(RocksDbWeight::get().reads(1_u64))
             .saturating_add(RocksDbWeight::get().writes(1_u64))

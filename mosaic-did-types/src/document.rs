@@ -16,7 +16,9 @@ use scale_info::TypeInfo;
 use serde::{Deserialize, Serialize};
 
 use crate::did::{ContentId, Did, KeyRef};
-use crate::operation::{GovernedOperation, KeyPurpose, KeyType, MAX_PUBLIC_KEY_LEN, MAX_PURPOSES_PER_KEY, Right};
+use crate::operation::{
+    GovernedOperation, KeyPurpose, KeyType, MAX_PUBLIC_KEY_LEN, MAX_PURPOSES_PER_KEY, Right,
+};
 use crate::validity::is_height_valid;
 
 // ========== PROTOCOL CONSTANTS ==========
@@ -564,10 +566,7 @@ mod tests {
         assert!(grant.is_active_at(100));
 
         // None means immediate maturity — active as soon as granted
-        let immediate = RightGrant {
-            matures_at_height: None,
-            ..grant.clone()
-        };
+        let immediate = RightGrant { matures_at_height: None, ..grant.clone() };
         assert!(immediate.is_active_at(10));
     }
 

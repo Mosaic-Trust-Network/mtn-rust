@@ -17,7 +17,7 @@ use crate::operation::Right;
 use crate::rights::RightsDocument;
 
 #[cfg(test)]
-use crate::operation::{KeyType, KeyPurpose};
+use crate::operation::{KeyPurpose, KeyType};
 
 /// A commitment version in the DID history, reconstructed from events.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,10 +110,7 @@ impl DidHistory {
     /// Returns the most recent commitment whose `published_at_height <= height`,
     /// or `None` if no commitment was published before or at that height.
     pub fn commitment_at(&self, height: u32) -> Option<&CommitmentVersion> {
-        self.commitments
-            .iter()
-            .rev()
-            .find(|cv| cv.published_at_height <= height)
+        self.commitments.iter().rev().find(|cv| cv.published_at_height <= height)
     }
 
     /// Return all keys valid at a given height.
@@ -121,10 +118,7 @@ impl DidHistory {
     /// A key is valid if it was added at or before `height` and has not been
     /// revoked or expired by that height.
     pub fn valid_keys_at(&self, height: u32) -> Vec<&crate::document::VerificationMethod> {
-        self.keys
-            .iter()
-            .filter(|k| k.is_valid_at(height))
-            .collect()
+        self.keys.iter().filter(|k| k.is_valid_at(height)).collect()
     }
 
     /// Check whether a key held a specific right at `height`.
@@ -132,10 +126,7 @@ impl DidHistory {
     /// Union semantics (§3.7): checks on-chain `RightLifecycle` entries first,
     /// then falls through to the commitment document via the `CommitmentResolver`.
     pub fn has_right_at(
-        &self,
-        key_ref: &KeyRef,
-        right: Right,
-        height: u32,
+        &self, key_ref: &KeyRef, right: Right, height: u32,
         commitment_resolver: &dyn CommitmentResolver,
     ) -> bool {
         // Check 1: on-chain RightLifecycle (any right type)
@@ -182,10 +173,7 @@ mod tests {
 
     impl CommitmentResolver for TestResolver {
         fn resolve(&self, content_id: &ContentId) -> Option<RightsDocument> {
-            self.documents
-                .iter()
-                .find(|(cid, _)| cid == content_id)
-                .map(|(_, doc)| doc.clone())
+            self.documents.iter().find(|(cid, _)| cid == content_id).map(|(_, doc)| doc.clone())
         }
     }
 
@@ -230,22 +218,10 @@ mod tests {
         };
 
         assert_eq!(history.commitment_at(50), None);
-        assert_eq!(
-            history.commitment_at(100).unwrap().commitment,
-            test_commitment(1)
-        );
-        assert_eq!(
-            history.commitment_at(150).unwrap().commitment,
-            test_commitment(1)
-        );
-        assert_eq!(
-            history.commitment_at(200).unwrap().commitment,
-            test_commitment(2)
-        );
-        assert_eq!(
-            history.commitment_at(300).unwrap().commitment,
-            test_commitment(2)
-        );
+        assert_eq!(history.commitment_at(100).unwrap().commitment, test_commitment(1));
+        assert_eq!(history.commitment_at(150).unwrap().commitment, test_commitment(1));
+        assert_eq!(history.commitment_at(200).unwrap().commitment, test_commitment(2));
+        assert_eq!(history.commitment_at(300).unwrap().commitment, test_commitment(2));
     }
 
     #[test]
@@ -411,10 +387,7 @@ mod tests {
         assert!(rl.is_active_at(100));
 
         // None means immediate maturity — active as soon as granted
-        let immediate = RightLifecycle {
-            matures_at_height: None,
-            ..rl
-        };
+        let immediate = RightLifecycle { matures_at_height: None, ..rl };
         assert!(immediate.is_active_at(10));
     }
 }
