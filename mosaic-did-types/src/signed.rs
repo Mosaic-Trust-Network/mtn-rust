@@ -4,8 +4,6 @@
 //! providing a standard envelope format for Verifiable Presentations,
 //! AfterProofs, and other signed documents.
 
-use alloc::vec::Vec;
-
 use iop_keyvault::multicipher::MSignature;
 
 use crate::did::ContentId;
@@ -31,56 +29,48 @@ pub struct Signed<T> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SignedEnvelope {
     /// The public key as a multicipher string (e.g. "pezFVen3X...").
-    pub public_key: Vec<u8>,
-    /// The raw signature bytes.
-    pub bytes: Vec<u8>,
+    #[cfg_attr(feature = "serde", serde(rename = "publicKey"))]
+    pub public_key: alloc::string::String,
+    /// The multicipher signature string (e.g. "sez8TKYaZiP...").
+    pub bytes: alloc::string::String,
 }
 
 impl<T> Signed<T> {
     /// Create a new signed envelope.
-    pub fn new(content: T, public_key_bytes: Vec<u8>, signature: MSignature) -> Self {
+    pub fn new(content: T, public_key: alloc::string::String, signature: &MSignature) -> Self {
         Self {
             content,
-            signature: SignedEnvelope { public_key: public_key_bytes, bytes: signature.to_bytes() },
+            signature: SignedEnvelope { public_key, bytes: alloc::format!("{signature}") },
             nonce: None,
         }
     }
 
     /// Create a new signed envelope with a nonce.
     pub fn new_with_nonce(
-        content: T, public_key_bytes: Vec<u8>, signature: MSignature, nonce: u64,
+        content: T, public_key: alloc::string::String, signature: &MSignature, nonce: u64,
     ) -> Self {
         Self {
             content,
-            signature: SignedEnvelope { public_key: public_key_bytes, bytes: signature.to_bytes() },
+            signature: SignedEnvelope { public_key, bytes: alloc::format!("{signature}") },
             nonce: Some(nonce),
         }
     }
 }
 
 /// Trait for types that can be hashed to produce a content ID.
-///
-/// Provides consistent "what bytes get signed" semantics across all types.
 pub trait Content: Clone {
     /// Compute the BLAKE3-256 flat-hash content ID from this value's serialization.
     fn content_id(&self) -> ContentId;
 }
 
 /// Trait for types that can be signed.
-///
-/// Extends `Content` with signing-specific serialization.
 pub trait Signable: Content {
     /// The canonical bytes that are signed.
-    ///
-    /// By default, this is the content ID bytes. Override for custom signing payloads.
-    fn content_to_sign(&self) -> Vec<u8> {
+    fn content_to_sign(&self) -> alloc::vec::Vec<u8> {
         self.content_id().as_bytes().to_vec()
     }
 
     /// Compute the fingerprint (SMT leaf hash) of the signed envelope.
-    ///
-    /// This is `blake3(canonical_json(self))` — used as the leaf hash in
-    /// Sparse Merkle Tree batching (§6.4).
     fn fingerprint(&self) -> ContentId {
         self.content_id()
     }
@@ -88,70 +78,61 @@ pub trait Signable: Content {
 
 /// A proof that a signature was created after a specific block height.
 ///
-/// The signer observes a recent blockhash and embeds it in an `AfterEnvelope`.
 /// Since the signer could not have known the blockhash before that block was
-/// produced, `H_start = block_height + 1` is a cryptographic lower bound on
-/// when the signature was created (§6.2).
+/// produced, `H_start = block_height + 1` is a cryptographic lower bound.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AfterProof {
-    /// The block height whose hash is referenced.
+    #[cfg_attr(feature = "serde", serde(rename = "blockHeight"))]
     pub block_height: u32,
-    /// The hash of the block at `block_height`.
-    pub block_hash: Vec<u8>,
+    #[cfg_attr(feature = "serde", serde(rename = "blockHash"))]
+    pub block_hash: alloc::string::String,
 }
 
 /// An envelope wrapping arbitrary content with an `AfterProof`.
-///
-/// When signed, this creates a `Signed<AfterEnvelope<T>>` — a lower-bound
-/// time-bounded signature. The proof proves the signature was created after
-/// `block_height` (§6.2).
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct AfterEnvelope<T> {
-    /// The signed content (e.g. an SMT batch root or a document digest).
     pub content: T,
-    /// The lower-bound time proof.
     pub proof: AfterProof,
 }
 
-#[cfg(test)]
-use crate::signature::ed25519_blake3_signature;
+/// SMT batch content for `AfterEnvelope<SmtContent>`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SmtContent {
+    pub root: alloc::string::String,
+    pub height: u32,
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::signature::ed25519_blake3_signature;
 
     #[test]
     fn signed_envelope_construction() {
-        let pk_bytes = b"test-public-key-bytes".to_vec();
         let sig = ed25519_blake3_signature([0u8; 64]);
-
-        let signed = Signed::new("hello", pk_bytes.clone(), sig);
+        let signed = Signed::new("hello", "test-key".into(), &sig);
         assert_eq!(signed.nonce, None);
-        assert_eq!(signed.signature.public_key, pk_bytes);
+        assert_eq!(signed.signature.public_key, "test-key");
     }
 
     #[test]
     fn signed_envelope_with_nonce() {
-        let pk_bytes = b"test-public-key".to_vec();
         let sig = ed25519_blake3_signature([0u8; 64]);
-
-        let signed = Signed::new_with_nonce("hello", pk_bytes, sig, 42);
+        let signed = Signed::new_with_nonce("hello", "test-key".into(), &sig, 42);
         assert_eq!(signed.nonce, Some(42));
     }
 
     #[cfg(feature = "serde")]
     #[test]
     fn signed_json_roundtrip() {
-        let pk_bytes = b"test-public-key".to_vec();
         let sig = ed25519_blake3_signature([0u8; 64]);
-
-        let signed = Signed::new("hello", pk_bytes, sig);
+        let signed = Signed::new("hello", "test-key".into(), &sig);
         let json = serde_json::to_string(&signed).unwrap();
         assert!(json.contains("\"content\""));
         assert!(json.contains("\"signature\""));
-
         let parsed: Signed<String> = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.content, "hello");
     }
@@ -159,31 +140,23 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn signed_json_omits_none_nonce() {
-        let pk_bytes = b"key".to_vec();
         let sig = ed25519_blake3_signature([0u8; 64]);
-
-        let signed = Signed::new("x", pk_bytes, sig);
+        let signed = Signed::new("x", "key".into(), &sig);
         let json = serde_json::to_string(&signed).unwrap();
         assert!(!json.contains("nonce"));
     }
 
     #[test]
     fn after_proof_construction() {
-        let proof = AfterProof { block_height: 42, block_hash: b"0x0400abcdef".to_vec() };
+        let proof = AfterProof { block_height: 42, block_hash: "0x0400abcdef".into() };
         assert_eq!(proof.block_height, 42);
-        assert_eq!(proof.block_hash, b"0x0400abcdef");
+        assert_eq!(proof.block_hash, "0x0400abcdef");
     }
 
     #[test]
     fn after_envelope_construction() {
-        #[derive(Clone, Debug, PartialEq, Eq)]
-        struct SmtContent {
-            root: alloc::string::String,
-            height: u32,
-        }
-
         let content = SmtContent { root: "cjuXXXX".into(), height: 10 };
-        let proof = AfterProof { block_height: 42, block_hash: b"0x0400".to_vec() };
+        let proof = AfterProof { block_height: 42, block_hash: "0x0400".into() };
         let envelope = AfterEnvelope { content: content.clone(), proof: proof.clone() };
         assert_eq!(envelope.content, content);
         assert_eq!(envelope.proof, proof);
@@ -191,9 +164,48 @@ mod tests {
 
     #[test]
     fn after_envelope_h_start_calculation() {
-        let proof = AfterProof { block_height: 42, block_hash: b"hash".to_vec() };
-        // H_start = block_height + 1 per §6.2
-        let h_start = proof.block_height + 1;
-        assert_eq!(h_start, 43);
+        let proof = AfterProof { block_height: 42, block_hash: "0xhash".into() };
+        assert_eq!(proof.block_height + 1, 43);
+    }
+
+    // ===== Golden vectors (from morpheus-proto) =====
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn after_envelope_golden_vector_single_document() {
+        let sk_bytes: &[u8; 32] =
+            b"\x9d\x61\xb1\x9d\xef\xfd\x5a\x60\xba\x84\x4a\xf4\x92\xec\x2c\xc4\x44\x49\xc5\x69\x7b\x32\x69\x19\x70\x3b\xac\x03\x1c\xae\x7f\x60";
+        let pk_string = "pezFVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z";
+
+        let content = SmtContent {
+            root: "cjuF2OXGNIY3Zl5mFXZ9rq1s6dwq_QXtrPtqUjxrtga2jw".into(),
+            height: 10,
+        };
+        let proof = AfterProof {
+            block_height: 42,
+            block_hash: "0x0400000000000000000000000000000000000000000000000000000000000000".into(),
+        };
+        let block_height = proof.block_height;
+        let envelope = AfterEnvelope { content, proof };
+
+        // afterEnvelopeDigest
+        let digest = json_digest::digest_data(&envelope).expect("digest_data should succeed");
+        assert_eq!(digest, "cjuwowG6jmmPTiRFoayB76MQkytv1aFtDkRIO2q6eBirNs", "afterEnvelopeDigest");
+
+        // Sign and verify
+        use iop_keyvault::ed25519::EdPrivateKey;
+        use iop_keyvault::{PrivateKey, PublicKey};
+        let sk = EdPrivateKey::from_bytes(sk_bytes).expect("valid rfc8032 key");
+        let pk = sk.public_key();
+        let sig = sk.sign(digest.as_bytes());
+        assert!(pk.verify(digest.as_bytes(), &sig), "signature must be valid");
+
+        // Build Signed<AfterEnvelope> and compute fingerprint
+        let signed = Signed::new(envelope.clone(), pk_string.into(), &MSignature::Ed25519(sig));
+        let fingerprint =
+            json_digest::digest_data(&signed).expect("fingerprint digest should succeed");
+        assert_eq!(fingerprint, "cjua2swGJzAEP4vNAiVbD6lvLvwPDQkm9jnNZt4CDYfuZY", "fingerprint");
+
+        assert_eq!(block_height + 1, 43);
     }
 }
