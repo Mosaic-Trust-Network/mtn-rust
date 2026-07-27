@@ -1,5 +1,6 @@
 #[cfg(feature = "std")]
 use rand::{Rng, rng};
+use alloc::string::String;
 use serde::{Deserialize, Serialize};
 
 /// Multibase-encoded random content, e.g. "urvU8F6HmEol5zOmHh_nnS1RiX5r3T2t9U_d_kQY7ZC-I"

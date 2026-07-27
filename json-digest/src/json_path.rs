@@ -2,6 +2,8 @@
 //! JQ patterns, see <https://stedolan.github.io/jq/manual/#Basicfilters>
 
 use crate::error::{JsonDigestError, Result};
+use alloc::borrow::ToOwned;
+use alloc::vec::Vec;
 
 /// Checks if any of the paths exist in the provided value.
 pub fn matches(tree: &serde_json::Value, paths_pattern: &str) -> Result<bool> {

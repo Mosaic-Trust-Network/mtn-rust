@@ -1,6 +1,8 @@
 //! Content hasher abstraction — allows plugging different digest algorithms
 //! without duplicating the JSON walking logic.
 
+use alloc::format;
+use alloc::string::{String, ToString};
 use core::fmt::Write;
 use tiny_keccak::Hasher;
 
