@@ -1,5 +1,6 @@
 //! Error types for the json-digest crate.
 
+use alloc::string::String;
 use thiserror::Error;
 
 /// Errors that can occur during JSON digest operations.

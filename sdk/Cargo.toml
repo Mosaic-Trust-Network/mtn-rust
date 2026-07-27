@@ -19,4 +19,9 @@ mosaic-did-types = { workspace = true }
 json-digest = { workspace = true }
 
 [features]
-std = [ "iop-keyvault/std", "iop-vault/std", "mosaic-did-types/std" ]
+std = [
+	"iop-keyvault/std",
+	"iop-vault/std",
+	"json-digest/std",
+	"mosaic-did-types/std",
+]

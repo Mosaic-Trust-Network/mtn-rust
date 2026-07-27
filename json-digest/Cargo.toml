@@ -19,7 +19,7 @@ rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tiny-keccak = { version = "2.0.2", features = ["sha3"] }
-unicode-normalization = { version = "0.1.22" }
+unicode-normalization = { version = "0.1.22", default-features = false }
 
 # Optional SCALE codec support for Substrate integration
 parity-scale-codec = { workspace = true, optional = true }
@@ -30,5 +30,5 @@ hex = { workspace = true }
 
 [features]
 default = [ "std" ]
-std = [ "rand/thread_rng" ]
+std = [ "rand/thread_rng", "unicode-normalization/std" ]
 substrate = [ "dep:parity-scale-codec", "dep:scale-info" ]

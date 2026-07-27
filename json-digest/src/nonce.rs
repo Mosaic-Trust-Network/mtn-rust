@@ -1,3 +1,4 @@
+use alloc::string::String;
 #[cfg(feature = "std")]
 use rand::{Rng, rng};
 use serde::{Deserialize, Serialize};

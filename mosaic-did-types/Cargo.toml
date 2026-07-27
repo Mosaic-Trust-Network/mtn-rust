@@ -38,9 +38,10 @@ std = [
 	"bs58/std",
 	"hex/std",
 	"iop-keyvault/std",
+	"json-digest/std",
 	"parity-scale-codec?/std",
 	"scale-info?/std",
 	"serde?/std",
 ]
-serde = [ "bounded-collections/serde", "dep:serde", "std" ]
+serde = [ "bounded-collections/serde", "dep:serde" ]
 substrate = [ "json-digest/substrate", "parity-scale-codec", "scale-info" ]

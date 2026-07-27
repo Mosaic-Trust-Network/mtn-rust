@@ -1,5 +1,9 @@
 use crate::error::{JsonDigestError, Result};
 use crate::hasher::{Blake3Cm, ContentHasher, Sha3Cj};
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::json_path;
@@ -144,7 +148,7 @@ fn canonicalize_number(n: &serde_json::Number) -> String {
     let f = n.as_f64().expect("serde_json::Number: i64/u64 rejected, must be f64");
 
     // Integer-valued floats within i64 range → format as integer (3.0 → 3, 100.0 → 100)
-    if f.is_finite() && f.fract() == 0.0 && f >= (i64::MIN as f64) && f <= (i64::MAX as f64) {
+    if f.is_finite() && f >= (i64::MIN as f64) && f <= (i64::MAX as f64) && (f as i64) as f64 == f {
         return (f as i64).to_string();
     }
 
