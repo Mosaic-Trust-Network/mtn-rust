@@ -5,15 +5,28 @@
 //! verification relationship arrays and off-chain rights from presenter-
 //! supplied `RightsDocument`s whose hashes match the commitment timeline.
 
+use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
+use core::marker::PhantomData;
 
-use crate::Right;
 use crate::did::{ContentId, KeyRef};
 use crate::document::DidDocument;
 use crate::history::{CommitmentVersion, DidHistory};
+use crate::operation::Right;
 use crate::rights::RightsDocument;
+
+/// A single checkpoint in the verification pipeline.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StepResult {
+    /// Name of the verification step (e.g. `"did_liveness"`, `"key_validity"`).
+    pub step: &'static str,
+    /// Whether the step passed.
+    pub passed: bool,
+    /// Optional detail (e.g. which heights were checked).
+    pub detail: Option<String>,
+}
 
 /// Result of a right-verification attempt.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,10 +37,12 @@ pub struct VerificationResult {
     pub strength: ProofStrength,
     /// Issues encountered during verification (warnings + errors).
     pub issues: Vec<String>,
+    /// Detailed per-step results for debugging.
+    pub steps: Vec<StepResult>,
 }
 
 /// The strength of proof the presenter provided.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ProofStrength {
     /// Any matching commitment — proves the right existed at some point.
     Minimal,
@@ -61,6 +76,209 @@ pub enum VerificationError {
     MissingCommitmentDocument,
     /// The `previousCommitment` hash chain between consecutive rights documents is broken.
     CommitmentChainBroken,
+    /// The achieved proof strength is below the policy minimum.
+    InsufficientProofStrength,
+}
+
+/// Policy controlling the minimum acceptable [`ProofStrength`].
+///
+/// # Examples
+///
+/// ```
+/// use mosaic_did_types::verifier::{VerifierPolicy, ProofStrength};
+///
+/// let policy = VerifierPolicy::b2b_invoice();
+/// assert!(policy.check(ProofStrength::AfterProof).is_ok());
+/// assert!(policy.check(ProofStrength::Minimal).is_err());
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifierPolicy {
+    /// The minimum proof strength required.
+    pub min_strength: ProofStrength,
+}
+
+impl VerifierPolicy {
+    /// Chat apps and low-risk contexts — any matching proof is sufficient.
+    pub fn chat() -> Self {
+        Self { min_strength: ProofStrength::Minimal }
+    }
+    /// B2B invoices and standard business — requires a lower time-bound (`AfterProof`).
+    pub fn b2b_invoice() -> Self {
+        Self { min_strength: ProofStrength::AfterProof }
+    }
+    /// Notarization and high-assurance — full cryptographic window (`Finalized`).
+    pub fn notarization() -> Self {
+        Self { min_strength: ProofStrength::Finalized }
+    }
+
+    /// Check whether `achieved` meets the policy minimum.
+    pub fn check(&self, achieved: ProofStrength) -> Result<(), VerificationError> {
+        if achieved >= self.min_strength {
+            Ok(())
+        } else {
+            Err(VerificationError::InsufficientProofStrength)
+        }
+    }
+}
+
+// ===== Type-state marker types for the verification request builder =====
+
+/// Type-state marker: identity phase (only history + key + right known).
+#[non_exhaustive]
+pub struct Identity;
+
+/// Type-state marker: window phase (start + end added).
+#[non_exhaustive]
+pub struct Window;
+
+/// Type-state marker: documents phase (rights documents added).
+#[non_exhaustive]
+pub struct Documents;
+
+/// Type-state marker: ready phase (strength set, optional policy may follow).
+///
+/// Only `Ready` requests can be `.verify()`'d.
+#[non_exhaustive]
+pub struct Ready;
+
+/// Builder for a windowed right verification request.
+///
+/// Guides the caller through the required parameters using the type-state
+/// pattern. The builder transitions through four phases:
+///
+/// | Phase | State | Methods |
+/// |-------|-------|---------|
+/// | Identity | `VerificationRequest<Identity>` | `new()`, `.window()` |
+/// | Window | `VerificationRequest<Window>` | `.with_documents()` |
+/// | Documents | `VerificationRequest<Documents>` | `.with_strength()` |
+/// | Ready | `VerificationRequest<Ready>` | `.with_policy()`, `.verify()` |
+///
+/// Only `Ready` exposes `.verify()` — the other phases guide the user toward
+/// providing the missing required data.
+///
+/// # Example
+///
+/// ```text
+/// VerificationRequest::new(&history, "ioz...", "impersonate")
+///     .window(100, 200)
+///     .with_documents(&[(1, &d1)])
+///     .with_strength(ProofStrength::AfterProof)
+///     .verify()?;
+/// ```
+pub struct VerificationRequest<'a, Phase = Identity> {
+    history: &'a DidHistory,
+    holder_key_ref: &'a str,
+    right: &'a str,
+    start: u32,
+    end: u32,
+    rights_documents: &'a [(u64, &'a RightsDocument)],
+    strength: ProofStrength,
+    policy: Option<&'a VerifierPolicy>,
+    _phase: PhantomData<Phase>,
+}
+
+// ---------------------------------------------------------------------------
+// Phase: Identity — the user has identified the DID, key, and right
+// ---------------------------------------------------------------------------
+impl<'a> VerificationRequest<'a, Identity> {
+    /// Start building a verification request with the DID history and the
+    /// identity to verify.
+    pub fn new(history: &'a DidHistory, holder_key_ref: &'a str, right: &'a str) -> Self {
+        Self {
+            history,
+            holder_key_ref,
+            right,
+            start: 0,
+            end: 0,
+            rights_documents: &[],
+            strength: ProofStrength::Minimal,
+            policy: None,
+            _phase: PhantomData,
+        }
+    }
+
+    /// Set the verification window `[start, end]` (inclusive).
+    pub fn window(self, start: u32, end: u32) -> VerificationRequest<'a, Window> {
+        VerificationRequest {
+            history: self.history,
+            holder_key_ref: self.holder_key_ref,
+            right: self.right,
+            start,
+            end,
+            rights_documents: self.rights_documents,
+            strength: self.strength,
+            policy: self.policy,
+            _phase: PhantomData,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase: Window — the time window is known
+// ---------------------------------------------------------------------------
+impl<'a> VerificationRequest<'a, Window> {
+    /// Supply the presenter-provided rights documents.
+    pub fn with_documents(
+        self, rights_documents: &'a [(u64, &'a RightsDocument)],
+    ) -> VerificationRequest<'a, Documents> {
+        VerificationRequest {
+            history: self.history,
+            holder_key_ref: self.holder_key_ref,
+            right: self.right,
+            start: self.start,
+            end: self.end,
+            rights_documents,
+            strength: self.strength,
+            policy: self.policy,
+            _phase: PhantomData,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase: Documents — rights documents are known
+// ---------------------------------------------------------------------------
+impl<'a> VerificationRequest<'a, Documents> {
+    /// Choose the proof strength to verify against.
+    pub fn with_strength(self, strength: ProofStrength) -> VerificationRequest<'a, Ready> {
+        VerificationRequest {
+            history: self.history,
+            holder_key_ref: self.holder_key_ref,
+            right: self.right,
+            start: self.start,
+            end: self.end,
+            rights_documents: self.rights_documents,
+            strength,
+            policy: self.policy,
+            _phase: PhantomData,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase: Ready — all required fields set, verification may execute
+// ---------------------------------------------------------------------------
+impl<'a> VerificationRequest<'a, Ready> {
+    /// Optionally attach a verifier policy that gates the result on a minimum
+    /// proof strength.
+    pub fn with_policy(mut self, policy: &'a VerifierPolicy) -> Self {
+        self.policy = Some(policy);
+        self
+    }
+
+    /// Execute the verification and return a [`VerificationResult`].
+    pub fn verify(self) -> Result<VerificationResult, VerificationError> {
+        verify_right_windowed(
+            self.history,
+            self.holder_key_ref,
+            self.right,
+            self.start,
+            self.end,
+            self.rights_documents,
+            self.strength,
+            self.policy,
+        )
+    }
 }
 
 /// Compute the `cm`-prefixed content ID for a rights document.
@@ -94,9 +312,12 @@ impl DidDocument {
         &self, holder_key_ref: &str, right: &str, rights_documents: &[(u64, &RightsDocument)],
         strength: ProofStrength,
     ) -> Result<VerificationResult, VerificationError> {
+        let mut steps: Vec<StepResult> = Vec::new();
+
         if self.deactivated {
             return Err(VerificationError::DidDeactivated);
         }
+        steps.push(StepResult { step: "did_liveness", passed: true, detail: None });
 
         // Check that the key appears in verificationMethod
         let key_fragment = format!("#{holder_key_ref}");
@@ -104,6 +325,7 @@ impl DidDocument {
         if !key_in_doc {
             return Err(VerificationError::KeyNotFound);
         }
+        steps.push(StepResult { step: "key_in_document", passed: true, detail: None });
 
         // Check on-chain rights via verification relationship arrays
         let in_list = |list: &[String]| list.iter().any(|id| id.ends_with(&key_fragment));
@@ -114,12 +336,14 @@ impl DidDocument {
             "impersonate" | "issue" => in_list(&self.assertion_method),
             _ => false,
         };
+        steps.push(StepResult { step: "on_chain_right", passed: true, detail: None });
 
         if onchain_granted {
             return Ok(VerificationResult {
                 valid: true,
                 strength: ProofStrength::Finalized,
                 issues: Vec::new(),
+                steps,
             });
         }
 
@@ -151,75 +375,93 @@ impl DidDocument {
             })
             .collect();
 
-        match strength {
-            ProofStrength::Minimal => {
-                // Any matching document grants the right
-                for (seq, doc) in rights_documents {
-                    let doc_hash = compute_rights_document_hash(doc)
-                        .map_err(VerificationError::DigestError)?;
-                    if timeline.iter().any(|(s, h)| *s == *seq && *h == doc_hash)
-                        && doc.rights.iter().any(|e| {
-                            e.key_ref == holder_key_ref && e.rights.iter().any(|r| r == right)
-                        })
-                    {
-                        return Ok(VerificationResult {
-                            valid: true,
-                            strength: ProofStrength::Minimal,
-                            issues: Vec::new(),
-                        });
-                    }
-                }
-                Err(VerificationError::RightNotGranted)
-            }
-            ProofStrength::AfterProof | ProofStrength::Finalized => {
-                // Every version in the timeline MUST have a matching document
-                let doc_by_seq: Vec<Option<&RightsDocument>> = timeline
-                    .iter()
-                    .map(|(seq, _expected_hash)| {
-                        rights_documents.iter().find(|(s, _)| s == seq).map(|(_, doc)| *doc)
-                    })
-                    .collect();
-
-                for (i, maybe_doc) in doc_by_seq.iter().enumerate() {
-                    let (_seq, expected_hash) = &timeline[i];
-                    let doc = maybe_doc.ok_or(VerificationError::MissingCommitmentDocument)?;
-
-                    // Hash must match
-                    let doc_hash = compute_rights_document_hash(doc)
-                        .map_err(VerificationError::DigestError)?;
-                    if doc_hash != *expected_hash {
-                        return Err(VerificationError::CommitmentHashMismatch);
-                    }
-
-                    // Right must be granted in every version
-                    let granted = doc.rights.iter().any(|e| {
-                        e.key_ref == holder_key_ref && e.rights.iter().any(|r| r == right)
-                    });
-                    if !granted {
-                        return Err(VerificationError::RightNotGranted);
-                    }
-
-                    // Hash chain: D_i.previousCommitment must equal blake3(canonical(D_{i-1}))
-                    if i > 0 {
-                        let prev_doc = doc_by_seq[i - 1].expect("previous doc must exist");
-                        let prev_hash = compute_rights_document_hash(prev_doc)
+        // Wrap in a closure so interior `return` statements exit the closure,
+        // allowing step recording to run afterward.
+        let verification = (|| -> Result<VerificationResult, VerificationError> {
+            match strength {
+                ProofStrength::Minimal => {
+                    // Any matching document grants the right
+                    for (seq, doc) in rights_documents {
+                        let doc_hash = compute_rights_document_hash(doc)
                             .map_err(VerificationError::DigestError)?;
-                        let expected_prev = crate::did::ContentId::from_bytes(prev_hash.as_bytes());
-                        let chain_ok =
-                            doc.previous_commitment.as_ref().is_some_and(|pc| *pc == expected_prev);
-                        if !chain_ok {
-                            return Err(VerificationError::CommitmentChainBroken);
+                        if timeline.iter().any(|(s, h)| *s == *seq && *h == doc_hash)
+                            && doc.rights.iter().any(|e| {
+                                e.key_ref == holder_key_ref && e.rights.iter().any(|r| r == right)
+                            })
+                        {
+                            return Ok(VerificationResult {
+                                valid: true,
+                                strength: ProofStrength::Minimal,
+                                issues: Vec::new(),
+                                steps: Vec::new(),
+                            });
                         }
                     }
+                    Err(VerificationError::RightNotGranted)
                 }
+                ProofStrength::AfterProof | ProofStrength::Finalized => {
+                    // Every version in the timeline MUST have a matching document
+                    let doc_by_seq: Vec<Option<&RightsDocument>> = timeline
+                        .iter()
+                        .map(|(seq, _expected_hash)| {
+                            rights_documents.iter().find(|(s, _)| s == seq).map(|(_, doc)| *doc)
+                        })
+                        .collect();
 
-                Ok(VerificationResult {
-                    valid: true,
-                    strength: ProofStrength::Finalized,
-                    issues: Vec::new(),
-                })
+                    for (i, maybe_doc) in doc_by_seq.iter().enumerate() {
+                        let (_seq, expected_hash) = &timeline[i];
+                        let doc = maybe_doc.ok_or(VerificationError::MissingCommitmentDocument)?;
+
+                        // Hash must match
+                        let doc_hash = compute_rights_document_hash(doc)
+                            .map_err(VerificationError::DigestError)?;
+                        if doc_hash != *expected_hash {
+                            return Err(VerificationError::CommitmentHashMismatch);
+                        }
+
+                        // Right must be granted in every version
+                        let granted = doc.rights.iter().any(|e| {
+                            e.key_ref == holder_key_ref && e.rights.iter().any(|r| r == right)
+                        });
+                        if !granted {
+                            return Err(VerificationError::RightNotGranted);
+                        }
+
+                        // Hash chain: D_i.previousCommitment must equal blake3(canonical(D_{i-1}))
+                        if i > 0 {
+                            let prev_doc = doc_by_seq[i - 1].expect("previous doc must exist");
+                            let prev_hash = compute_rights_document_hash(prev_doc)
+                                .map_err(VerificationError::DigestError)?;
+                            let expected_prev =
+                                crate::did::ContentId::from_bytes(prev_hash.as_bytes());
+                            let chain_ok = doc
+                                .previous_commitment
+                                .as_ref()
+                                .is_some_and(|pc| *pc == expected_prev);
+                            if !chain_ok {
+                                return Err(VerificationError::CommitmentChainBroken);
+                            }
+                        }
+                    }
+
+                    Ok(VerificationResult {
+                        valid: true,
+                        strength: ProofStrength::Finalized,
+                        issues: Vec::new(),
+                        steps: Vec::new(),
+                    })
+                }
             }
-        }
+        })()?;
+
+        steps.push(StepResult { step: "off_chain_commitment", passed: true, detail: None });
+
+        Ok(VerificationResult {
+            valid: true,
+            strength: verification.strength,
+            issues: Vec::new(),
+            steps,
+        })
     }
 }
 
@@ -271,14 +513,19 @@ fn doc_by_seq<'a>(
 /// | `Minimal` | Any one presenter-supplied document matches a timeline version and grants the right. No time window checks. |
 /// | `AfterProof` | The right was held continuously from `start` to `end`. Key validity, DID liveness, and the commitment timeline (every version active in the window must grant the right) are all checked. |
 /// | `Finalized` | All `AfterProof` checks **plus** the `previousCommitment` hash chain between consecutive rights documents must be intact. |
-pub fn verify_right_windowed(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn verify_right_windowed(
     history: &DidHistory, holder_key_ref: &str, right: &str, start: u32, end: u32,
     rights_documents: &[(u64, &RightsDocument)], strength: ProofStrength,
+    policy: Option<&VerifierPolicy>,
 ) -> Result<VerificationResult, VerificationError> {
+    let mut steps: Vec<StepResult> = Vec::new();
+
     // --- Step 1: DID liveness across [start, end] ---
     if !history.is_alive_across(start, end) {
         return Err(VerificationError::DidDeactivated);
     }
+    steps.push(StepResult { step: "did_liveness", passed: true, detail: None });
 
     // --- Step 2: Key validity across [start, end] ---
     let key_ref = KeyRef::new(holder_key_ref.as_bytes().to_vec())
@@ -286,6 +533,7 @@ pub fn verify_right_windowed(
     if !history.is_key_valid_across(&key_ref, start, end) {
         return Err(VerificationError::KeyNotFound);
     }
+    steps.push(StepResult { step: "key_validity", passed: true, detail: None });
 
     // --- Step 3: Check on-chain rights (continuous across window) ---
     let right_enum: Right = right.parse().map_err(|_| VerificationError::RightNotGranted)?;
@@ -293,87 +541,119 @@ pub fn verify_right_windowed(
         rg.key_ref == key_ref
             && rg.right == right_enum
             && rg.is_active_at(start)
-            && rg.revoked_at_height.map_or(true, |h| h > end)
-            && rg.expires_at_height.map_or(true, |h| h > end)
+            && rg.revoked_at_height.is_none_or(|h| h > end)
+            && rg.expires_at_height.is_none_or(|h| h > end)
     });
+    steps.push(StepResult { step: "on_chain_right", passed: true, detail: None });
     if onchain_continuous {
-        return Ok(VerificationResult { valid: true, strength, issues: Vec::new() });
+        if let Some(policy) = policy {
+            policy.check(strength)?;
+        }
+        steps.push(StepResult { step: "policy_gate", passed: true, detail: None });
+        return Ok(VerificationResult { valid: true, strength, issues: Vec::new(), steps });
     }
 
     // --- Step 4: Off-chain commitment path ---
-    match strength {
-        ProofStrength::Minimal => {
-            // Any matching document in any timeline version grants the right.
-            for (seq, doc) in rights_documents {
-                let doc_cid = doc_hash_cid(doc)?;
-                if history
-                    .commitments
-                    .iter()
-                    .any(|cv| cv.sequence == *seq && cv.commitment == doc_cid)
-                    && doc_grants_right(doc, holder_key_ref, right)
-                {
-                    return Ok(VerificationResult {
-                        valid: true,
-                        strength: ProofStrength::Minimal,
-                        issues: Vec::new(),
-                    });
-                }
-            }
-            Err(VerificationError::RightNotGranted)
-        }
-        ProofStrength::AfterProof | ProofStrength::Finalized => {
-            // Find the commitment active at `start`.
-            let _active_at_start =
-                history.commitment_at(start).ok_or(VerificationError::RightNotGranted)?;
-
-            // Collect all commitments from the one active at `start` through `end`.
-            let start_idx = history
-                .commitments
-                .iter()
-                .rposition(|cv| cv.published_at_height <= start)
-                .unwrap_or(0);
-
-            let relevant_commitments: Vec<&CommitmentVersion> = history.commitments[start_idx..]
-                .iter()
-                .take_while(|cv| cv.published_at_height <= end)
-                .collect();
-
-            if relevant_commitments.is_empty() {
-                return Err(VerificationError::RightNotGranted);
-            }
-
-            // Every commitment active in the window must have a matching
-            // presenter-supplied document that grants the right.
-            for &cv in &relevant_commitments {
-                let doc = doc_by_seq(rights_documents, cv.sequence)?;
-                if cv.commitment != doc_hash_cid(doc)? {
-                    return Err(VerificationError::CommitmentHashMismatch);
-                }
-                if !doc_grants_right(doc, holder_key_ref, right) {
-                    return Err(VerificationError::RightNotGranted);
-                }
-            }
-
-            // For Finalized: verify the previousCommitment hash chain.
-            if strength == ProofStrength::Finalized && relevant_commitments.len() > 1 {
-                for i in 1..relevant_commitments.len() {
-                    let prev_doc =
-                        doc_by_seq(rights_documents, relevant_commitments[i - 1].sequence)?;
-                    let curr_doc = doc_by_seq(rights_documents, relevant_commitments[i].sequence)?;
-                    let expected_prev = doc_hash_cid(prev_doc)?;
-                    let chain_ok = curr_doc
-                        .previous_commitment
-                        .as_ref()
-                        .is_some_and(|pc| *pc == expected_prev);
-                    if !chain_ok {
-                        return Err(VerificationError::CommitmentChainBroken);
+    // Wrap in a closure so interior `return` statements exit the closure,
+    // not the outer function (allowing the policy gate to run).
+    let verification = (|| -> Result<VerificationResult, VerificationError> {
+        match strength {
+            ProofStrength::Minimal => {
+                // Any matching document in any timeline version grants the right.
+                for (seq, doc) in rights_documents {
+                    let doc_cid = doc_hash_cid(doc)?;
+                    if history
+                        .commitments
+                        .iter()
+                        .any(|cv| cv.sequence == *seq && cv.commitment == doc_cid)
+                        && doc_grants_right(doc, holder_key_ref, right)
+                    {
+                        return Ok(VerificationResult {
+                            valid: true,
+                            strength: ProofStrength::Minimal,
+                            issues: Vec::new(),
+                            steps: Vec::new(),
+                        });
                     }
                 }
+                Err(VerificationError::RightNotGranted)
             }
+            ProofStrength::AfterProof | ProofStrength::Finalized => {
+                // Find the commitment active at `start`.
+                let _active_at_start =
+                    history.commitment_at(start).ok_or(VerificationError::RightNotGranted)?;
 
-            Ok(VerificationResult { valid: true, strength, issues: Vec::new() })
+                // Collect all commitments from the one active at `start` through `end`.
+                let start_idx = history
+                    .commitments
+                    .iter()
+                    .rposition(|cv| cv.published_at_height <= start)
+                    .unwrap_or(0);
+
+                let relevant_commitments: Vec<&CommitmentVersion> = history.commitments
+                    [start_idx..]
+                    .iter()
+                    .take_while(|cv| cv.published_at_height <= end)
+                    .collect();
+
+                if relevant_commitments.is_empty() {
+                    return Err(VerificationError::RightNotGranted);
+                }
+
+                // Every commitment active in the window must have a matching
+                // presenter-supplied document that grants the right.
+                for &cv in &relevant_commitments {
+                    let doc = doc_by_seq(rights_documents, cv.sequence)?;
+                    if cv.commitment != doc_hash_cid(doc)? {
+                        return Err(VerificationError::CommitmentHashMismatch);
+                    }
+                    if !doc_grants_right(doc, holder_key_ref, right) {
+                        return Err(VerificationError::RightNotGranted);
+                    }
+                }
+
+                // For Finalized: verify the previousCommitment hash chain.
+                if strength == ProofStrength::Finalized && relevant_commitments.len() > 1 {
+                    for i in 1..relevant_commitments.len() {
+                        let prev_doc =
+                            doc_by_seq(rights_documents, relevant_commitments[i - 1].sequence)?;
+                        let curr_doc =
+                            doc_by_seq(rights_documents, relevant_commitments[i].sequence)?;
+                        let expected_prev = doc_hash_cid(prev_doc)?;
+                        let chain_ok = curr_doc
+                            .previous_commitment
+                            .as_ref()
+                            .is_some_and(|pc| *pc == expected_prev);
+                        if !chain_ok {
+                            return Err(VerificationError::CommitmentChainBroken);
+                        }
+                    }
+                }
+
+                Ok(VerificationResult {
+                    valid: true,
+                    strength,
+                    issues: Vec::new(),
+                    steps: Vec::new(),
+                })
+            }
         }
+    })()?;
+
+    steps.push(StepResult { step: "off_chain_commitment", passed: true, detail: None });
+
+    // --- Step 5: Policy gate ---
+    if let Some(policy) = policy {
+        policy.check(verification.strength)?;
     }
+    steps.push(StepResult { step: "policy_gate", passed: true, detail: None });
+
+    Ok(VerificationResult {
+        valid: true,
+        strength: verification.strength,
+        issues: Vec::new(),
+        steps,
+    })
 }
 
 #[cfg(test)]
@@ -729,16 +1009,12 @@ mod tests {
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
-        let result = verify_right_windowed(
-            &history,
-            TEST_KEY_REF,
-            "impersonate",
-            100,
-            200,
-            &[(1, &d1)],
-            ProofStrength::AfterProof,
-        )
-        .unwrap();
+        let result = VerificationRequest::new(&history, TEST_KEY_REF, "impersonate")
+            .window(100, 200)
+            .with_documents(&[(1, &d1)])
+            .with_strength(ProofStrength::AfterProof)
+            .verify()
+            .unwrap();
         assert!(result.valid);
         assert_eq!(result.strength, ProofStrength::AfterProof);
     }
@@ -752,16 +1028,12 @@ mod tests {
         let history = add_commitment(history_with_key(120, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
-        let err = verify_right_windowed(
-            &history,
-            TEST_KEY_REF,
-            "impersonate",
-            100, // H_start before key was added
-            200,
-            &[(1, &d1)],
-            ProofStrength::AfterProof,
-        )
-        .unwrap_err();
+        let err = VerificationRequest::new(&history, TEST_KEY_REF, "impersonate")
+            .window(100, 200)
+            .with_documents(&[(1, &d1)])
+            .with_strength(ProofStrength::AfterProof)
+            .verify()
+            .unwrap_err();
         assert_eq!(err, VerificationError::KeyNotFound);
     }
 
@@ -774,16 +1046,12 @@ mod tests {
         let history = add_commitment(history_with_key(10, Some(150), None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
-        let err = verify_right_windowed(
-            &history,
-            TEST_KEY_REF,
-            "impersonate",
-            100,
-            200, // end after key revoked
-            &[(1, &d1)],
-            ProofStrength::AfterProof,
-        )
-        .unwrap_err();
+        let err = VerificationRequest::new(&history, TEST_KEY_REF, "impersonate")
+            .window(100, 200)
+            .with_documents(&[(1, &d1)])
+            .with_strength(ProofStrength::AfterProof)
+            .verify()
+            .unwrap_err();
         assert_eq!(err, VerificationError::KeyNotFound);
     }
 
@@ -797,16 +1065,12 @@ mod tests {
         history = replace_commitment_hash(history, 1, cid);
         history.tombstoned_at = Some(180);
 
-        let err = verify_right_windowed(
-            &history,
-            TEST_KEY_REF,
-            "impersonate",
-            100,
-            200,
-            &[(1, &d1)],
-            ProofStrength::AfterProof,
-        )
-        .unwrap_err();
+        let err = VerificationRequest::new(&history, TEST_KEY_REF, "impersonate")
+            .window(100, 200)
+            .with_documents(&[(1, &d1)])
+            .with_strength(ProofStrength::AfterProof)
+            .verify()
+            .unwrap_err();
         assert_eq!(err, VerificationError::DidDeactivated);
     }
 
@@ -829,16 +1093,12 @@ mod tests {
         let history = add_commitment(history, 2, 150);
         let history = replace_commitment_hash(history, 2, cid2);
 
-        let err = verify_right_windowed(
-            &history,
-            TEST_KEY_REF,
-            "impersonate",
-            100,
-            180,
-            &[(1, &d1), (2, &d2)],
-            ProofStrength::AfterProof,
-        )
-        .unwrap_err();
+        let err = VerificationRequest::new(&history, TEST_KEY_REF, "impersonate")
+            .window(100, 180)
+            .with_documents(&[(1, &d1), (2, &d2)])
+            .with_strength(ProofStrength::AfterProof)
+            .verify()
+            .unwrap_err();
         assert_eq!(err, VerificationError::RightNotGranted);
     }
 
@@ -852,17 +1112,73 @@ mod tests {
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
-        let err = verify_right_windowed(
-            &history,
-            TEST_KEY_REF,
-            "impersonate",
-            50,
-            80, // end is also before commitment
-            &[(1, &d1)],
-            ProofStrength::AfterProof,
-        )
-        .unwrap_err();
+        let err = VerificationRequest::new(&history, TEST_KEY_REF, "impersonate")
+            .window(50, 80)
+            .with_documents(&[(1, &d1)])
+            .with_strength(ProofStrength::AfterProof)
+            .verify()
+            .unwrap_err();
         // No commitment active at H_start=50 → off-chain right not granted
         assert_eq!(err, VerificationError::RightNotGranted);
+    }
+
+    // ===== VerifierPolicy tests =====
+
+    #[test]
+    fn policy_rejects_minimal_when_afterproof_required() {
+        let policy = VerifierPolicy::b2b_invoice();
+        let result = policy.check(ProofStrength::Minimal);
+        assert_eq!(result, Err(VerificationError::InsufficientProofStrength));
+    }
+
+    #[test]
+    fn policy_accepts_afterproof_when_afterproof_required() {
+        let policy = VerifierPolicy::b2b_invoice();
+        assert!(policy.check(ProofStrength::AfterProof).is_ok());
+    }
+
+    #[test]
+    fn policy_accepts_finalized_when_notarization_required() {
+        let policy = VerifierPolicy::notarization();
+        assert!(policy.check(ProofStrength::Finalized).is_ok());
+    }
+
+    #[test]
+    fn verify_right_windowed_rejects_when_below_policy() {
+        let d1 = make_rights_doc(1, None, "impersonate");
+        let h1 = compute_rights_document_hash(&d1).unwrap();
+        let cid = ContentId::from_bytes(h1.as_bytes());
+        let history = add_commitment(history_with_key(10, None, None), 1, 100);
+        let history = replace_commitment_hash(history, 1, cid);
+        let policy = VerifierPolicy::notarization(); // requires Finalized
+
+        let err = VerificationRequest::new(&history, TEST_KEY_REF, "impersonate")
+            .window(100, 200)
+            .with_documents(&[(1, &d1)])
+            .with_strength(ProofStrength::AfterProof)
+            .with_policy(&policy)
+            .verify()
+            .unwrap_err();
+        assert_eq!(err, VerificationError::InsufficientProofStrength);
+    }
+
+    #[test]
+    fn verify_right_windowed_accepts_when_meets_policy() {
+        let d1 = make_rights_doc(1, None, "impersonate");
+        let h1 = compute_rights_document_hash(&d1).unwrap();
+        let cid = ContentId::from_bytes(h1.as_bytes());
+        let history = add_commitment(history_with_key(10, None, None), 1, 100);
+        let history = replace_commitment_hash(history, 1, cid);
+        let policy = VerifierPolicy::chat(); // accepts anything
+
+        let result = VerificationRequest::new(&history, TEST_KEY_REF, "impersonate")
+            .window(100, 200)
+            .with_documents(&[(1, &d1)])
+            .with_strength(ProofStrength::AfterProof)
+            .with_policy(&policy)
+            .verify()
+            .unwrap();
+        assert!(result.valid);
+        assert!(result.steps.iter().any(|s| s.passed));
     }
 }
