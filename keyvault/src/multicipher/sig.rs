@@ -86,6 +86,7 @@ impl<'de> serde::Deserialize<'de> for MSignature {
     where
         D: Deserializer<'de>,
     {
+        use alloc::string::ToString;
         ErasedBytes::deserialize(deserializer)
             .and_then(|b| deser(b).map_err(|e| serde::de::Error::custom(e.to_string())))
     }

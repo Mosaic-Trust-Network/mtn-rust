@@ -88,7 +88,6 @@ mod scale_impls {
 
 // ========== Serde ==========
 
-#[cfg(feature = "serde")]
 mod serde_impls {
     use super::*;
 
@@ -215,7 +214,7 @@ impl fmt::Display for DidParseError {
         scale_info::TypeInfo
     )
 )]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(serde::Serialize, serde::Deserialize)]
 /// A key reference (document-fragment identifier) within a DID document.
 ///
 /// # Convention
@@ -470,14 +469,12 @@ impl fmt::Display for ContentIdParseError {
     }
 }
 
-#[cfg(feature = "serde")]
 impl serde::Serialize for ContentId {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.to_string())
     }
 }
 
-#[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for ContentId {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;

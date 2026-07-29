@@ -13,7 +13,6 @@ use bounded_collections::{BoundedBTreeMap, BoundedVec, ConstU32};
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 #[cfg(feature = "substrate")]
 use scale_info::TypeInfo;
-#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::did::{ContentId, Did, KeyRef};
@@ -37,7 +36,7 @@ pub const MAX_NONCES_PER_DID: u32 = 32;
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub struct VerificationMethod {
     /// Key reference (document fragment), e.g. "ioz9vVgY...".
     pub key_ref: KeyRef,
@@ -93,7 +92,7 @@ impl VerificationMethod {
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub struct RightGrant {
     /// The key this right is granted to.
     pub key_ref: KeyRef,
@@ -138,7 +137,7 @@ impl RightGrant {
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub struct DidState {
     /// The DID this document describes.
     pub did: Did,

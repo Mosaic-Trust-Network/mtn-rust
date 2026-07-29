@@ -7,7 +7,6 @@
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 #[cfg(feature = "substrate")]
 use scale_info::TypeInfo;
-#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::auth::Authentication;
@@ -26,7 +25,7 @@ pub const MAX_PUBLIC_KEY_LEN: u32 = 64;
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub enum Right {
     /// Can modify the DID Document (add/revoke keys, rights).
     Update,
@@ -96,7 +95,7 @@ impl core::str::FromStr for Right {
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub enum KeyType {
     /// Ed25519 -- default, required.
     Ed25519,
@@ -146,7 +145,7 @@ impl core::str::FromStr for KeyType {
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub enum KeyPurpose {
     /// Prove control of DID (login, challenge-response).
     Authentication,
@@ -203,7 +202,7 @@ impl core::str::FromStr for KeyPurpose {
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub enum DidOperation {
     /// Add a new key to the DID document.
     ///
@@ -308,7 +307,7 @@ impl DidOperation {
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub enum GovernedOperation {
     /// Reset the commitment hash chain to a new starting point.
     CommitmentReset {
@@ -326,7 +325,7 @@ pub enum GovernedOperation {
 /// A top-level SSI operation: either a DID operation or a BeforeProof timestamp.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "substrate", derive(Encode, Decode, TypeInfo, DecodeWithMemTracking))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)] // Not worth Box-ing it in WASM
 pub enum SsiOperation {
     /// A signed DID document operation.
@@ -341,7 +340,7 @@ pub enum SsiOperation {
 /// The nonce provides replay protection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "substrate", derive(Encode, Decode, TypeInfo, DecodeWithMemTracking))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub struct SignedDidOperation {
     /// The DID operation to execute.
     pub operation: DidOperation,
@@ -359,7 +358,7 @@ pub struct SignedDidOperation {
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub enum DidOperationType {
     AddKey,
     RevokeKey,

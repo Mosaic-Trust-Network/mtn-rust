@@ -14,8 +14,7 @@ pub const HEIGHT: usize = 10;
 pub const LEAF_COUNT: usize = 1 << HEIGHT;
 
 /// A hash value — a `json_digest` string (BLAKE3, `cm` prefix).
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Hash(pub String);
 
 impl Hash {
@@ -52,8 +51,7 @@ impl Hash {
 /// A self-contained, serializable Merkle inclusion proof.
 ///
 /// Can be handed out by the batch service to individual document owners.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InclusionProof {
     /// The leaf index (0..1023).
     pub leaf_index: usize,

@@ -10,8 +10,7 @@ use alloc::{string::String, vec::Vec};
 use crate::did::ContentId;
 
 /// A single entry mapping a key reference to its granted rights.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RightEntry {
     /// The key reference this entry applies to.
     pub key_ref: String,
@@ -24,18 +23,17 @@ pub struct RightEntry {
 /// Each document is a full replacement of the previous one (not a delta).
 /// The `previousCommitment` field chains documents together, and the
 /// `sequence` number must match the on-chain commitment sequence (gapless).
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RightsDocument {
     /// Schema identifier for versioning.
-    #[cfg_attr(feature = "serde", serde(rename = "$schema"))]
+    #[serde(rename = "$schema")]
     pub schema: String,
     /// The DID this rights document belongs to.
     pub did: String,
     /// Monotonic sequence number matching the on-chain commitment.
     pub sequence: u64,
     /// Content ID of the previous rights document (None at sequence 1).
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_commitment: Option<ContentId>,
     /// Key-reference-to-rights mappings.
     pub rights: Vec<RightEntry>,
@@ -82,7 +80,6 @@ mod tests {
         assert!(doc.rights.is_empty());
     }
 
-    #[cfg(feature = "serde")]
     #[test]
     fn rights_document_json_roundtrip() {
         let doc = RightsDocument {
@@ -105,7 +102,6 @@ mod tests {
         assert_eq!(parsed, doc);
     }
 
-    #[cfg(feature = "serde")]
     #[test]
     fn rights_document_json_omits_null_previous_commitment() {
         let doc = RightsDocument {

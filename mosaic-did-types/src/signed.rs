@@ -12,24 +12,22 @@ use crate::did::ContentId;
 ///
 /// The signature covers the canonical JSON serialization of the `content` field.
 /// The envelope format matches the legacy morpheus-proto `Signed<T>` wire format.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Signed<T> {
     /// The signed content.
     pub content: T,
     /// Cryptographic signature over the content.
     pub signature: SignedEnvelope,
     /// Optional nonce for replay protection.
-    #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub nonce: Option<u64>,
 }
 
 /// Signature material within a `Signed<T>` envelope.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SignedEnvelope {
     /// The public key as a multicipher string (e.g. "pezFVen3X...").
-    #[cfg_attr(feature = "serde", serde(rename = "publicKey"))]
+    #[serde(rename = "publicKey")]
     pub public_key: alloc::string::String,
     /// The multicipher signature string (e.g. "sez8TKYaZiP...").
     pub bytes: alloc::string::String,
@@ -80,26 +78,23 @@ pub trait Signable: Content {
 ///
 /// Since the signer could not have known the blockhash before that block was
 /// produced, `H_start = block_height + 1` is a cryptographic lower bound.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AfterProof {
-    #[cfg_attr(feature = "serde", serde(rename = "blockHeight"))]
+    #[serde(rename = "blockHeight")]
     pub block_height: u32,
-    #[cfg_attr(feature = "serde", serde(rename = "blockHash"))]
+    #[serde(rename = "blockHash")]
     pub block_hash: alloc::string::String,
 }
 
 /// An envelope wrapping arbitrary content with an `AfterProof`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AfterEnvelope<T> {
     pub content: T,
     pub proof: AfterProof,
 }
 
 /// SMT batch content for `AfterEnvelope<SmtContent>`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SmtContent {
     pub root: alloc::string::String,
     pub height: u32,
@@ -125,7 +120,6 @@ mod tests {
         assert_eq!(signed.nonce, Some(42));
     }
 
-    #[cfg(feature = "serde")]
     #[test]
     fn signed_json_roundtrip() {
         let sig = ed25519_blake3_signature([0u8; 64]);
@@ -137,7 +131,6 @@ mod tests {
         assert_eq!(parsed.content, "hello");
     }
 
-    #[cfg(feature = "serde")]
     #[test]
     fn signed_json_omits_none_nonce() {
         let sig = ed25519_blake3_signature([0u8; 64]);
@@ -170,7 +163,6 @@ mod tests {
 
     // ===== Golden vectors (from morpheus-proto) =====
 
-    #[cfg(feature = "serde")]
     #[test]
     fn after_envelope_golden_vector_single_document() {
         let sk_bytes: &[u8; 32] =

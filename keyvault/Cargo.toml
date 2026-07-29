@@ -51,5 +51,5 @@ std = [
 	"scale-info?/std",
 	"thiserror/std",
 ]
-serde = [ "dep:serde", "dep:serde_bytes", "std" ]
+serde = [ "dep:serde", "dep:serde_bytes" ]
 substrate = [ "dep:parity-scale-codec", "dep:scale-info" ]

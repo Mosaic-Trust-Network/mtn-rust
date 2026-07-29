@@ -323,7 +323,6 @@ impl DidHistory {
     /// - `mosaic:lastModifiedAtHeight` is capped to the window.
     ///
     /// Keys with neither on-chain nor commitment rights are excluded entirely.
-    #[cfg(feature = "serde")]
     pub fn to_did_document_at(
         &self, height: u32, from_height: Option<u32>,
     ) -> crate::document::DidDocument {
@@ -911,7 +910,6 @@ mod tests {
         assert!(!history.has_right_at(&kr1, Right::Update, 151, &resolver));
     }
 
-    #[cfg(feature = "serde")]
     #[test]
     fn to_did_document_at_produces_w3c_document() {
         let mut history = DidHistory::new(test_did());
@@ -990,7 +988,6 @@ mod tests {
         assert_eq!(parsed.created_at_height, Some(10));
     }
 
-    #[cfg(feature = "serde")]
     #[test]
     fn to_did_document_at_with_from_height_filters_window() {
         let mut history = DidHistory::new(test_did());

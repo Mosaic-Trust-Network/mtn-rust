@@ -6,17 +6,13 @@
 //! supplied `RightsDocument`s whose hashes match the commitment timeline.
 
 use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
-#[cfg(feature = "serde")]
 use crate::Right;
-#[cfg(feature = "serde")]
 use crate::did::{ContentId, KeyRef};
-#[cfg(feature = "serde")]
 use crate::document::DidDocument;
-#[cfg(feature = "serde")]
 use crate::history::{CommitmentVersion, DidHistory};
-#[cfg(feature = "serde")]
 use crate::rights::RightsDocument;
 
 /// Result of a right-verification attempt.
@@ -71,7 +67,6 @@ pub enum VerificationError {
 ///
 /// Uses BLAKE3-256 of the canonical JSON representation, matching the
 /// commitment stored on-chain in `CommitmentVersion.commitment`.
-#[cfg(feature = "serde")]
 pub fn compute_rights_document_hash(doc: &RightsDocument) -> Result<String, String> {
     let json = serde_json::to_value(doc).map_err(|e| e.to_string())?;
     let canonical = json_digest::canonical_json(&json).map_err(|e| e.to_string())?;
@@ -80,7 +75,6 @@ pub fn compute_rights_document_hash(doc: &RightsDocument) -> Result<String, Stri
     Ok(format!("cm{encoded}"))
 }
 
-#[cfg(feature = "serde")]
 impl DidDocument {
     /// Verify that `holder_key_ref` has `right` at the document's resolution height.
     ///
@@ -230,20 +224,17 @@ impl DidDocument {
 }
 
 /// Compute the [`ContentId`] for a rights document (hash + wrap).
-#[cfg(feature = "serde")]
 fn doc_hash_cid(doc: &RightsDocument) -> Result<ContentId, VerificationError> {
     let hash = compute_rights_document_hash(doc).map_err(VerificationError::DigestError)?;
     Ok(ContentId::from_bytes(hash.as_bytes()))
 }
 
 /// Check whether a rights document grants `right` to `holder_key_ref`.
-#[cfg(feature = "serde")]
 fn doc_grants_right(doc: &RightsDocument, holder_key_ref: &str, right: &str) -> bool {
     doc.rights.iter().any(|e| e.key_ref == holder_key_ref && e.rights.iter().any(|r| r == right))
 }
 
 /// Look up a rights document by sequence number.
-#[cfg(feature = "serde")]
 fn doc_by_seq<'a>(
     rights_documents: &'a [(u64, &'a RightsDocument)], seq: u64,
 ) -> Result<&'a RightsDocument, VerificationError> {
@@ -280,7 +271,6 @@ fn doc_by_seq<'a>(
 /// | `Minimal` | Any one presenter-supplied document matches a timeline version and grants the right. No time window checks. |
 /// | `AfterProof` | The right was held continuously from `start` to `end`. Key validity, DID liveness, and the commitment timeline (every version active in the window must grant the right) are all checked. |
 /// | `Finalized` | All `AfterProof` checks **plus** the `previousCommitment` hash chain between consecutive rights documents must be intact. |
-#[cfg(feature = "serde")]
 pub fn verify_right_windowed(
     history: &DidHistory, holder_key_ref: &str, right: &str, start: u32, end: u32,
     rights_documents: &[(u64, &RightsDocument)], strength: ProofStrength,
@@ -386,7 +376,7 @@ pub fn verify_right_windowed(
     }
 }
 
-#[cfg(all(test, feature = "serde"))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::document::{DidDocument, DidDocumentService, DidDocumentVerificationMethod};

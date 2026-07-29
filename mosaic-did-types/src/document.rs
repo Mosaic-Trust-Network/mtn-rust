@@ -5,12 +5,11 @@
 //! purely a rendering concern — the pallet's consensus state lives in
 //! `state.rs`.
 
-#[cfg(feature = "serde")]
-use crate::operation::KeyType;
-#[cfg(feature = "serde")]
 use alloc::string::String;
-#[cfg(feature = "serde")]
 use alloc::vec::Vec;
+use serde_json;
+
+use crate::operation::KeyType;
 
 // ========== W3C DID DOCUMENT TYPES ==========
 
@@ -18,7 +17,6 @@ use alloc::vec::Vec;
 ///
 /// Mosaic extensions (prefixed `mosaic:`) are added as top-level properties.
 /// Unknown consumers safely ignore them per W3C DID Core §4.1.
-#[cfg(feature = "serde")]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DidDocument {
     #[serde(rename = "@context")]
@@ -47,7 +45,7 @@ pub struct DidDocument {
     #[serde(default, skip_serializing_if = "core::ops::Not::not")]
     pub deactivated: bool,
 
-    // --- Mosaic extensions (plan §5.2) ---
+    // --- Mosaic extensions ---
     /// Block height at which the DID was created (first `KeyAdded`).
     #[serde(rename = "mosaic:createdAtHeight", skip_serializing_if = "Option::is_none")]
     pub created_at_height: Option<u32>,
@@ -60,7 +58,6 @@ pub struct DidDocument {
 }
 
 /// A verification method entry in the W3C DID Document.
-#[cfg(feature = "serde")]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DidDocumentVerificationMethod {
     pub id: String,
@@ -76,7 +73,6 @@ pub struct DidDocumentVerificationMethod {
 /// `service_endpoint` uses `serde_json::Value` to accommodate both
 /// plain strings (standard services) and structured objects (mosaic extension
 /// services like `MosaicRightsCommitment2026`).
-#[cfg(feature = "serde")]
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DidDocumentService {
     pub id: String,
@@ -89,7 +85,7 @@ pub struct DidDocumentService {
 // ========== RENDERING HELPERS ==========
 
 /// Convert a KeyType to its W3C verification method type string.
-#[cfg(feature = "serde")]
+/// Map a `KeyType` to its W3C `verificationMethod` type string.
 pub fn key_type_to_w3c_string(key_type: KeyType) -> String {
     match key_type {
         KeyType::Ed25519 => "Ed25519VerificationKey2020".into(),
@@ -100,7 +96,6 @@ pub fn key_type_to_w3c_string(key_type: KeyType) -> String {
 }
 
 /// Encode a public key as multibase base58btc.
-#[cfg(feature = "serde")]
 pub fn multibase_encode_key(key_bytes: &[u8]) -> String {
     let encoded = bs58::encode(key_bytes).into_string();
     alloc::format!("z{encoded}")

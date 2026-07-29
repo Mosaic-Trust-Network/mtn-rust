@@ -111,7 +111,8 @@ iop-sdk re-exports: keyvault, vault, mosaic-did-types, json-digest
 
 - **Edition 2024**, MSRV 1.88, workspace version `0.1.0`.
 - `no_std`: `keyvault` and `mosaic-did-types` support it. No `std`-only deps without feature gates.
-- Serde/SCALE impls are `#[cfg(feature = "...")]` — check before moving types between crates.
+- **Serde in `no_std` crates**: enabling `serde` on a dependency must NOT transitively pull in `std`. The `serde` feature MUST NOT enable `serde/std`; the crate's own `std` feature should enable `serde/std` instead. Verify with `cargo tree -e features -i <crate> --target wasm32-unknown-unknown --no-default-features`.
+- Serde/SCALE impls are `#[cfg(feature = "...")]` in most crates. In `mosaic-did-types` serde is unconditional (`serde` and `serde_json` are required deps) — check before moving types.
 - Errors: `anyhow::Result` in `std` crates. Custom error types only in `no_std`.
 - Crypto: keys from `Seed` via BIP-32. SHA3-256 (json-digest), BLAKE3 (mosaic DID derivation).
 - Keep cryptographic claims backed by tests and test vectors.

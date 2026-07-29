@@ -198,10 +198,10 @@ mod scale_impls {
 
 // ========== Serde ==========
 
-#[cfg(feature = "serde")]
 mod serde_impls {
     use super::*;
     use alloc::string::String;
+    use alloc::string::ToString;
 
     // Serialize as a simple string (matching Morpheus `serde_str` pattern).
     // KeyId produces "ioz..." / "iez...", PublicKey produces "poz..." / "pez...".
@@ -307,7 +307,6 @@ mod tests {
         assert!(kid_auth.public_key().is_none());
     }
 
-    #[cfg(feature = "serde")]
     #[test]
     fn serde_roundtrip_public_key() {
         let auth = Authentication::PublicKey(alice_pk());
@@ -317,7 +316,6 @@ mod tests {
         assert_eq!(auth, parsed);
     }
 
-    #[cfg(feature = "serde")]
     #[test]
     fn serde_roundtrip_key_id() {
         let auth = Authentication::KeyId(alice_kid());

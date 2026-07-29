@@ -92,6 +92,7 @@ impl<'de> Deserialize<'de> for MKeyId {
     where
         D: Deserializer<'de>,
     {
+        use alloc::string::ToString;
         serde_bytes::deserialize(deserializer)
             .and_then(|b| deser(b).map_err(|e| serde::de::Error::custom(e.to_string())))
     }
