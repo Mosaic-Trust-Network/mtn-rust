@@ -21,6 +21,7 @@ test:cargo:
     - ./scripts/check.sh deny
     - ./scripts/check.sh clippy
     - ./scripts/check.sh test
+    - ./scripts/check.sh serde-test
     - ./scripts/check.sh nostd
   cache:
     paths:

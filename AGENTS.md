@@ -33,7 +33,7 @@ the project's verification pipeline.
 | `cargo fmt` | `./scripts/check.sh fmt` |
 | `cargo test --workspace` | `./scripts/check.sh test` |
 
-The full pipeline runs format, propagate, fmt, deny, clippy, test, and `no_std`:
+The full pipeline runs format, propagate, fmt, deny, clippy, test, serde-test, and `no_std`:
 
 ```bash
 ./scripts/check.sh              # run all steps
@@ -56,7 +56,14 @@ running every test in the workspace:
 This still builds the full workspace (consistent features, no flip-flop in
 `target/`) but only executes tests matching the filter. Never use
 `cargo test -p <crate>` — it resolves features differently and triggers
-massive recompilation when you switch back to `./scripts/check.sh test`.<
+massive recompilation when you switch back to `./scripts/check.sh test`.
+
+The same filter syntax works for serde-gated tests (`feature = "serde"`):
+
+```bash
+./scripts/check.sh serde-test:after_proof    # run only matching serde tests
+./scripts/check.sh serde-test:finalized      # run only matching serde tests
+```
 
 ### 3. Conventions below are mandatory, not advisory
 

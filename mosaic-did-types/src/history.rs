@@ -277,6 +277,36 @@ impl DidHistory {
         false
     }
 
+    /// Check whether the DID was alive (not tombstoned) throughout the entire
+    /// `[start, end]` range (both inclusive).
+    ///
+    /// Returns `false` if `start > end` or if the DID was tombstoned at a
+    /// height ≤ `end`.
+    pub fn is_alive_across(&self, start: u32, end: u32) -> bool {
+        if start > end {
+            return false;
+        }
+        // If tombstoned, the tombstone height must be strictly after `end`.
+        self.tombstoned_at.is_none_or(|h| h > end)
+    }
+
+    /// Check whether `key_ref` was valid throughout the entire `[start, end]`
+    /// range (both inclusive).
+    ///
+    /// A key is valid across the window if it was added at or before `start`
+    /// and not revoked or expired before or at `end`.
+    pub fn is_key_valid_across(&self, key_ref: &KeyRef, start: u32, end: u32) -> bool {
+        if start > end {
+            return false;
+        }
+        self.keys.iter().any(|k| {
+            k.key_ref == *key_ref
+                && k.added_at_height <= start
+                && k.revoked_at_height.is_none_or(|h| h > end)
+                && k.expires_at_height.is_none_or(|h| h > end)
+        })
+    }
+
     /// Produce a W3C-compliant DID Document at the given block height.
     ///
     /// All valid keys appear in `verificationMethod`. W3C verification
