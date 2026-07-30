@@ -14,7 +14,7 @@
 //! - `key: Authentication` supports either `MKeyId` (compact hash reference) or
 //!   `MPublicKey` (self-contained verifiable key). The issuer chooses the revelation level.
 
-use alloc::{format, string::String, string::ToString, vec::Vec};
+use alloc::{string::String, string::ToString, vec::Vec};
 
 use crate::{auth::Authentication, did::ContentId, did::Did};
 
@@ -56,14 +56,11 @@ pub struct UnsafeRightsDocument {
 impl UnsafeRightsDocument {
     /// Compute the `cm`-prefixed content ID for this rights document.
     ///
-    /// Uses BLAKE3-256 of the canonical JSON representation, matching the
-    /// commitment stored on-chain in `CommitmentVersion.commitment`.
+    /// Uses `json_digest`'s structured BLAKE3-256 Merkle-tree hashing,
+    /// matching the commitment stored on-chain in `CommitmentVersion.commitment`
+    /// and the SMT fingerprint pipeline used by the verifier.
     pub fn compute_hash(&self) -> Result<String, String> {
-        let json = serde_json::to_value(self).map_err(|e| e.to_string())?;
-        let canonical = json_digest::canonical_json(&json).map_err(|e| e.to_string())?;
-        let hash_bytes = blake3::hash(canonical.as_bytes());
-        let encoded = bs58::encode(hash_bytes.as_bytes()).into_string();
-        Ok(format!("cm{encoded}"))
+        json_digest::digest_data_blake3(self).map_err(|e| e.to_string())
     }
 
     /// Check whether this document grants `right` to `holder_key_ref`.
@@ -591,6 +588,35 @@ mod tests {
         let hash2 = doc.compute_hash().expect("compute_hash should succeed");
         assert_eq!(hash1, hash2, "hash must be deterministic");
         assert!(hash1.starts_with("cm"), "hash must have cm prefix, got: {hash1}");
+    }
+
+    #[test]
+    fn compute_hash_matches_json_digest_structured_blake3() {
+        use iop_keyvault::multicipher::MKeyId;
+        let kid: MKeyId = "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH".parse().unwrap();
+
+        let doc = RightsDocument::V1(RightsDocumentV1 {
+            did: Did::alice(),
+            sequence: 1,
+            previous_commitment: None,
+            rights: alloc::vec![RightEntryV1 {
+                key: Authentication::KeyId(kid),
+                rights: alloc::vec!["impersonate".into()],
+            }],
+        });
+
+        // compute_hash must produce the same result as the structured
+        // json_digest::digest_data_blake3 pipeline that the verifier/SMT uses.
+        let from_compute = doc.compute_hash().expect("compute_hash should succeed");
+
+        let wire: UnsafeRightsDocument = doc.into();
+        let from_digest =
+            json_digest::digest_data_blake3(&wire).expect("digest_data_blake3 should succeed");
+
+        assert_eq!(
+            from_compute, from_digest,
+            "compute_hash must use structured json_digest pipeline (BLAKE3 Merkle tree), not flat BLAKE3"
+        );
     }
 
     #[test]

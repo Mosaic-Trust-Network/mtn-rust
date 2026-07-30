@@ -808,7 +808,9 @@ impl DidHistory {
                     });
                     commitments.push(CommitmentVersion {
                         sequence: seq,
-                        commitment: ContentId::from_bytes(cid_str.as_bytes()),
+                        commitment: cid_str
+                            .parse::<ContentId>()
+                            .unwrap_or_else(|_| ContentId::from_bytes(cid_str.as_bytes())),
                         published_at_height: pub_at as u32,
                         signer_key_ref: key_ref,
                     });
@@ -1501,6 +1503,48 @@ mod tests {
         assert_eq!(parsed.authentication.len(), 1);
         assert_eq!(parsed.service.len(), 1);
         assert_eq!(parsed.created_at_height, Some(10));
+    }
+
+    #[test]
+    fn from_did_document_at_roundtrips_commitment_content_ids() {
+        // Build a DidHistory with a commitment whose ContentId has a concrete value.
+        let mut history = DidHistory::new(test_did());
+        let kr = test_key_ref(1);
+        let original_cid = test_commitment(1); // Blake3Flat([1u8; 32])
+
+        history.apply(DidHistoryEvent::KeyAdded {
+            key_ref: kr.clone(),
+            key_type: KeyType::Ed25519,
+            controller: test_did(),
+            public_key: alloc::vec![1u8; 32],
+            at_height: 10,
+            expires_at_height: None,
+        });
+        history.apply(DidHistoryEvent::RightAdded {
+            key_ref: kr.clone(),
+            right: Right::Update,
+            at_height: 10,
+            matures_at_height: None,
+            expires_at_height: None,
+        });
+        history.apply(DidHistoryEvent::CommitmentUpdated {
+            sequence: 1,
+            commitment: original_cid,
+            signer_key_ref: kr,
+            at_height: 100,
+        });
+
+        // Serialize to a JSON DidDocument, then reconstruct via from_did_document_at.
+        let doc = history.to_did_document_at(150, None);
+        let reconstructed =
+            DidHistory::from_did_document_at(&doc, 150).expect("reconstruction must succeed");
+
+        assert_eq!(reconstructed.commitments.len(), 1);
+        let roundtripped_cid = reconstructed.commitments[0].commitment;
+        assert_eq!(
+            original_cid, roundtripped_cid,
+            "ContentId must round-trip through DidDocument; from_did_document_at must parse the ContentId string, not BLAKE3-hash it"
+        );
     }
 
     #[test]
