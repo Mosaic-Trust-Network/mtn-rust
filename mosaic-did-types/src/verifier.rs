@@ -182,27 +182,20 @@ pub struct FinalizedProofInput {
     pub before_proof_content_id: String,
 }
 
-// ===== Extension trait: entry point on DidHistory =====
-
-/// Extension trait that adds a `.check_right()` entry point to [`DidHistory`].
-///
-/// This is the most natural way to start a verification chain:
-///
-/// ```text
-/// history.check_right(key, "impersonate")
-///     .during(100, 200)
-///     .with_documents(&docs)
-///     .require(ProofStrength::AfterProof)
-///     .verify()?;
-/// ```
-pub trait DidHistoryCheckRight {
+impl DidHistory {
     /// Start a verification chain for `right` on `holder_key_ref` against
     /// this DID history.
-    fn check_right<'a>(&'a self, holder_key_ref: &'a str, right: &'a str) -> Identity<'a>;
-}
-
-impl DidHistoryCheckRight for DidHistory {
-    fn check_right<'a>(&'a self, holder_key_ref: &'a str, right: &'a str) -> Identity<'a> {
+    ///
+    /// This is the entry point for the type-state verification builder:
+    ///
+    /// ```text
+    /// history.check_right(key, "impersonate")
+    ///     .during(100, 200)
+    ///     .with_documents(&docs)
+    ///     .require(ProofStrength::AfterProof)
+    ///     .verify()?;
+    /// ```
+    pub fn check_right<'a>(&'a self, holder_key_ref: &'a str, right: &'a str) -> Identity<'a> {
         Identity { history: self, holder_key_ref, right }
     }
 }
@@ -211,8 +204,8 @@ impl DidHistoryCheckRight for DidHistory {
 
 /// Phase 1: identity — the DID history, holder key reference, and right are known.
 ///
-/// Fields are private; construct via [`DidHistoryCheckRight::check_right`] on a
-/// [`DidHistory`], not directly. Transition via [`Identity::during`].
+/// Fields are private; construct via [`DidHistory::check_right`], not directly.
+/// Transition via [`Identity::during`].
 pub struct Identity<'a> {
     // DID history (events reconstructed) for the target DID.
     history: &'a DidHistory,
