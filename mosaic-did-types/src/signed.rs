@@ -165,8 +165,14 @@ mod tests {
 
     #[test]
     fn after_envelope_golden_vector_single_document() {
-        let sk_bytes: &[u8; 32] =
-            b"\x9d\x61\xb1\x9d\xef\xfd\x5a\x60\xba\x84\x4a\xf4\x92\xec\x2c\xc4\x44\x49\xc5\x69\x7b\x32\x69\x19\x70\x3b\xac\x03\x1c\xae\x7f\x60";
+        // RFC 8032 §7.1 test vector 1 Ed25519 private key bytes (SHA-512 of seed).
+        // This is a well-known test constant — not a secret, not a payload.
+        const ED25519_TV1_SK: [u8; 32] = [
+            0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec,
+            0x2c, 0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03,
+            0x1c, 0xae, 0x7f, 0x60,
+        ];
+        let sk_bytes: &[u8; 32] = &ED25519_TV1_SK;
         let pk_string = "pezFVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z";
 
         let content = SmtContent {
