@@ -703,8 +703,6 @@ mod tests {
         key_added_at: u32, revoked_at: Option<u32>, expires_at: Option<u32>,
     ) -> DidHistory {
         DidHistory {
-            did: crate::did::Did::from_did_string(TEST_DID_STR).unwrap(),
-            commitments: Vec::new(),
             keys: alloc::vec![crate::state::VerificationMethod {
                 key_ref: KeyRef::new(TEST_KEY_REF.as_bytes().to_vec()).unwrap(),
                 key_type: crate::operation::KeyType::Ed25519,
@@ -714,8 +712,7 @@ mod tests {
                 expires_at_height: expires_at,
                 revoked_at_height: revoked_at,
             }],
-            rights: Vec::new(),
-            tombstoned_at: None,
+            ..DidHistory::new(crate::did::Did::from_did_string(TEST_DID_STR).unwrap())
         }
     }
 

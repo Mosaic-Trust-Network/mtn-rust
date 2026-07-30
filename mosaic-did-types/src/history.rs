@@ -20,8 +20,29 @@ use crate::document::{
 use crate::operation::{KeyType, Right};
 use crate::rights::UnsafeRightsDocument;
 
+/// Schema URI for V1 DID history wire format.
+pub const DID_HISTORY_V1_SCHEMA: &str = "https://mosaic-trust.net/ns/did-history/v1";
+
+/// Validates the `$schema` field during deserialization.
+///
+/// Serialization always writes [`DID_HISTORY_V1_SCHEMA`], so only this value
+/// (and only this value) is accepted on deserialization. Empty or unrecognised
+/// schema URIs are rejected with a deserialization error.
+fn validate_schema<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    use alloc::string::String;
+    use serde::{Deserialize, de::Error};
+    let s = String::deserialize(d)?;
+    if s == DID_HISTORY_V1_SCHEMA {
+        Ok(s)
+    } else if s.is_empty() {
+        Err(D::Error::custom("empty $schema, expected DID history v1"))
+    } else {
+        Err(D::Error::custom(alloc::format!("unsupported $schema version: {s}")))
+    }
+}
+
 /// A commitment version in the DID history, reconstructed from events.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CommitmentVersion {
     /// Monotonic sequence number (gapless, starting at 1).
     pub sequence: u64,
@@ -38,7 +59,7 @@ pub struct CommitmentVersion {
 /// Similar to `RightGrant` in `document.rs`, but used in the indexer context
 /// where the full lifecycle (including revoked entries) is preserved for
 /// historical reconstruction.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RightLifecycle {
     /// The key this right is granted to.
     pub key_ref: KeyRef,
@@ -77,8 +98,11 @@ impl RightLifecycle {
 ///   `.reverse()`, then apply in forward order.
 ///
 /// Both paths produce equivalent results for the same `[H_start, H_end]` range.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DidHistory {
+    /// Schema identifier for versioning. Serialized as `"$schema"`.
+    #[serde(rename = "$schema", deserialize_with = "validate_schema")]
+    pub schema: String,
     /// The DID this history describes.
     pub did: Did,
     /// Ordered commitment versions (oldest first).
@@ -149,6 +173,7 @@ impl DidHistory {
     /// Create an empty history for the given DID.
     pub fn new(did: Did) -> Self {
         Self {
+            schema: DID_HISTORY_V1_SCHEMA.into(),
             did,
             commitments: Vec::new(),
             keys: Vec::new(),
@@ -792,11 +817,11 @@ impl DidHistory {
         }
 
         Ok(DidHistory {
-            did,
             commitments,
             keys,
             rights,
             tombstoned_at: if doc.deactivated { doc.tombstoned_at_height } else { None },
+            ..DidHistory::new(did)
         })
     }
 }
@@ -947,7 +972,7 @@ fn collect_gaps(
 
 /// Result of checking a condition (key validity, liveness, right) across
 /// a time window `[h_start, h_end)`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ValidityResult {
     /// Condition holds definitively throughout the entire `[h_start, h_end)` window.
     Confirmed,
@@ -962,7 +987,7 @@ pub enum ValidityResult {
 /// A sub-interval `[start, end)` where a condition was absent.
 ///
 /// `end` is exclusive and `None` means unbounded (end of time).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ValidityGap {
     /// Inclusive start height.
     pub start: u32,
@@ -1030,7 +1055,6 @@ mod tests {
         let kr = test_key_ref(1);
 
         let history = DidHistory {
-            did,
             commitments: alloc::vec![
                 CommitmentVersion {
                     sequence: 1,
@@ -1045,9 +1069,7 @@ mod tests {
                     signer_key_ref: kr.clone(),
                 },
             ],
-            keys: alloc::vec![],
-            rights: alloc::vec![],
-            tombstoned_at: None,
+            ..DidHistory::new(did)
         };
 
         assert_eq!(history.commitment_at(50), None);
@@ -1064,8 +1086,6 @@ mod tests {
         let kr2 = test_key_ref(2);
 
         let history = DidHistory {
-            did,
-            commitments: alloc::vec![],
             keys: alloc::vec![
                 crate::state::VerificationMethod {
                     key_ref: kr1.clone(),
@@ -1086,8 +1106,7 @@ mod tests {
                     revoked_at_height: Some(80),
                 },
             ],
-            rights: alloc::vec![],
-            tombstoned_at: None,
+            ..DidHistory::new(did)
         };
 
         // At height 5: no valid keys
@@ -1117,9 +1136,6 @@ mod tests {
         let kr = test_key_ref(1);
 
         let history = DidHistory {
-            did,
-            commitments: alloc::vec![],
-            keys: alloc::vec![],
             rights: alloc::vec![RightLifecycle {
                 key_ref: kr.clone(),
                 right: Right::Impersonate,
@@ -1128,7 +1144,7 @@ mod tests {
                 revoked_at_height: Some(50),
                 matures_at_height: None,
             }],
-            tombstoned_at: None,
+            ..DidHistory::new(did)
         };
 
         let resolver = TestResolver::new();
@@ -1146,16 +1162,13 @@ mod tests {
         let commitment = test_commitment(1);
 
         let history = DidHistory {
-            did,
             commitments: alloc::vec![CommitmentVersion {
                 sequence: 1,
                 commitment,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
             }],
-            keys: alloc::vec![],
-            rights: alloc::vec![],
-            tombstoned_at: None,
+            ..DidHistory::new(did)
         };
 
         let mut resolver = TestResolver::new();
@@ -1588,8 +1601,6 @@ mod tests {
         // BUG: the current fast-path ignores revocation.
         let key_ref = test_default_key_ref();
         let history = DidHistory {
-            did: test_did(),
-            commitments: alloc::vec![],
             keys: alloc::vec![crate::state::VerificationMethod {
                 key_ref: key_ref.clone(),
                 key_type: KeyType::Ed25519,
@@ -1599,8 +1610,7 @@ mod tests {
                 expires_at_height: None,
                 revoked_at_height: Some(50),
             }],
-            rights: alloc::vec![],
-            tombstoned_at: None,
+            ..DidHistory::new(test_did())
         };
 
         let result = history.check_key_validity(&key_ref, 100, Some(200));
@@ -1619,8 +1629,6 @@ mod tests {
         let did = test_did();
         let kr = test_key_ref(1);
         let history = DidHistory {
-            did,
-            commitments: alloc::vec![],
             keys: alloc::vec![crate::state::VerificationMethod {
                 key_ref: kr.clone(),
                 key_type: KeyType::Ed25519,
@@ -1630,8 +1638,7 @@ mod tests {
                 expires_at_height: None,
                 revoked_at_height: Some(150),
             }],
-            rights: alloc::vec![],
-            tombstoned_at: None,
+            ..DidHistory::new(did)
         };
 
         let result = history.check_key_validity(&kr, 100, Some(200));
@@ -1652,8 +1659,6 @@ mod tests {
         let did = test_did();
         let kr = test_key_ref(1);
         let history = DidHistory {
-            did,
-            commitments: alloc::vec![],
             keys: alloc::vec![crate::state::VerificationMethod {
                 key_ref: kr.clone(),
                 key_type: KeyType::Ed25519,
@@ -1663,8 +1668,7 @@ mod tests {
                 expires_at_height: None,
                 revoked_at_height: None,
             }],
-            rights: alloc::vec![],
-            tombstoned_at: None,
+            ..DidHistory::new(did)
         };
 
         let result = history.check_key_validity(&kr, 0, Some(200));
@@ -1684,8 +1688,6 @@ mod tests {
         let did = test_did();
         let kr = test_key_ref(1);
         let history = DidHistory {
-            did,
-            commitments: alloc::vec![],
             keys: alloc::vec![crate::state::VerificationMethod {
                 key_ref: kr.clone(),
                 key_type: KeyType::Ed25519,
@@ -1695,8 +1697,7 @@ mod tests {
                 expires_at_height: None,
                 revoked_at_height: Some(50),
             }],
-            rights: alloc::vec![],
-            tombstoned_at: None,
+            ..DidHistory::new(did)
         };
 
         let result = history.check_key_validity(&kr, 100, Some(200));
@@ -1709,8 +1710,6 @@ mod tests {
         let did = test_did();
         let kr = test_key_ref(1);
         let history = DidHistory {
-            did,
-            commitments: alloc::vec![],
             keys: alloc::vec![crate::state::VerificationMethod {
                 key_ref: kr.clone(),
                 key_type: KeyType::Ed25519,
@@ -1720,8 +1719,7 @@ mod tests {
                 expires_at_height: None,
                 revoked_at_height: None,
             }],
-            rights: alloc::vec![],
-            tombstoned_at: None,
+            ..DidHistory::new(did)
         };
 
         let result = history.check_key_validity(&kr, 100, Some(200));
@@ -1736,8 +1734,6 @@ mod tests {
         let did = test_did();
         let kr = test_key_ref(1);
         let history = DidHistory {
-            did,
-            commitments: alloc::vec![],
             keys: alloc::vec![
                 crate::state::VerificationMethod {
                     key_ref: kr.clone(),
@@ -1758,8 +1754,7 @@ mod tests {
                     revoked_at_height: None,
                 },
             ],
-            rights: alloc::vec![],
-            tombstoned_at: None,
+            ..DidHistory::new(did)
         };
 
         let result = history.check_key_validity(&kr, 50, Some(400));
@@ -1844,9 +1839,6 @@ mod tests {
         // On-chain right grant from height 10, never revoked, window [10, 100).
         let kr = test_key_ref(1);
         let history = DidHistory {
-            did: test_did(),
-            commitments: alloc::vec![],
-            keys: alloc::vec![],
             rights: alloc::vec![RightLifecycle {
                 key_ref: kr.clone(),
                 right: Right::Impersonate,
@@ -1855,7 +1847,7 @@ mod tests {
                 revoked_at_height: None,
                 matures_at_height: None,
             }],
-            tombstoned_at: None,
+            ..DidHistory::new(test_did())
         };
 
         assert_eq!(
@@ -1869,9 +1861,6 @@ mod tests {
         // On-chain right granted at 10, revoked at 50. Window [0, 100).
         let kr = test_key_ref(1);
         let history = DidHistory {
-            did: test_did(),
-            commitments: alloc::vec![],
-            keys: alloc::vec![],
             rights: alloc::vec![RightLifecycle {
                 key_ref: kr.clone(),
                 right: Right::Impersonate,
@@ -1880,7 +1869,7 @@ mod tests {
                 revoked_at_height: Some(50),
                 matures_at_height: None,
             }],
-            tombstoned_at: None,
+            ..DidHistory::new(test_did())
         };
 
         let result = history.verify_right_window(&kr, Right::Impersonate, 0, Some(100), &[]);
@@ -1944,16 +1933,13 @@ mod tests {
         let doc = make_rights_doc(1, None, key_str, "impersonate");
 
         let history = DidHistory {
-            did: test_did(),
             commitments: alloc::vec![CommitmentVersion {
                 sequence: 1,
                 commitment: test_commitment(1),
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
             }],
-            keys: alloc::vec![],
-            rights: alloc::vec![],
-            tombstoned_at: None,
+            ..DidHistory::new(test_did())
         };
 
         assert_eq!(
@@ -1972,7 +1958,6 @@ mod tests {
         let d2 = make_rights_doc(2, None, key_str, "issue"); // grants issue, NOT impersonate
 
         let history = DidHistory {
-            did: test_did(),
             commitments: alloc::vec![
                 CommitmentVersion {
                     sequence: 1,
@@ -1987,9 +1972,7 @@ mod tests {
                     signer_key_ref: kr.clone(),
                 },
             ],
-            keys: alloc::vec![],
-            rights: alloc::vec![],
-            tombstoned_at: None,
+            ..DidHistory::new(test_did())
         };
 
         let result = history.verify_right_window(
@@ -2006,6 +1989,199 @@ mod tests {
                 assert_eq!(gaps[0].end, Some(200));
             }
             other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    // ===== Serde round‑trip tests =====
+
+    #[test]
+    fn did_history_serde_roundtrip_includes_schema() {
+        let did = test_did();
+        let kr = test_key_ref(1);
+
+        let history = build_test_history(did.clone(), kr);
+
+        // Serialize to JSON
+        let json = serde_json::to_string_pretty(&history).expect("serialization must succeed");
+        assert!(json.contains(r#""$schema""#), "wire format must include $schema field");
+        assert!(
+            json.contains(crate::history::DID_HISTORY_V1_SCHEMA),
+            "$schema must be the V1 URI: {json}"
+        );
+
+        // Deserialize back
+        let deserialized: DidHistory =
+            serde_json::from_str(&json).expect("deserialization must succeed");
+
+        // Round-trip equality
+        assert_eq!(history.did, deserialized.did);
+        assert_eq!(history.commitments.len(), deserialized.commitments.len());
+        assert_eq!(history.keys.len(), deserialized.keys.len());
+        assert_eq!(history.rights.len(), deserialized.rights.len());
+        assert_eq!(history.tombstoned_at, deserialized.tombstoned_at);
+    }
+
+    #[test]
+    fn did_history_schema_is_present_in_wire_format() {
+        let mut history = DidHistory::new(test_did());
+        let kr = test_key_ref(1);
+        history.apply(DidHistoryEvent::KeyAdded {
+            key_ref: kr.clone(),
+            key_type: KeyType::Ed25519,
+            controller: test_did(),
+            public_key: alloc::vec![1u8; 32],
+            at_height: 10,
+            expires_at_height: None,
+        });
+
+        let json = serde_json::to_string(&history).expect("serialization must succeed");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("must be valid JSON");
+        assert_eq!(
+            parsed["$schema"].as_str(),
+            Some(crate::history::DID_HISTORY_V1_SCHEMA),
+            "$schema field must contain the V1 URI"
+        );
+    }
+
+    #[test]
+    fn did_history_serde_rejects_empty_schema() {
+        let json = r#"{
+            "$schema": "",
+            "did": "did:mosaic:iozABC",
+            "commitments": [],
+            "keys": [],
+            "rights": [],
+            "tombstoned_at": null
+        }"#;
+
+        let result: Result<DidHistory, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "empty $schema must be rejected");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("$schema"), "error should mention schema: {err}");
+    }
+
+    #[test]
+    fn did_history_serde_rejects_unknown_schema() {
+        let json = r#"{
+            "$schema": "https://unknown-schema/v42",
+            "did": "did:mosaic:iozABC",
+            "commitments": [],
+            "keys": [],
+            "rights": [],
+            "tombstoned_at": null
+        }"#;
+
+        let result: Result<DidHistory, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "unknown $schema must be rejected");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("v42"), "error should mention the version: {err}");
+    }
+
+    #[test]
+    fn did_history_serde_rejects_missing_schema() {
+        let json = r#"{
+            "did": "did:mosaic:iozABC",
+            "commitments": [],
+            "keys": [],
+            "rights": [],
+            "tombstoned_at": null
+        }"#;
+
+        let result: Result<DidHistory, _> = serde_json::from_str(json);
+        assert!(result.is_err(), "missing $schema must be rejected");
+    }
+
+    #[test]
+    fn did_history_serde_roundtrip_commitment_version() {
+        let cv = CommitmentVersion {
+            sequence: 42,
+            commitment: test_commitment(1),
+            published_at_height: 100,
+            signer_key_ref: test_key_ref(1),
+        };
+
+        let json = serde_json::to_string(&cv).expect("serialization must succeed");
+        let deserialized: CommitmentVersion =
+            serde_json::from_str(&json).expect("deserialization must succeed");
+
+        assert_eq!(cv.sequence, deserialized.sequence);
+        assert_eq!(cv.commitment, deserialized.commitment);
+        assert_eq!(cv.published_at_height, deserialized.published_at_height);
+        assert_eq!(cv.signer_key_ref, deserialized.signer_key_ref);
+    }
+
+    #[test]
+    fn did_history_serde_roundtrip_right_lifecycle() {
+        let rl = RightLifecycle {
+            key_ref: test_key_ref(1),
+            right: Right::Impersonate,
+            granted_at_height: 10,
+            expires_at_height: Some(100),
+            revoked_at_height: None,
+            matures_at_height: Some(50),
+        };
+
+        let json = serde_json::to_string(&rl).expect("serialization must succeed");
+        let deserialized: RightLifecycle =
+            serde_json::from_str(&json).expect("deserialization must succeed");
+
+        assert_eq!(rl.key_ref, deserialized.key_ref);
+        assert_eq!(rl.right, deserialized.right);
+        assert_eq!(rl.granted_at_height, deserialized.granted_at_height);
+        assert_eq!(rl.expires_at_height, deserialized.expires_at_height);
+        assert_eq!(rl.revoked_at_height, deserialized.revoked_at_height);
+        assert_eq!(rl.matures_at_height, deserialized.matures_at_height);
+    }
+
+    #[test]
+    fn did_history_serde_roundtrip_validity_result() {
+        let confirmed = ValidityResult::Confirmed;
+        let json = serde_json::to_string(&confirmed).expect("serialization must succeed");
+        let back: ValidityResult =
+            serde_json::from_str(&json).expect("deserialization must succeed");
+        assert_eq!(confirmed, back);
+
+        let absent = ValidityResult::Absent;
+        let json = serde_json::to_string(&absent).expect("serialization must succeed");
+        let back: ValidityResult =
+            serde_json::from_str(&json).expect("deserialization must succeed");
+        assert_eq!(absent, back);
+
+        let ambiguous = ValidityResult::Ambiguous { gaps: alloc::vec![] };
+        let json = serde_json::to_string(&ambiguous).expect("serialization must succeed");
+        let back: ValidityResult =
+            serde_json::from_str(&json).expect("deserialization must succeed");
+        assert_eq!(ambiguous, back);
+    }
+
+    /// Build a non-trivial DidHistory for serde tests.
+    fn build_test_history(did: crate::did::Did, kr: KeyRef) -> DidHistory {
+        let controller = did.clone();
+        DidHistory {
+            commitments: alloc::vec![CommitmentVersion {
+                sequence: 1,
+                commitment: test_commitment(1),
+                published_at_height: 100,
+                signer_key_ref: kr.clone(),
+            }],
+            keys: alloc::vec![crate::state::VerificationMethod {
+                key_ref: kr.clone(),
+                key_type: KeyType::Ed25519,
+                controller,
+                public_key: alloc::vec![1u8; 32].try_into().unwrap(),
+                added_at_height: 10,
+                expires_at_height: None,
+                revoked_at_height: None,
+            }],
+            rights: alloc::vec![RightLifecycle {
+                key_ref: kr.clone(),
+                right: Right::Impersonate,
+                granted_at_height: 10,
+                expires_at_height: None,
+                revoked_at_height: None,
+                matures_at_height: None,
+            }],
+            ..DidHistory::new(did)
         }
     }
 }
