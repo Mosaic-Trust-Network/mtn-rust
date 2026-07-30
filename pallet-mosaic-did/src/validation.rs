@@ -20,8 +20,8 @@ use sp_std::vec::Vec;
 use iop_keyvault::PublicKey;
 use iop_keyvault::multicipher::MPublicKey;
 use mosaic_did_types::{
-    Did, DidOperation, DidState, KeyType, Right, SignedDidOperation, public_key_raw_bytes,
-    public_key_to_key_type,
+    Did, DidOperation, DidState, GovernedOperation, KeyType, Right, SignedDidOperation,
+    public_key_raw_bytes, public_key_to_key_type,
 };
 
 use crate::pallet::{Config, DidStates, Error, PendingGovernedOps};
@@ -192,6 +192,12 @@ pub fn validate_did_operation<T: Config>(
             // Check not yet expired
             let max_exec_height = pending.announced_at_height + crate::GOVERNED_OP_EXPIRY_BLOCKS;
             ensure!(height_u32 <= max_exec_height, Error::<T>::GovernedOpExpired);
+
+            // For CommitmentReset, enforce gapless sequence (same as direct UpdateCommitment).
+            if let GovernedOperation::CommitmentReset { sequence, .. } = &pending.operation {
+                let stored_sequence = state.commitment.map(|(seq, _)| seq).unwrap_or(0);
+                ensure!(*sequence == stored_sequence + 1, Error::<T>::InvalidCommitmentSequence);
+            }
         }
     }
 
