@@ -9,11 +9,14 @@
 //! This module itself is a pure data type — it has no knowledge of SCALE encoding,
 //! Substrate RPCs, or block subscriptions.
 
+use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use crate::did::{ContentId, Did, KeyRef};
-use crate::document::{DID_DOCUMENT_MOSAIC_CONTEXT, DID_DOCUMENT_W3C_CONTEXT};
+use crate::document::{
+    DID_DOCUMENT_MOSAIC_CONTEXT, DID_DOCUMENT_W3C_CONTEXT, w3c_type_to_key_type,
+};
 use crate::operation::{KeyType, Right};
 use crate::rights::UnsafeRightsDocument;
 
@@ -654,6 +657,154 @@ impl DidHistory {
             tombstoned_at_height: self.tombstoned_at,
         }
     }
+
+    /// Build a minimal [`DidHistory`] from a resolved [`DidDocument`] at a
+    /// specific block height.
+    ///
+    /// The `DidDocument` is a point-in-time snapshot — it lacks lifecycle
+    /// information for keys and rights (no `added_at`, `revoked_at`, or
+    /// `expires_at`). This constructor approximates:
+    ///
+    /// - Keys are assumed valid since `doc.created_at_height` (or height 0).
+    /// - Rights are assumed granted since `doc.created_at_height` (or height 0).
+    /// - Commitment versions have real `publishedAtHeight` from the service endpoint.
+    ///
+    /// The resulting `DidHistory` is suitable for `Minimal`-strength
+    /// verification — "the right existed at some point" — but cannot
+    /// produce `AfterProof` or `Finalized` because no validated proof
+    /// tokens are attached.
+    pub(crate) fn from_did_document_at(
+        doc: &crate::document::DidDocument, _at_height: u32,
+    ) -> Result<Self, crate::did::DidParseError> {
+        let did = crate::did::Did::from_did_string(&doc.id)?;
+        let created = doc.created_at_height.unwrap_or(0);
+
+        // --- Keys (verification methods → VerificationMethod) ---
+        let keys: Vec<_> = doc
+            .verification_method
+            .iter()
+            .filter_map(|vm| {
+                // Extract key_ref from fragment: "did:mosaic:ioz...#iozABC" → "iozABC"
+                let key_ref_str = vm.id.rsplit('#').next()?;
+                let key_ref = KeyRef::new(key_ref_str.as_bytes().to_vec()).ok()?;
+                let key_type = w3c_type_to_key_type(&vm.type_)?;
+                let public_key = decode_multibase_key(&vm.public_key_multibase)?;
+                Some(crate::state::VerificationMethod {
+                    key_ref,
+                    key_type,
+                    controller: did.clone(),
+                    public_key: public_key.try_into().ok()?,
+                    added_at_height: created,
+                    expires_at_height: None,
+                    revoked_at_height: None,
+                })
+            })
+            .collect();
+
+        // --- Rights (W3C relationship arrays → RightLifecycle) ---
+        fn key_ids_in(list: &[String]) -> Vec<&str> {
+            list.iter().filter_map(|id| id.rsplit('#').next()).collect()
+        }
+
+        let mut rights = Vec::new();
+
+        let update_keys = key_ids_in(&doc.capability_invocation);
+        let delegate_keys = key_ids_in(&doc.capability_delegation);
+        let issue_impersonate_keys = key_ids_in(&doc.assertion_method);
+
+        // A key may appear in multiple lists → one right per appearance.
+        for kr in &update_keys {
+            let key_ref = KeyRef::new(kr.as_bytes().to_vec()).ok();
+            if let Some(kr) = key_ref {
+                rights.push(RightLifecycle {
+                    key_ref: kr,
+                    right: Right::Update,
+                    granted_at_height: created,
+                    expires_at_height: None,
+                    revoked_at_height: None,
+                    matures_at_height: None,
+                });
+            }
+        }
+        for kr in &delegate_keys {
+            let key_ref = KeyRef::new(kr.as_bytes().to_vec()).ok();
+            if let Some(kr) = key_ref {
+                rights.push(RightLifecycle {
+                    key_ref: kr,
+                    right: Right::Delegate,
+                    granted_at_height: created,
+                    expires_at_height: None,
+                    revoked_at_height: None,
+                    matures_at_height: None,
+                });
+            }
+        }
+        for kr in &issue_impersonate_keys {
+            let key_ref = KeyRef::new(kr.as_bytes().to_vec()).ok();
+            if let Some(kr) = key_ref {
+                rights.push(RightLifecycle {
+                    key_ref: kr.clone(),
+                    right: Right::Impersonate,
+                    granted_at_height: created,
+                    expires_at_height: None,
+                    revoked_at_height: None,
+                    matures_at_height: None,
+                });
+                rights.push(RightLifecycle {
+                    key_ref: kr,
+                    right: Right::Issue,
+                    granted_at_height: created,
+                    expires_at_height: None,
+                    revoked_at_height: None,
+                    matures_at_height: None,
+                });
+            }
+        }
+
+        // --- Commitments (MosaicCommitmentTimeline2026 service) ---
+        let mut commitments = Vec::new();
+        if let Some(svc) = doc.service.iter().find(|s| s.type_ == "MosaicCommitmentTimeline2026")
+            && let Some(versions) = svc.service_endpoint.get("versions").and_then(|v| v.as_array())
+        {
+            for v in versions {
+                let seq = v.get("sequence").and_then(|s| s.as_u64());
+                let cid_str = v.get("contentId").and_then(|c| c.as_str());
+                let pub_at = v.get("publishedAtHeight").and_then(|h| h.as_u64());
+                let signer =
+                    v.get("publishedBy").and_then(|s| s.as_str()).and_then(|s| s.strip_prefix('#'));
+
+                if let (Some(seq), Some(cid_str), Some(pub_at), Some(signer)) =
+                    (seq, cid_str, pub_at, signer)
+                {
+                    let key_ref = KeyRef::new(signer.as_bytes().to_vec()).unwrap_or_else(|_| {
+                        // Fallback: use DID's default key if signer key_ref is invalid.
+                        let kid = did.default_key_id.to_string();
+                        KeyRef::new(kid.into_bytes()).unwrap()
+                    });
+                    commitments.push(CommitmentVersion {
+                        sequence: seq,
+                        commitment: ContentId::from_bytes(cid_str.as_bytes()),
+                        published_at_height: pub_at as u32,
+                        signer_key_ref: key_ref,
+                    });
+                }
+            }
+        }
+
+        Ok(DidHistory {
+            did,
+            commitments,
+            keys,
+            rights,
+            tombstoned_at: if doc.deactivated { doc.tombstoned_at_height } else { None },
+        })
+    }
+}
+
+/// Decode a `publicKeyMultibase` string (`z<base58btc>`) into raw bytes.
+fn decode_multibase_key(encoded: &str) -> Option<Vec<u8>> {
+    let b58 = encoded.strip_prefix('z')?;
+    bs58::decode(b58).into_vec().ok()
 }
 
 // ===== Intervals generic domain type =====

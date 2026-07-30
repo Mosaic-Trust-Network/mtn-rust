@@ -92,8 +92,11 @@ pub struct DidDocumentService {
 
 // ========== RENDERING HELPERS ==========
 
-/// Convert a KeyType to its W3C verification method type string.
-/// Map a `KeyType` to its W3C `verificationMethod` type string.
+/// Convert a [`KeyType`] to its W3C `verificationMethod` type string.
+///
+/// This `match` is exhaustive — adding a new `KeyType` variant will cause
+/// a compile error here, reminding you to also update the reverse mapping
+/// in [`w3c_type_to_key_type`].
 pub fn key_type_to_w3c_string(key_type: KeyType) -> String {
     match key_type {
         KeyType::Ed25519 => "Ed25519VerificationKey2020".into(),
@@ -103,8 +106,33 @@ pub fn key_type_to_w3c_string(key_type: KeyType) -> String {
     }
 }
 
+/// Reverse of [`key_type_to_w3c_string`]: parse a W3C verification method
+/// type string back to a [`KeyType`].
+///
+/// Uses [`strum::IntoEnumIterator`] so all variants are automatically
+/// covered. Adding a new variant to [`KeyType`] only requires updating the
+/// exhaustive `match` in [`key_type_to_w3c_string`].
+pub fn w3c_type_to_key_type(s: &str) -> Option<KeyType> {
+    use strum::IntoEnumIterator;
+    KeyType::iter().find(|&kt| key_type_to_w3c_string(kt) == s)
+}
+
 /// Encode a public key as multibase base58btc.
 pub fn multibase_encode_key(key_bytes: &[u8]) -> String {
     let encoded = bs58::encode(key_bytes).into_string();
     alloc::format!("z{encoded}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn w3c_key_type_roundtrip_all_variants() {
+        use strum::IntoEnumIterator;
+        for kt in KeyType::iter() {
+            let s = key_type_to_w3c_string(kt);
+            assert_eq!(w3c_type_to_key_type(&s), Some(kt));
+        }
+    }
 }

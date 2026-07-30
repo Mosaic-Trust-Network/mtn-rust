@@ -5,7 +5,6 @@
 //! verification relationship arrays and off-chain rights from presenter-
 //! supplied [`RightsDocument`]s whose hashes match the commitment timeline.
 
-use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
@@ -499,177 +498,22 @@ impl<'a> Documents<'a> {
 impl DidDocument {
     /// Verify that `holder_key` has `right` at the document's resolution height.
     ///
-    /// On-chain rights are checked against the DID document's verification
-    /// relationship arrays. Off-chain rights require presenter-supplied
-    /// [`RightsDocument`]s, keyed by their sequence number.
+    /// Builds a minimal [`DidHistory`] from this document's snapshot and
+    /// delegates to the full three-outcome verifier. Because the `DidDocument`
+    /// is a point-in-time snapshot without lifecycle information or validated
+    /// proofs, the result is always at most [`ProofStrength::Minimal`].
     ///
-    /// # Proof strengths
-    ///
-    /// - **Minimal**: any provided document matches a timeline version and grants
-    ///   the right. Proves the right existed *at some point*.
-    /// - **Finalized**: documents must be provided for *all* versions in the
-    ///   commitment timeline. Every one must grant the right and its hash must
-    ///   match. The `previousCommitment` chain is verified between consecutive
-    ///   documents.
+    /// `rights_documents` are the presenter-supplied off-chain rights documents.
     pub fn verify_right(
         &self, holder_key: &Authentication, right: &str,
-        rights_documents: &[(u64, &RightsDocument)], strength: ProofStrength,
+        rights_documents: &[(u64, &RightsDocument)],
     ) -> Result<VerificationResult, VerificationError> {
-        let mut steps: Vec<StepResult> = Vec::new();
+        let at_height = self.last_modified_at_height.unwrap_or(0);
+        let history = DidHistory::from_did_document_at(self, at_height)
+            .map_err(|_| VerificationError::KeyNotFound)?;
 
-        if self.deactivated {
-            return Err(VerificationError::DidDeactivated);
-        }
-        steps.push(StepResult { step: "did_liveness", passed: true, detail: None });
-
-        // Check that the key appears in verificationMethod
-        let key_fragment = format!("#{holder_key}");
-        let key_in_doc = self.verification_method.iter().any(|vm| vm.id.ends_with(&key_fragment));
-        if !key_in_doc {
-            return Err(VerificationError::KeyNotFound);
-        }
-        steps.push(StepResult { step: "key_in_document", passed: true, detail: None });
-
-        // Check on-chain rights via verification relationship arrays
-        let in_list = |list: &[String]| list.iter().any(|id| id.ends_with(&key_fragment));
-
-        let onchain_granted = match right {
-            "update" => in_list(&self.capability_invocation),
-            "delegate" => in_list(&self.capability_delegation),
-            "impersonate" | "issue" => in_list(&self.assertion_method),
-            _ => false,
-        };
-        steps.push(StepResult { step: "on_chain_right", passed: true, detail: None });
-
-        if onchain_granted {
-            return Ok(VerificationResult {
-                valid: true,
-                strength: ProofStrength::Finalized,
-                issues: Vec::new(),
-                steps,
-            });
-        }
-
-        // Off-chain: resolve the commitment timeline
-        let commitment_service =
-            self.service.iter().find(|s| s.type_ == "MosaicCommitmentTimeline2026");
-
-        let Some(commitment_service) = commitment_service else {
-            // No service and no documents → right not granted
-            if rights_documents.is_empty() {
-                return Err(VerificationError::RightNotGranted);
-            }
-            return Err(VerificationError::NoCommitmentService);
-        };
-
-        let versions = commitment_service
-            .service_endpoint
-            .get("versions")
-            .and_then(|v| v.as_array())
-            .ok_or(VerificationError::NoCommitmentService)?;
-
-        // Build a lookup: sequence → expected hash
-        let timeline: Vec<(u64, &str)> = versions
-            .iter()
-            .filter_map(|v| {
-                let seq = v.get("sequence")?.as_u64()?;
-                let cid = v.get("contentId")?.as_str()?;
-                Some((seq, cid))
-            })
-            .collect();
-
-        // Wrap in a closure so interior `return` statements exit the closure,
-        // allowing step recording to run afterward.
-        let verification = (|| -> Result<VerificationResult, VerificationError> {
-            match strength {
-                ProofStrength::Minimal => {
-                    // Any matching document grants the right
-                    for (seq, doc) in rights_documents {
-                        let doc_hash =
-                            doc.compute_hash().map_err(VerificationError::DigestError)?;
-                        if timeline.iter().any(|(s, h)| *s == *seq && *h == doc_hash)
-                            && doc.grants_right(holder_key, right)
-                        {
-                            return Ok(VerificationResult {
-                                valid: true,
-                                strength: ProofStrength::Minimal,
-                                issues: Vec::new(),
-                                steps: Vec::new(),
-                            });
-                        }
-                    }
-                    Err(VerificationError::RightNotGranted)
-                }
-                ProofStrength::AfterProof | ProofStrength::Finalized => {
-                    // Every version in the timeline MUST have a matching document
-                    let docs_by_seq: Vec<Option<&RightsDocument>> = timeline
-                        .iter()
-                        .map(|(seq, _expected_hash)| {
-                            rights_documents.iter().find(|(s, _)| s == seq).map(|(_, doc)| *doc)
-                        })
-                        .collect();
-
-                    for (i, maybe_doc) in docs_by_seq.iter().enumerate() {
-                        let (_seq, expected_hash) = &timeline[i];
-                        let doc = maybe_doc.ok_or(VerificationError::MissingCommitmentDocument)?;
-
-                        // Hash must match
-                        let doc_hash =
-                            doc.compute_hash().map_err(VerificationError::DigestError)?;
-                        if doc_hash != *expected_hash {
-                            return Err(VerificationError::CommitmentHashMismatch);
-                        }
-
-                        // Right must be granted in every version
-                        if !doc.grants_right(holder_key, right) {
-                            return Err(VerificationError::RightNotGranted);
-                        }
-
-                        // Hash chain: D_i.previousCommitment must equal blake3(canonical(D_{i-1}))
-                        if i > 0 {
-                            let prev_doc = docs_by_seq[i - 1].expect("previous doc must exist");
-                            let expected_prev =
-                                prev_doc.compute_hash().map_err(VerificationError::DigestError)?;
-                            let chain_ok = doc.previous_commitment().is_some_and(|pc| {
-                                *pc == crate::did::ContentId::from_bytes(expected_prev.as_bytes())
-                            });
-                            if !chain_ok {
-                                return Err(VerificationError::CommitmentChainBroken);
-                            }
-                        }
-                    }
-
-                    Ok(VerificationResult {
-                        valid: true,
-                        strength: ProofStrength::Finalized,
-                        issues: Vec::new(),
-                        steps: Vec::new(),
-                    })
-                }
-            }
-        })()?;
-
-        steps.push(StepResult { step: "off_chain_commitment", passed: true, detail: None });
-
-        Ok(VerificationResult {
-            valid: true,
-            strength: verification.strength,
-            issues: Vec::new(),
-            steps,
-        })
+        history.check_right(holder_key, right).with_documents(rights_documents).verify()
     }
-}
-
-/// Look up a rights document by sequence number.
-#[allow(dead_code)]
-fn docs_by_seq<'a>(
-    rights_documents: &'a [(u64, &'a RightsDocument)], seq: u64,
-) -> Result<&'a RightsDocument, VerificationError> {
-    rights_documents
-        .iter()
-        .find(|(s, _)| *s == seq)
-        .map(|(_, d)| *d)
-        .ok_or(VerificationError::MissingCommitmentDocument)
 }
 
 #[cfg(test)]
@@ -755,26 +599,22 @@ mod tests {
     #[test]
     fn verify_right_with_key_in_document() {
         let doc = make_test_document();
-        let result =
-            doc.verify_right(&test_key(), "impersonate", &[], ProofStrength::Minimal).unwrap();
+        let result = doc.verify_right(&test_key(), "impersonate", &[]).unwrap();
         assert!(result.valid);
-        assert_eq!(result.strength, ProofStrength::Finalized);
+        assert_eq!(result.strength, ProofStrength::Minimal);
     }
 
     #[test]
     fn verify_right_with_key_not_in_document() {
         let doc = make_test_document();
-        let err = doc
-            .verify_right(&test_other_key(), "impersonate", &[], ProofStrength::Minimal)
-            .unwrap_err();
+        let err = doc.verify_right(&test_other_key(), "impersonate", &[]).unwrap_err();
         assert_eq!(err, VerificationError::KeyNotFound);
     }
 
     #[test]
     fn verify_right_with_on_chain_impersonate() {
         let doc = make_test_document();
-        let result =
-            doc.verify_right(&test_key(), "impersonate", &[], ProofStrength::Minimal).unwrap();
+        let result = doc.verify_right(&test_key(), "impersonate", &[]).unwrap();
         assert!(result.valid);
     }
 
@@ -782,8 +622,8 @@ mod tests {
     fn verify_right_with_deactivated_did() {
         let mut doc = make_test_document();
         doc.deactivated = true;
-        let err =
-            doc.verify_right(&test_key(), "impersonate", &[], ProofStrength::Minimal).unwrap_err();
+        doc.tombstoned_at_height = Some(50);
+        let err = doc.verify_right(&test_key(), "impersonate", &[]).unwrap_err();
         assert_eq!(err, VerificationError::DidDeactivated);
     }
 
@@ -791,8 +631,7 @@ mod tests {
     fn verify_right_rejected_when_right_not_in_on_chain_relationships() {
         let mut doc = make_test_document();
         doc.assertion_method.clear();
-        let err =
-            doc.verify_right(&test_key(), "impersonate", &[], ProofStrength::Minimal).unwrap_err();
+        let err = doc.verify_right(&test_key(), "impersonate", &[]).unwrap_err();
         assert_eq!(err, VerificationError::RightNotGranted);
     }
 
@@ -806,130 +645,36 @@ mod tests {
         let hash = rights_doc.compute_hash().unwrap();
         set_timeline(&mut doc, &[(1, &hash)]);
 
-        let result = doc
-            .verify_right(&test_key(), "impersonate", &[(1, &rights_doc)], ProofStrength::Minimal)
-            .unwrap();
+        let result = doc.verify_right(&test_key(), "impersonate", &[(1, &rights_doc)]).unwrap();
         assert!(result.valid);
         assert_eq!(result.strength, ProofStrength::Minimal);
     }
 
     #[test]
-    fn minimal_hash_mismatch_fails() {
+    fn did_document_off_chain_with_commitment_document_passes() {
         let mut doc = make_test_document();
         doc.assertion_method.clear();
         let rights_doc = make_rights_doc(1, None, "impersonate");
-        set_timeline(&mut doc, &[(1, "cmWRONG_HASH_0000000000000000000000000000")]);
+        let hash = rights_doc.compute_hash().unwrap();
+        set_timeline(&mut doc, &[(1, &hash)]);
 
-        let err = doc
-            .verify_right(&test_key(), "impersonate", &[(1, &rights_doc)], ProofStrength::Minimal)
-            .unwrap_err();
-        assert_eq!(err, VerificationError::RightNotGranted);
+        let result = doc.verify_right(&test_key(), "impersonate", &[(1, &rights_doc)]).unwrap();
+        assert!(result.valid);
+        assert_eq!(result.strength, ProofStrength::Minimal);
+        // Key 'added' at height 10, commitment at 100 → gaps [0,10) and [0,100)
+        assert!(result.issues.iter().any(|i| i.contains("absent [0, 10)")));
+        assert!(result.issues.iter().any(|i| i.contains("absent [0, 100)")));
     }
 
     #[test]
-    fn minimal_wrong_right_fails() {
+    fn did_document_off_chain_wrong_right_not_granted() {
         let mut doc = make_test_document();
         doc.assertion_method.clear();
         let rights_doc = make_rights_doc(1, None, "issue"); // grants issue, not impersonate
         let hash = rights_doc.compute_hash().unwrap();
         set_timeline(&mut doc, &[(1, &hash)]);
 
-        let err = doc
-            .verify_right(&test_key(), "impersonate", &[(1, &rights_doc)], ProofStrength::Minimal)
-            .unwrap_err();
-        assert_eq!(err, VerificationError::RightNotGranted);
-    }
-
-    // ===== Finalized proof tests =====
-
-    #[test]
-    fn finalized_full_chain_passes() {
-        let mut doc = make_test_document();
-        doc.assertion_method.clear();
-
-        // Two versions with chain: D1 → D2
-        let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let d2 = make_rights_doc(2, Some(&h1), "impersonate");
-        let h2 = d2.compute_hash().unwrap();
-        set_timeline(&mut doc, &[(1, &h1), (2, &h2)]);
-
-        let result = doc
-            .verify_right(
-                &test_key(),
-                "impersonate",
-                &[(1, &d1), (2, &d2)],
-                ProofStrength::Finalized,
-            )
-            .unwrap();
-        assert!(result.valid);
-        assert_eq!(result.strength, ProofStrength::Finalized);
-    }
-
-    #[test]
-    fn finalized_missing_document_fails() {
-        let mut doc = make_test_document();
-        doc.assertion_method.clear();
-
-        let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        set_timeline(&mut doc, &[(1, &h1), (2, "cmDUMMY_0000000000000000000000000000000000")]);
-
-        let err = doc
-            .verify_right(
-                &test_key(),
-                "impersonate",
-                &[(1, &d1)], // missing doc for version 2
-                ProofStrength::Finalized,
-            )
-            .unwrap_err();
-        assert_eq!(err, VerificationError::MissingCommitmentDocument);
-    }
-
-    #[test]
-    fn finalized_chain_broken_fails() {
-        let mut doc = make_test_document();
-        doc.assertion_method.clear();
-
-        let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        // d2's previousCommitment points to a different hash → chain broken
-        let d2 =
-            make_rights_doc(2, Some("cmWRONG_CHAIN_HASH_0000000000000000000000"), "impersonate");
-        let h2 = d2.compute_hash().unwrap();
-        set_timeline(&mut doc, &[(1, &h1), (2, &h2)]);
-
-        let err = doc
-            .verify_right(
-                &test_key(),
-                "impersonate",
-                &[(1, &d1), (2, &d2)],
-                ProofStrength::Finalized,
-            )
-            .unwrap_err();
-        assert_eq!(err, VerificationError::CommitmentChainBroken);
-    }
-
-    #[test]
-    fn finalized_mid_chain_revocation_fails() {
-        let mut doc = make_test_document();
-        doc.assertion_method.clear();
-
-        // D1 grants Impersonate, D2 does not → fails at D2
-        let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let d2 = make_rights_doc(2, Some(&h1), "issue");
-        let h2 = d2.compute_hash().unwrap();
-        set_timeline(&mut doc, &[(1, &h1), (2, &h2)]);
-
-        let err = doc
-            .verify_right(
-                &test_key(),
-                "impersonate",
-                &[(1, &d1), (2, &d2)],
-                ProofStrength::Finalized,
-            )
-            .unwrap_err();
+        let err = doc.verify_right(&test_key(), "impersonate", &[(1, &rights_doc)]).unwrap_err();
         assert_eq!(err, VerificationError::RightNotGranted);
     }
 

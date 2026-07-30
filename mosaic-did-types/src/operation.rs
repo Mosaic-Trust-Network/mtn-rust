@@ -90,53 +90,36 @@ impl core::str::FromStr for Right {
 }
 
 /// Supported key types for verification methods.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    strum::EnumIter,
+    strum::Display,
+    strum::AsRefStr,
+    strum::EnumString,
+)]
 #[cfg_attr(
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
 #[derive(Serialize, Deserialize)]
+#[strum(ascii_case_insensitive)]
 pub enum KeyType {
     /// Ed25519 -- default, required.
+    #[strum(serialize = "ed25519")]
     Ed25519,
     /// secp256k1 -- Ethereum compatibility.
+    #[strum(serialize = "secp256k1")]
     Secp256k1,
     /// secp256r1 (P-256) -- HSM compatibility (Phase 2).
+    #[strum(serialize = "secp256r1")]
     Secp256r1,
     /// X25519 -- key agreement only (Phase 2).
+    #[strum(serialize = "x25519")]
     X25519,
-}
-
-impl KeyType {
-    /// Stable lower-case wire name for client bindings.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            KeyType::Ed25519 => "ed25519",
-            KeyType::Secp256k1 => "secp256k1",
-            KeyType::Secp256r1 => "secp256r1",
-            KeyType::X25519 => "x25519",
-        }
-    }
-}
-
-impl core::fmt::Display for KeyType {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl core::str::FromStr for KeyType {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "ed25519" | "Ed25519" => Ok(KeyType::Ed25519),
-            "secp256k1" | "Secp256k1" => Ok(KeyType::Secp256k1),
-            "secp256r1" | "Secp256r1" => Ok(KeyType::Secp256r1),
-            "x25519" | "X25519" => Ok(KeyType::X25519),
-            _ => Err("invalid Mosaic DID key type"),
-        }
-    }
 }
 
 /// Key purposes per W3C DID Core verification relationships.
