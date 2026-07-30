@@ -308,6 +308,190 @@ impl DidHistory {
         })
     }
 
+    /// Check key validity across `[h_start, h_end)` producing a three-outcome
+    /// [`ValidityResult`].
+    ///
+    /// - `h_start` is inclusive; `h_end` is exclusive (`None` = unbounded).
+    /// - For zero-transaction DIDs, the default key (whose `key_ref` matches
+    ///   `self.did.default_key_id`) is valid from height 0.
+    /// - Once the DID is registered, lifecycle events in `self.keys` (add,
+    ///   revoke, expire) govern the default key's validity like any other key.
+    pub fn check_key_validity(
+        &self, key_ref: &KeyRef, h_start: u32, h_end: Option<u32>,
+    ) -> ValidityResult {
+        // Default-key fast path only for zero-transaction DIDs (no key events).
+        // Once the key appears in the event stream, lifecycle events (revocation,
+        // expiry) take precedence.
+        if self.keys.iter().any(|k| k.key_ref == *key_ref) {
+            // Key has lifecycle events — fall through to normal interval logic.
+        } else if self.is_default_key(key_ref) {
+            return ValidityResult::Confirmed;
+        }
+
+        // Check regular keys from the event stream.
+        if let Some(end) = h_end
+            && h_start >= end
+        {
+            return ValidityResult::Absent;
+        }
+
+        let candidates: Vec<_> = self.keys.iter().filter(|k| k.key_ref == *key_ref).collect();
+
+        if candidates.is_empty() {
+            return ValidityResult::Absent;
+        }
+
+        // Collect all intervals where the key is valid, then compare against
+        // [h_start, h_end) to produce Confirmed / Ambiguous / Absent.
+        let mut valid_intervals = self.key_validity_intervals(key_ref);
+        valid_intervals.normalize();
+
+        // Constrain to the verification window.
+        let constrained = valid_intervals.clamp(h_start, h_end);
+
+        build_validity_result(&constrained, h_start, h_end)
+    }
+
+    /// Build a list of `[added, min(revoked, expired))` intervals for `key_ref`.
+    ///
+    /// Each key entry produces one interval. Call [`Intervals::normalize`] before
+    /// querying if multiple sources are combined.
+    fn key_validity_intervals(&self, key_ref: &KeyRef) -> Intervals {
+        Intervals(
+            self.keys
+                .iter()
+                .filter(|k| k.key_ref == *key_ref)
+                .map(|k| {
+                    let rev = k.revoked_at_height;
+                    let exp = k.expires_at_height;
+                    let end = match (rev, exp) {
+                        (Some(r), Some(e)) => Some(r.min(e)),
+                        (Some(r), None) => Some(r),
+                        (None, Some(e)) => Some(e),
+                        (None, None) => None,
+                    };
+                    (k.added_at_height, end)
+                })
+                .collect(),
+        )
+    }
+
+    /// Returns `true` if `key_ref` is the default key of this DID
+    /// (matches `self.did.default_key_id`).
+    pub fn is_default_key(&self, key_ref: &KeyRef) -> bool {
+        let kid_str = self.did.default_key_id.to_string();
+        key_ref.as_str().is_some_and(|s| s == kid_str)
+    }
+
+    /// Check DID liveness across `[h_start, h_end)` producing a three-outcome
+    /// [`ValidityResult`].
+    ///
+    /// Since tombstoning is permanent, the only possible outcomes are:
+    /// - `Confirmed` — DID was alive throughout the entire window.
+    /// - `Absent` — DID was dead at `h_start` or died during the window.
+    pub fn check_liveness(&self, h_start: u32, h_end: Option<u32>) -> ValidityResult {
+        let tomb = self.tombstoned_at;
+
+        // Not tombstoned → alive forever.
+        let Some(tomb_height) = tomb else {
+            return ValidityResult::Confirmed;
+        };
+
+        let end = h_end.unwrap_or(u32::MAX);
+
+        // Tombstoned before or at H_start → dead the whole window.
+        if tomb_height <= h_start {
+            return ValidityResult::Absent;
+        }
+
+        // Tombstoned during the window → alive [h_start, tomb_height), dead [tomb_height, ...).
+        // Since tombstoning is permanent, this is Absent — the DID was not alive throughout.
+        // We don't need Ambiguous because the DID being dead at any point in the window
+        // means the claim is definitively invalid (you can't sign for a dead DID).
+        if tomb_height < end {
+            return ValidityResult::Absent;
+        }
+
+        // tomb_height >= end: DID alive throughout [h_start, h_end).
+        ValidityResult::Confirmed
+    }
+
+    /// Check whether `key_ref` held `right` across `[h_start, h_end)`.
+    ///
+    /// Union semantics (§3.7): on-chain right grants, commitment documents, and
+    /// implicit default-key rights are all checked. The right is held if ANY
+    /// source grants it in a given sub-interval.
+    ///
+    /// Returns `Confirmed` if continuous, `Ambiguous` with gaps, or `Absent`.
+    pub fn verify_right_window(
+        &self, key_ref: &KeyRef, right: Right, h_start: u32, h_end: Option<u32>,
+        documents: &[(u64, &crate::rights::RightsDocument)],
+    ) -> ValidityResult {
+        let mut intervals = Intervals::new();
+
+        // --- Check 1: on-chain RightLifecycle ---
+        intervals.extend(self.right_validity_intervals(key_ref, right));
+
+        // --- Check 2: commitment documents ---
+        intervals.extend(self.commitment_right_intervals(key_ref, right, documents));
+
+        // --- Check 3: implicit default-key rights ---
+        if intervals.is_empty()
+            && self.is_default_key(key_ref)
+            && matches!(right, Right::Update | Right::Impersonate | Right::Delegate)
+        {
+            return ValidityResult::Confirmed;
+        }
+
+        // --- Normalize, clamp, compare ---
+        intervals.normalize();
+        let constrained = intervals.clamp(h_start, h_end);
+        build_validity_result(&constrained, h_start, h_end)
+    }
+
+    /// Collect intervals where `key_ref` held `right` from on-chain grants.
+    fn right_validity_intervals(&self, key_ref: &KeyRef, right: Right) -> Intervals {
+        Intervals(
+            self.rights
+                .iter()
+                .filter(|rl| rl.key_ref == *key_ref && rl.right == right)
+                .map(|rl| {
+                    let end = match (rl.revoked_at_height, rl.expires_at_height) {
+                        (Some(r), Some(e)) => Some(r.min(e)),
+                        (Some(r), None) => Some(r),
+                        (None, Some(e)) => Some(e),
+                        (None, None) => None,
+                    };
+                    (rl.granted_at_height, end)
+                })
+                .collect(),
+        )
+    }
+
+    /// Collect intervals from commitment documents where `key_ref` held `right`.
+    fn commitment_right_intervals(
+        &self, key_ref: &KeyRef, right: Right, documents: &[(u64, &crate::rights::RightsDocument)],
+    ) -> Intervals {
+        let right_str = right.to_string();
+        let key_str = key_ref.as_str().unwrap_or("");
+        let mut intervals = Intervals::new();
+
+        for cv in &self.commitments {
+            if let Some((_, doc)) = documents.iter().find(|(s, _)| *s == cv.sequence)
+                && doc.grants_right_by_key_ref(key_str, &right_str)
+            {
+                let next = self
+                    .commitments
+                    .iter()
+                    .find(|nc| nc.published_at_height > cv.published_at_height);
+                let end = next.map(|nc| Some(nc.published_at_height)).unwrap_or_default();
+                intervals.extend([(cv.published_at_height, end)]);
+            }
+        }
+
+        intervals
+    }
+
     /// Produce a W3C-compliant DID Document at the given block height.
     ///
     /// All valid keys appear in `verificationMethod`. W3C verification
@@ -470,6 +654,171 @@ impl DidHistory {
             tombstoned_at_height: self.tombstoned_at,
         }
     }
+}
+
+// ===== Intervals generic domain type =====
+
+/// A collection of half-open time intervals `[start, end)`,
+/// where `end = None` means unbounded.
+///
+/// Used internally to track when a key or right is valid. Supports
+/// union-building via [`Extend`], [`Intervals::normalize`] (sort + merge
+/// overlapping), and [`Intervals::clamp`] (constrain to a window).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Intervals(Vec<(u32, Option<u32>)>);
+
+impl Intervals {
+    fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Sort by start and merge overlapping intervals into a canonical form.
+    fn normalize(&mut self) {
+        if self.0.is_empty() {
+            return;
+        }
+        self.0.sort_by_key(|(s, _)| *s);
+
+        let mut merged = Vec::new();
+        let mut cur = self.0[0];
+        for &(s, e) in &self.0[1..] {
+            let cur_end = cur.1.unwrap_or(u32::MAX);
+            if s <= cur_end {
+                // Overlapping: extend current.
+                let new_end = match (cur.1, e) {
+                    (None, _) | (_, None) => None,
+                    (Some(c), Some(o)) => Some(c.max(o)),
+                };
+                cur = (cur.0, new_end);
+            } else {
+                merged.push(cur);
+                cur = (s, e);
+            }
+        }
+        merged.push(cur);
+        self.0 = merged;
+    }
+
+    /// Constrain all intervals to `[lower, upper)`, returning concrete
+    /// `(start, end)` pairs suitable for gap analysis.
+    ///
+    /// `upper = None` means no upper bound (the original unbounded ends
+    /// are preserved).
+    fn clamp(&self, lower: u32, upper: Option<u32>) -> Vec<(u32, u32)> {
+        let end = upper.unwrap_or(u32::MAX);
+        self.0
+            .iter()
+            .filter_map(|&(istart, iend)| {
+                let s = istart.max(lower);
+                let e = iend.unwrap_or(u32::MAX).min(end);
+                if s < e { Some((s, e)) } else { None }
+            })
+            .collect()
+    }
+}
+
+impl Extend<(u32, Option<u32>)> for Intervals {
+    fn extend<T: IntoIterator<Item = (u32, Option<u32>)>>(&mut self, iter: T) {
+        self.0.extend(iter);
+    }
+}
+
+impl IntoIterator for Intervals {
+    type Item = (u32, Option<u32>);
+    type IntoIter = alloc::vec::IntoIter<(u32, Option<u32>)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+// ===== Three-outcome validity helpers =====
+
+/// Build a `ValidityResult` from clamped intervals against `[h_start, h_end)`.
+fn build_validity_result(
+    clamped: &[(u32, u32)], h_start: u32, h_end: Option<u32>,
+) -> ValidityResult {
+    if clamped.is_empty() {
+        return ValidityResult::Absent;
+    }
+
+    let end = h_end.unwrap_or(u32::MAX);
+
+    // Single interval covering the full window?
+    if clamped.len() == 1 && clamped[0].0 <= h_start && clamped[0].1 >= end {
+        return ValidityResult::Confirmed;
+    }
+
+    // Multiple intervals → find the gaps.
+    let gaps = collect_gaps(clamped, h_start, end, h_end.is_none());
+    ValidityResult::Ambiguous { gaps }
+}
+
+/// Find gaps between clamped intervals within `[h_start, end)`.
+fn collect_gaps(
+    clamped: &[(u32, u32)], h_start: u32, end: u32, unbounded_end: bool,
+) -> Vec<ValidityGap> {
+    let mut gaps = Vec::new();
+    let mut cursor = h_start;
+
+    for &(s, e) in clamped {
+        if cursor < s {
+            gaps.push(ValidityGap {
+                start: cursor,
+                end: Some(s),
+                reason: alloc::format!("key absent [{cursor}, {s})"),
+            });
+        }
+        cursor = cursor.max(e);
+    }
+
+    let final_end = if unbounded_end { None } else { Some(end) };
+    if cursor < end {
+        gaps.push(ValidityGap {
+            start: cursor,
+            end: final_end,
+            reason: if unbounded_end {
+                alloc::format!("key absent [{cursor}, ∞)")
+            } else {
+                alloc::format!("key absent [{cursor}, {end})")
+            },
+        });
+    }
+
+    gaps
+}
+
+// ===== Three-outcome validity types =====
+
+/// Result of checking a condition (key validity, liveness, right) across
+/// a time window `[h_start, h_end)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ValidityResult {
+    /// Condition holds definitively throughout the entire `[h_start, h_end)` window.
+    Confirmed,
+    /// Condition holds in some sub-intervals but not others — the signature
+    /// timing is ambiguous. Each gap describes a sub-interval `[start, end)`
+    /// where the condition was absent.
+    Ambiguous { gaps: Vec<ValidityGap> },
+    /// Condition is definitively absent throughout the entire window.
+    Absent,
+}
+
+/// A sub-interval `[start, end)` where a condition was absent.
+///
+/// `end` is exclusive and `None` means unbounded (end of time).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidityGap {
+    /// Inclusive start height.
+    pub start: u32,
+    /// Exclusive end height (`None` = unbounded).
+    pub end: Option<u32>,
+    /// Human-readable reason for the gap.
+    pub reason: alloc::string::String,
 }
 
 #[cfg(test)]
@@ -1059,5 +1408,453 @@ mod tests {
         assert_eq!(timeline.len(), 2);
         assert_eq!(timeline[0]["sequence"], serde_json::json!(1));
         assert_eq!(timeline[1]["sequence"], serde_json::json!(2));
+    }
+
+    // ===== Three-outcome tests =====
+
+    /// Return a `KeyRef` that matches `test_did()`'s default key.
+    fn test_default_key_ref() -> KeyRef {
+        let did = test_did();
+        let kid_str = did.default_key_id.to_string();
+        KeyRef::new(kid_str.into_bytes()).unwrap()
+    }
+
+    #[test]
+    fn check_key_validity_default_key_unbounded_confirmed() {
+        // Zero-transaction DID: no events, empty keys/rights/commitments.
+        let history = DidHistory::new(test_did());
+        let key_ref = test_default_key_ref();
+
+        // Unbounded window [0, ∞)
+        let result = history.check_key_validity(&key_ref, 0, None);
+        assert_eq!(result, ValidityResult::Confirmed);
+    }
+
+    #[test]
+    fn check_key_validity_default_key_revoked_absent() {
+        // Default key registered on-chain, then revoked at height 50.
+        // Window [100, 200): the default key is absent.
+        // BUG: the current fast-path ignores revocation.
+        let key_ref = test_default_key_ref();
+        let history = DidHistory {
+            did: test_did(),
+            commitments: alloc::vec![],
+            keys: alloc::vec![crate::state::VerificationMethod {
+                key_ref: key_ref.clone(),
+                key_type: KeyType::Ed25519,
+                controller: test_did(),
+                public_key: alloc::vec![1u8; 32].try_into().unwrap(),
+                added_at_height: 0,
+                expires_at_height: None,
+                revoked_at_height: Some(50),
+            }],
+            rights: alloc::vec![],
+            tombstoned_at: None,
+        };
+
+        let result = history.check_key_validity(&key_ref, 100, Some(200));
+        assert_eq!(result, ValidityResult::Absent);
+    }
+
+    #[test]
+    fn check_key_validity_revoked_mid_window_ambiguous() {
+        // Key added at 10, revoked at 50. AfterProof only: H_start=100, H_end=None.
+        // Key was valid [100, unbounded) at H_start=100 – no, wait.
+        // The key is valid [10, 50) and absent [50, unbounded).
+        // Window [100, ∞): key was already revoked at 100 → Absent.
+        //
+        // Let's use a better scenario: key added at 10, revoked at 150.
+        // Window [100, 200): valid [100, 150), absent [150, 200) → Ambiguous.
+        let did = test_did();
+        let kr = test_key_ref(1);
+        let history = DidHistory {
+            did,
+            commitments: alloc::vec![],
+            keys: alloc::vec![crate::state::VerificationMethod {
+                key_ref: kr.clone(),
+                key_type: KeyType::Ed25519,
+                controller: test_did(),
+                public_key: alloc::vec![1u8; 32].try_into().unwrap(),
+                added_at_height: 10,
+                expires_at_height: None,
+                revoked_at_height: Some(150),
+            }],
+            rights: alloc::vec![],
+            tombstoned_at: None,
+        };
+
+        let result = history.check_key_validity(&kr, 100, Some(200));
+        match result {
+            ValidityResult::Ambiguous { gaps } => {
+                assert_eq!(gaps.len(), 1);
+                assert_eq!(gaps[0].start, 150);
+                assert_eq!(gaps[0].end, Some(200));
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_key_validity_added_mid_window_ambiguous() {
+        // Key added at 150. BeforeProof only: H_start=0, H_end=200.
+        // Valid [150, 200), absent [0, 150) → Ambiguous.
+        let did = test_did();
+        let kr = test_key_ref(1);
+        let history = DidHistory {
+            did,
+            commitments: alloc::vec![],
+            keys: alloc::vec![crate::state::VerificationMethod {
+                key_ref: kr.clone(),
+                key_type: KeyType::Ed25519,
+                controller: test_did(),
+                public_key: alloc::vec![1u8; 32].try_into().unwrap(),
+                added_at_height: 150,
+                expires_at_height: None,
+                revoked_at_height: None,
+            }],
+            rights: alloc::vec![],
+            tombstoned_at: None,
+        };
+
+        let result = history.check_key_validity(&kr, 0, Some(200));
+        match result {
+            ValidityResult::Ambiguous { gaps } => {
+                assert_eq!(gaps.len(), 1);
+                assert_eq!(gaps[0].start, 0);
+                assert_eq!(gaps[0].end, Some(150));
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn check_key_validity_revoked_before_h_start_absent() {
+        // Key added at 10, revoked at 50. Window [100, 200): absent.
+        let did = test_did();
+        let kr = test_key_ref(1);
+        let history = DidHistory {
+            did,
+            commitments: alloc::vec![],
+            keys: alloc::vec![crate::state::VerificationMethod {
+                key_ref: kr.clone(),
+                key_type: KeyType::Ed25519,
+                controller: test_did(),
+                public_key: alloc::vec![1u8; 32].try_into().unwrap(),
+                added_at_height: 10,
+                expires_at_height: None,
+                revoked_at_height: Some(50),
+            }],
+            rights: alloc::vec![],
+            tombstoned_at: None,
+        };
+
+        let result = history.check_key_validity(&kr, 100, Some(200));
+        assert_eq!(result, ValidityResult::Absent);
+    }
+
+    #[test]
+    fn check_key_validity_added_after_h_end_absent() {
+        // Key added at 300. Window [100, 200): absent.
+        let did = test_did();
+        let kr = test_key_ref(1);
+        let history = DidHistory {
+            did,
+            commitments: alloc::vec![],
+            keys: alloc::vec![crate::state::VerificationMethod {
+                key_ref: kr.clone(),
+                key_type: KeyType::Ed25519,
+                controller: test_did(),
+                public_key: alloc::vec![1u8; 32].try_into().unwrap(),
+                added_at_height: 300,
+                expires_at_height: None,
+                revoked_at_height: None,
+            }],
+            rights: alloc::vec![],
+            tombstoned_at: None,
+        };
+
+        let result = history.check_key_validity(&kr, 100, Some(200));
+        assert_eq!(result, ValidityResult::Absent);
+    }
+
+    #[test]
+    fn check_key_validity_multiple_gaps_ambiguous() {
+        // Key added at 100, revoked at 200, re-added at 300.
+        // Window [50, 400): absent [50,100), valid [100,200), absent [200,300), valid [300,400).
+        // → Ambiguous with 2 gaps.
+        let did = test_did();
+        let kr = test_key_ref(1);
+        let history = DidHistory {
+            did,
+            commitments: alloc::vec![],
+            keys: alloc::vec![
+                crate::state::VerificationMethod {
+                    key_ref: kr.clone(),
+                    key_type: KeyType::Ed25519,
+                    controller: test_did(),
+                    public_key: alloc::vec![1u8; 32].try_into().unwrap(),
+                    added_at_height: 100,
+                    expires_at_height: None,
+                    revoked_at_height: Some(200),
+                },
+                crate::state::VerificationMethod {
+                    key_ref: kr.clone(),
+                    key_type: KeyType::Ed25519,
+                    controller: test_did(),
+                    public_key: alloc::vec![2u8; 32].try_into().unwrap(),
+                    added_at_height: 300,
+                    expires_at_height: None,
+                    revoked_at_height: None,
+                },
+            ],
+            rights: alloc::vec![],
+            tombstoned_at: None,
+        };
+
+        let result = history.check_key_validity(&kr, 50, Some(400));
+        match result {
+            ValidityResult::Ambiguous { gaps } => {
+                assert_eq!(gaps.len(), 2, "expected 2 gaps, got {gaps:?}");
+                // Gap 1: absent [50, 100) — key not yet added
+                assert_eq!(gaps[0].start, 50);
+                assert_eq!(gaps[0].end, Some(100));
+                // Gap 2: absent [200, 300) — key revoked
+                assert_eq!(gaps[1].start, 200);
+                assert_eq!(gaps[1].end, Some(300));
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    // ===== Liveness tests =====
+
+    #[test]
+    fn check_liveness_not_tombstoned_confirmed() {
+        let history = DidHistory::new(test_did());
+        assert_eq!(history.check_liveness(0, None), ValidityResult::Confirmed);
+        assert_eq!(history.check_liveness(100, Some(200)), ValidityResult::Confirmed);
+    }
+
+    #[test]
+    fn check_liveness_tombstoned_before_h_start_absent() {
+        let mut history = DidHistory::new(test_did());
+        history.tombstoned_at = Some(50);
+        // Window [100, 200): DID was dead before window started.
+        assert_eq!(history.check_liveness(100, Some(200)), ValidityResult::Absent);
+    }
+
+    #[test]
+    fn check_liveness_tombstoned_during_window_absent() {
+        let mut history = DidHistory::new(test_did());
+        history.tombstoned_at = Some(150);
+        // Window [100, 200): DID died at 150, not alive throughout.
+        assert_eq!(history.check_liveness(100, Some(200)), ValidityResult::Absent);
+    }
+
+    #[test]
+    fn check_liveness_tombstoned_after_h_end_confirmed() {
+        let mut history = DidHistory::new(test_did());
+        history.tombstoned_at = Some(300);
+        // Window [100, 200): DID alive throughout (tombstone at 300 not yet hit).
+        assert_eq!(history.check_liveness(100, Some(200)), ValidityResult::Confirmed);
+    }
+
+    #[test]
+    fn check_liveness_tombstoned_exactly_at_h_start_absent() {
+        let mut history = DidHistory::new(test_did());
+        history.tombstoned_at = Some(100);
+        // tomb_height = h_start → DID was dead at window start.
+        assert_eq!(history.check_liveness(100, Some(200)), ValidityResult::Absent);
+    }
+
+    // ===== check_right tests =====
+
+    /// Make a rights document granting `right` to `key_str`.
+    fn make_rights_doc(
+        seq: u64, previous_hash: Option<&str>, key_str: &str, right: &str,
+    ) -> crate::rights::RightsDocument {
+        use crate::rights::{RIGHTS_DOCUMENT_V1_SCHEMA, UnsafeRightEntry, UnsafeRightsDocument};
+        let did_str = test_did().to_did_string();
+        let raw = UnsafeRightsDocument {
+            schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
+            did: did_str,
+            sequence: seq,
+            previous_commitment: previous_hash.map(|h| ContentId::from_bytes(h.as_bytes())),
+            rights: alloc::vec![UnsafeRightEntry {
+                key: key_str.into(),
+                rights: alloc::vec![right.into()],
+            }],
+        };
+        raw.try_into().expect("test rights doc should be valid")
+    }
+
+    #[test]
+    fn verify_right_window_on_chain_full_window_confirmed() {
+        // On-chain right grant from height 10, never revoked, window [10, 100).
+        let kr = test_key_ref(1);
+        let history = DidHistory {
+            did: test_did(),
+            commitments: alloc::vec![],
+            keys: alloc::vec![],
+            rights: alloc::vec![RightLifecycle {
+                key_ref: kr.clone(),
+                right: Right::Impersonate,
+                granted_at_height: 10,
+                expires_at_height: None,
+                revoked_at_height: None,
+                matures_at_height: None,
+            }],
+            tombstoned_at: None,
+        };
+
+        assert_eq!(
+            history.verify_right_window(&kr, Right::Impersonate, 10, Some(100), &[]),
+            ValidityResult::Confirmed
+        );
+    }
+
+    #[test]
+    fn verify_right_window_on_chain_revoked_mid_window_ambiguous() {
+        // On-chain right granted at 10, revoked at 50. Window [0, 100).
+        let kr = test_key_ref(1);
+        let history = DidHistory {
+            did: test_did(),
+            commitments: alloc::vec![],
+            keys: alloc::vec![],
+            rights: alloc::vec![RightLifecycle {
+                key_ref: kr.clone(),
+                right: Right::Impersonate,
+                granted_at_height: 10,
+                expires_at_height: None,
+                revoked_at_height: Some(50),
+                matures_at_height: None,
+            }],
+            tombstoned_at: None,
+        };
+
+        let result = history.verify_right_window(&kr, Right::Impersonate, 0, Some(100), &[]);
+        match result {
+            ValidityResult::Ambiguous { gaps } => {
+                assert_eq!(gaps.len(), 2);
+                // Gap 1: absent [0, 10) — not yet granted
+                assert_eq!(gaps[0].start, 0);
+                assert_eq!(gaps[0].end, Some(10));
+                // Gap 2: absent [50, 100) — revoked
+                assert_eq!(gaps[1].start, 50);
+                assert_eq!(gaps[1].end, Some(100));
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn verify_right_window_no_rights_absent() {
+        // No on-chain rights, no commitments, not default key → Absent.
+        let kr = test_key_ref(1);
+        let history = DidHistory::new(test_did());
+        assert_eq!(
+            history.verify_right_window(&kr, Right::Issue, 0, Some(100), &[]),
+            ValidityResult::Absent
+        );
+    }
+
+    #[test]
+    fn verify_right_window_implicit_default_right_confirmed() {
+        // Zero-transaction DID, default key, Impersonate right.
+        let history = DidHistory::new(test_did());
+        let key_ref = test_default_key_ref();
+
+        // Implicit Impersonate right for default key.
+        assert_eq!(
+            history.verify_right_window(&key_ref, Right::Impersonate, 0, None, &[]),
+            ValidityResult::Confirmed
+        );
+        assert_eq!(
+            history.verify_right_window(&key_ref, Right::Update, 0, None, &[]),
+            ValidityResult::Confirmed
+        );
+        assert_eq!(
+            history.verify_right_window(&key_ref, Right::Delegate, 0, None, &[]),
+            ValidityResult::Confirmed
+        );
+
+        // Issue is NOT implicit.
+        assert_eq!(
+            history.verify_right_window(&key_ref, Right::Issue, 0, None, &[]),
+            ValidityResult::Absent
+        );
+    }
+
+    #[test]
+    fn verify_right_window_commitment_full_window_confirmed() {
+        // Commitment published at 100 grants Impersonate. Window [100, 200).
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+        let doc = make_rights_doc(1, None, key_str, "impersonate");
+
+        let history = DidHistory {
+            did: test_did(),
+            commitments: alloc::vec![CommitmentVersion {
+                sequence: 1,
+                commitment: test_commitment(1),
+                published_at_height: 100,
+                signer_key_ref: kr.clone(),
+            }],
+            keys: alloc::vec![],
+            rights: alloc::vec![],
+            tombstoned_at: None,
+        };
+
+        assert_eq!(
+            history.verify_right_window(&kr, Right::Impersonate, 100, Some(200), &[(1, &doc)]),
+            ValidityResult::Confirmed
+        );
+    }
+
+    #[test]
+    fn verify_right_window_commitment_omits_mid_window_ambiguous() {
+        // Two commitments: C1 at 100 grants Impersonate, C2 at 150 omits it.
+        // Window [100, 200) → Ambiguous with gap [150, 200).
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+        let d1 = make_rights_doc(1, None, key_str, "impersonate");
+        let d2 = make_rights_doc(2, None, key_str, "issue"); // grants issue, NOT impersonate
+
+        let history = DidHistory {
+            did: test_did(),
+            commitments: alloc::vec![
+                CommitmentVersion {
+                    sequence: 1,
+                    commitment: test_commitment(1),
+                    published_at_height: 100,
+                    signer_key_ref: kr.clone(),
+                },
+                CommitmentVersion {
+                    sequence: 2,
+                    commitment: test_commitment(2),
+                    published_at_height: 150,
+                    signer_key_ref: kr.clone(),
+                },
+            ],
+            keys: alloc::vec![],
+            rights: alloc::vec![],
+            tombstoned_at: None,
+        };
+
+        let result = history.verify_right_window(
+            &kr,
+            Right::Impersonate,
+            100,
+            Some(200),
+            &[(1, &d1), (2, &d2)],
+        );
+        match result {
+            ValidityResult::Ambiguous { gaps } => {
+                assert_eq!(gaps.len(), 1);
+                assert_eq!(gaps[0].start, 150);
+                assert_eq!(gaps[0].end, Some(200));
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
     }
 }

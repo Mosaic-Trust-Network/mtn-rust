@@ -183,6 +183,17 @@ impl RightsDocument {
         }
     }
 
+    /// Check whether this document grants `right` to a key referenced by string
+    /// (e.g. a `KeyRef` as-str).
+    pub fn grants_right_by_key_ref(&self, key_ref: &str, right: &str) -> bool {
+        match self {
+            RightsDocument::V1(v1) => v1
+                .rights
+                .iter()
+                .any(|e| e.key.to_string() == key_ref && e.rights.iter().any(|r| r == right)),
+        }
+    }
+
     /// Return the DID this rights document belongs to.
     pub fn did(&self) -> &Did {
         match self {

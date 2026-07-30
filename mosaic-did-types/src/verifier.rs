@@ -11,9 +11,10 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use crate::auth::Authentication;
+#[allow(unused_imports)]
 use crate::did::{ContentId, KeyRef};
 use crate::document::DidDocument;
-use crate::history::{CommitmentVersion, DidHistory};
+use crate::history::{DidHistory, ValidityResult};
 use crate::operation::Right;
 use crate::rights::RightsDocument;
 use crate::signed::{AfterEnvelope, Signed, SmtContent};
@@ -132,54 +133,89 @@ impl VerifierPolicy {
     }
 }
 
-// ===== BeforeProof Verifier Trait =====
+// ===== Proof validation — types guarantee chain verification happened =====
 
-/// Trait for verifying that a BeforeProof anchor exists on-chain.
+/// A validated AfterProof: the signer observed a blockhash at this height,
+/// and the chain has confirmed that blockhash exists at that block.
 ///
-/// A BeforeProof proves that a content ID (the SMT root) was anchored at a
-/// specific block height on-chain. The verifier calls this trait to confirm
-/// that the anchor exists. The caller provides an implementation that reads
-/// pallet storage or queries an indexer.
+/// `H_start = block_height + 1`.
 ///
-/// # Example (test)
-///
-/// ```
-/// use mosaic_did_types::verifier::BeforeProofVerifier;
-///
-/// struct TestVerifier;
-/// impl BeforeProofVerifier for TestVerifier {
-///     fn verify_before_proof(&self, _height: u32, _content_id: &str) -> bool { true }
-/// }
-/// ```
-pub trait BeforeProofVerifier {
-    /// Verify that `content_id` was anchored on-chain at `block_height`.
-    fn verify_before_proof(&self, block_height: u32, content_id: &str) -> bool;
+/// The caller must validate the presenter's claim against the chain **before**
+/// constructing this type and passing it to [`Documents::with_after_proof`].
+/// Chain access is inherently async; this type provides compile-time proof
+/// that validation was performed, so [`Documents::verify`] remains synchronous.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidatedAfterProof {
+    /// Block height confirmed on chain.
+    pub block_height: u32,
 }
 
-/// Input data for verifying a `FinalizedProof` (full time-window with SMT
-/// inclusion).
+/// A validated BeforeProof: this content-ID was anchored on-chain at
+/// this block height, confirmed by a chain query.
 ///
-/// A FinalizedProof bundles:
-/// - A `Signed<AfterEnvelope<SmtContent>>` providing the cryptographic lower
-///   time-bound (`H_start = after_proof.block_height + 1`).
-/// - An SMT inclusion proof linking the signed envelope's fingerprint to an
-///   on-chain anchored root.
-/// - The BeforeProof anchor data providing the cryptographic upper time-bound
-///   (`H_end = before_proof_block_height`).
+/// `H_end = block_height`.
 ///
-/// The verifier recomputes the SMT root from the leaf hash and siblings,
-/// checks it matches `before_proof_content_id`, and uses the derived bounds
-/// for window verification.
+/// The caller must validate the presenter's claim against the chain **before**
+/// constructing this type and passing it to [`Documents::with_before_proof`].
+/// Chain access is inherently async; this type provides compile-time proof
+/// that validation was performed, so [`Documents::verify`] remains synchronous.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidatedBeforeProof {
+    /// Block height confirmed on chain.
+    pub block_height: u32,
+}
+
+// ===== Input types — claims from the presenter, validated before verify() =====
+
+/// An AfterProof claim provided by the presenter.
+///
+/// The caller must validate this against the chain (e.g. query a full node
+/// or indexer to confirm `block_hash` exists at `block_height`), then
+/// construct a [`ValidatedAfterProof`] from the confirmed height.
+///
+/// `H_start = block_height + 1`.
 #[derive(Clone, Debug)]
-pub struct FinalizedProofInput {
-    /// The signed AfterEnvelope containing the SMT batch root and the
-    /// AfterProof (lower time-bound).
+pub struct AfterProofInput {
+    /// Block height whose hash was observed by the signer.
+    pub block_height: u32,
+    /// The block hash that was observed.
+    pub block_hash: String,
+}
+
+/// A BeforeProof claim provided by the presenter.
+///
+/// The caller must validate this against the chain (e.g. query a full node
+/// or indexer to confirm `content_id` was anchored at `block_height`), then
+/// construct a [`ValidatedBeforeProof`] from the confirmed height.
+///
+/// `H_end = block_height`.
+#[derive(Clone, Debug)]
+pub struct BeforeProofInput {
+    /// Block height at which the BeforeProof was claimed to be anchored.
+    pub block_height: u32,
+    /// The content ID claimed to be anchored.
+    pub content_id: String,
+}
+
+/// SMT inclusion proof data for a `Finalized` verification.
+///
+/// The presenter provides:
+/// - A `Signed<AfterEnvelope<SmtContent>>` — the signed AfterProof envelope
+///   whose fingerprint is a leaf in the SMT.
+/// - An [`smt::InclusionProof`] linking that envelope to the SMT root.
+/// - The claimed `before_proof_content_id` — the SMT root that was anchored
+///   on-chain (validated externally by [`BeforeProofValidator`]).
+///
+/// The verifier locally recomputes the SMT root and checks it matches
+/// `before_proof_content_id`, then derives `H_start` from the AfterProof
+/// inside the envelope. No chain access is needed inside [`Documents::verify`].
+#[derive(Clone, Debug)]
+pub struct SmtEnvelopeProof {
+    /// The signed AfterEnvelope (contains the AfterProof and SMT batch root).
     pub signed_envelope: Signed<AfterEnvelope<SmtContent>>,
     /// SMT inclusion proof linking the signed envelope to the anchored root.
     pub inclusion_proof: smt::InclusionProof,
-    /// Block height at which the BeforeProof was anchored on-chain (`H_end`).
-    pub before_proof_block_height: u32,
-    /// The SMT root hash that was anchored (must match recomputed root).
+    /// The SMT root hash that was anchored on-chain (validated externally).
     pub before_proof_content_id: String,
 }
 
@@ -187,13 +223,27 @@ impl DidHistory {
     /// Start a verification chain for `right` on `holder_key` against
     /// this DID history.
     ///
-    /// This is the entry point for the type-state verification builder:
+    /// This is the entry point for the type-state verification builder.
+    /// Time bounds come from validated proofs; there is no explicit window:
     ///
     /// ```text
+    /// // Unbounded (no proofs):
     /// history.check_right(&key, "impersonate")
-    ///     .during(100, 200)
     ///     .with_documents(&docs)
-    ///     .require(ProofStrength::AfterProof)
+    ///     .verify()?;
+    ///
+    /// // AfterProof only (lower-bound validated against chain before verify):
+    /// history.check_right(&key, "impersonate")
+    ///     .with_documents(&docs)
+    ///     .with_after_proof(validated_after)
+    ///     .verify()?;
+    ///
+    /// // Finalized with SMT (both bounds validated externally):
+    /// history.check_right(&key, "impersonate")
+    ///     .with_documents(&docs)
+    ///     .with_after_proof(validated_after)
+    ///     .with_before_proof(validated_before)
+    ///     .with_smt_envelope(smt_envelope_proof)
     ///     .verify()?;
     /// ```
     pub fn check_right<'a>(
@@ -207,8 +257,8 @@ impl DidHistory {
 
 /// Phase 1: identity — the DID history, holder key reference, and right are known.
 ///
-/// Fields are private; construct via [`DidHistory::check_right`], not directly.
-/// Transition via [`Identity::during`].
+/// Construct via [`DidHistory::check_right`], not directly.
+/// Transition to [`Documents`] via [`Identity::with_documents`].
 pub struct Identity<'a> {
     // DID history (events reconstructed) for the target DID.
     history: &'a DidHistory,
@@ -218,326 +268,231 @@ pub struct Identity<'a> {
     right: &'a str,
 }
 
-/// Phase 2: window — the verification time window is set.
+/// Phase 2: documents — rights documents are supplied, plus optional
+/// validated proof attachments.
 ///
-/// Construct via [`Identity::during`], then call [`Window::with_documents`].
-pub struct Window<'a> {
-    // Previous phase data.
-    prev: Identity<'a>,
-    // Window start height (inclusive).
-    start: u32,
-    // Window end height (inclusive).
-    end: u32,
-}
-
-/// Phase 3: documents — rights documents are supplied.
-///
-/// Construct via [`Window::with_documents`], then call [`Documents::require`].
+/// Construct via [`Identity::with_documents`], then call [`Documents::verify`]
+/// (directly, for simple cases) or configure proof attachments, then call
+/// [`Documents::verify`].
 pub struct Documents<'a> {
     // Previous phase data.
-    prev: Window<'a>,
+    prev: Identity<'a>,
     // Presenter-provided rights documents, keyed by sequence number.
     rights_documents: &'a [(u64, &'a RightsDocument)],
-}
-
-/// Phase 4: ready — all required fields are set.
-///
-/// Construct via [`Documents::require`], then optionally configure with
-/// [`Ready::with_policy`], [`Ready::with_finalized_proof`], or
-/// [`Ready::with_before_proof_verifier`]. Call [`Ready::verify`] to execute.
-pub struct Ready<'a> {
-    // Previous phase data.
-    prev: Documents<'a>,
-    // Required proof strength.
-    strength: ProofStrength,
-    // Optional verifier policy that gates the result on a minimum proof strength.
+    // Optional validated AfterProof providing a lower time-bound.
+    after_proof: Option<ValidatedAfterProof>,
+    // Optional validated BeforeProof providing an upper time-bound.
+    before_proof: Option<ValidatedBeforeProof>,
+    // Optional "received at" height — a voluntary soft upper bound.
+    received_at: Option<u32>,
+    // Optional SMT inclusion proof (envelope + siblings) for Finalized.
+    smt_envelope: Option<SmtEnvelopeProof>,
+    // Optional verifier policy.
     policy: Option<&'a VerifierPolicy>,
-    // Optional finalized proof data (SMT inclusion + BeforeProof) for
-    // Finalized strength verification.
-    finalized_proof: Option<FinalizedProofInput>,
-    // Optional BeforeProof verifier to confirm on-chain anchors.
-    before_proof_verifier: Option<&'a dyn BeforeProofVerifier>,
 }
 
 // ---------------------------------------------------------------------------
 // Phase 1: Identity
 // ---------------------------------------------------------------------------
 impl<'a> Identity<'a> {
-    /// Start building a verification request with the DID history and the
-    /// identity to verify.
-    /// Set the verification time window `[start, end]` (inclusive).
-    pub fn during(self, start: u32, end: u32) -> Window<'a> {
-        Window { prev: self, start, end }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Phase 2: Window
-// ---------------------------------------------------------------------------
-impl<'a> Window<'a> {
-    /// Supply the presenter-provided rights documents.
+    /// Supply the presenter-provided rights documents and transition to Documents.
     pub fn with_documents(
         self, rights_documents: &'a [(u64, &'a RightsDocument)],
     ) -> Documents<'a> {
-        Documents { prev: self, rights_documents }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Phase 3: Documents
-// ---------------------------------------------------------------------------
-impl<'a> Documents<'a> {
-    /// Set the minimum required proof strength.
-    pub fn require(self, strength: ProofStrength) -> Ready<'a> {
-        Ready {
+        Documents {
             prev: self,
-            strength,
+            rights_documents,
+            after_proof: None,
+            before_proof: None,
+            received_at: None,
+            smt_envelope: None,
             policy: None,
-            finalized_proof: None,
-            before_proof_verifier: None,
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4: Ready — verification may execute
+// Phase 2: Documents — collects all inputs; verify() runs synchronously
 // ---------------------------------------------------------------------------
-impl<'a> Ready<'a> {
-    /// Optionally attach a verifier policy that gates the result on a minimum
-    /// proof strength.
+impl<'a> Documents<'a> {
+    /// Attach a validated AfterProof providing a lower time-bound.
+    pub fn with_after_proof(mut self, after: ValidatedAfterProof) -> Self {
+        self.after_proof = Some(after);
+        self
+    }
+
+    /// Attach a validated BeforeProof providing an upper time-bound.
+    pub fn with_before_proof(mut self, before: ValidatedBeforeProof) -> Self {
+        self.before_proof = Some(before);
+        self
+    }
+
+    /// Set a "received at" height — a voluntary soft upper bound.
+    /// Forces `H_end ≤ received_at`, narrowing the window.
+    pub fn with_received_at(mut self, height: u32) -> Self {
+        self.received_at = Some(height);
+        self
+    }
+
+    /// Attach an SMT inclusion proof (signed envelope + sibling hashes)
+    /// linking the AfterProof envelope to the BeforeProof-anchored root.
+    pub fn with_smt_envelope(mut self, smt: SmtEnvelopeProof) -> Self {
+        self.smt_envelope = Some(smt);
+        self
+    }
+
+    /// Attach a verifier policy that gates the result on a minimum proof strength.
     pub fn with_policy(mut self, policy: &'a VerifierPolicy) -> Self {
         self.policy = Some(policy);
         self
     }
 
-    /// Attach a [`FinalizedProofInput`] for SMT inclusion + BeforeProof
-    /// verification. When provided, the window bounds `H_start` and `H_end`
-    /// are derived from the proof data and override any values set via
-    /// `.during()`.
-    pub fn with_finalized_proof(mut self, proof: FinalizedProofInput) -> Self {
-        self.finalized_proof = Some(proof);
-        self
-    }
-
-    /// Attach a [`BeforeProofVerifier`] to check that a BeforeProof anchor
-    /// exists on-chain at the claimed block height.
-    pub fn with_before_proof_verifier(mut self, verifier: &'a dyn BeforeProofVerifier) -> Self {
-        self.before_proof_verifier = Some(verifier);
-        self
-    }
-
-    /// Execute the verification and return a [`VerificationResult`].
+    /// Execute verification using the three-outcome model.
+    ///
+    /// All time-bounds must already be validated against the chain by the
+    /// caller (via [`ValidatedAfterProof`] and [`ValidatedBeforeProof`]).
+    /// This method is purely synchronous — no network I/O.
+    ///
+    /// Returns `Ok(VerificationResult)` with `issues` populated from ambiguous
+    /// sub-results, or `Err(VerificationError)` if any check is definitively
+    /// disproven.
     pub fn verify(self) -> Result<VerificationResult, VerificationError> {
-        // Destructure all phases into local variables for flat access.
-        let Ready {
-            prev:
-                Documents {
-                    prev: Window { prev: Identity { history, holder_key, right }, start, end },
-                    rights_documents,
-                },
-            strength,
+        let Documents {
+            prev: Identity { history, holder_key, right },
+            rights_documents,
+            after_proof,
+            before_proof,
+            received_at,
+            smt_envelope,
             policy,
-            finalized_proof,
-            before_proof_verifier,
         } = self;
 
+        let mut issues: Vec<String> = Vec::new();
         let mut steps: Vec<StepResult> = Vec::new();
 
-        // --- Step 0: Classify proof bundle and derive time bounds ---
-        // If a FinalizedProof is provided, derive H_start and H_end from it.
-        // The SMT inclusion proof must be verified first to ensure the bounds
-        // are cryptographically sound.
-        let (h_start, h_end) = if let Some(fp) = &finalized_proof {
-            // Derive H_start from the AfterProof inside the signed envelope.
-            let after_proof_h = fp.signed_envelope.content.proof.block_height;
-            let derived_start = after_proof_h + 1;
-            let derived_end = fp.before_proof_block_height;
+        // --- Derive window [h_start, h_end) ---
+        let mut h_start = after_proof.as_ref().map_or(0, |ap| ap.block_height + 1);
+        let mut h_end = before_proof.as_ref().map(|bp| bp.block_height);
 
-            // --- Step 1: Verify SMT inclusion proof ---
-            // a. Compute fingerprint of the signed envelope.
-            let fingerprint = json_digest::digest_data(&fp.signed_envelope)
+        // If an SMT envelope proof is provided, verify the inclusion proof
+        // locally and derive the AfterProof bound from the signed envelope.
+        if let Some(smt) = &smt_envelope {
+            let fingerprint = json_digest::digest_data(&smt.signed_envelope)
                 .map_err(|e| VerificationError::DigestError(e.to_string()))?;
-
-            // b. Check fingerprint matches leaf_hash.
-            if fingerprint != fp.inclusion_proof.leaf_hash.as_str() {
+            if fingerprint != smt.inclusion_proof.leaf_hash.as_str() {
                 return Err(VerificationError::SmtInclusionProofFailed);
             }
             steps.push(StepResult { step: "smt_leaf_hash_match", passed: true, detail: None });
 
-            // c. Recompute SMT root from leaf + siblings.
-            let recomputed_root = fp.inclusion_proof.compute_root();
-
-            // d. Check recomputed root matches before_proof_content_id.
-            if recomputed_root.as_str() != fp.before_proof_content_id {
+            let recomputed_root = smt.inclusion_proof.compute_root();
+            if recomputed_root.as_str() != smt.before_proof_content_id {
                 return Err(VerificationError::SmtInclusionProofFailed);
             }
             steps.push(StepResult { step: "smt_root_match", passed: true, detail: None });
 
-            // e. Verify BeforeProof anchor via the verifier trait.
-            if let Some(bpv) = before_proof_verifier {
-                if !bpv
-                    .verify_before_proof(fp.before_proof_block_height, &fp.before_proof_content_id)
-                {
-                    return Err(VerificationError::BeforeProofVerificationFailed);
-                }
-                steps.push(StepResult { step: "before_proof_anchor", passed: true, detail: None });
-            }
-
-            // f. Validate window bounds: H_start < H_end.
-            if derived_start >= derived_end {
-                return Err(VerificationError::WindowBoundsInvalid);
-            }
-            steps.push(StepResult {
-                step: "window_bounds",
-                passed: true,
-                detail: Some(alloc::format!("H_start={derived_start}, H_end={derived_end}")),
-            });
-
-            (derived_start, derived_end)
-        } else {
-            (start, end)
-        };
-
-        // --- Step 2: DID liveness across [h_start, h_end] ---
-        if !history.is_alive_across(h_start, h_end) {
-            return Err(VerificationError::DidDeactivated);
+            // Extract H_start from the AfterProof inside the signed envelope.
+            // This overrides any explicit with_after_proof.
+            let ap_height = smt.signed_envelope.content.proof.block_height;
+            h_start = ap_height + 1;
         }
-        steps.push(StepResult { step: "did_liveness", passed: true, detail: None });
 
-        // --- Step 3: Key validity across [h_start, h_end] ---
+        // Apply received_at soft cap.
+        if let Some(rcv) = received_at {
+            if let Some(ref mut end) = h_end {
+                if rcv < *end {
+                    *end = rcv;
+                }
+            } else {
+                h_end = Some(rcv);
+            }
+        }
+
+        // Window sanity: H_start < H_end when both are set.
+        if let Some(end) = h_end
+            && h_start >= end
+        {
+            return Err(VerificationError::WindowBoundsInvalid);
+        }
+
+        let win_detail = alloc::format!(
+            "H_start={}, H_end={}",
+            h_start,
+            h_end.map_or("∞".to_string(), |e| e.to_string())
+        );
+        steps.push(StepResult { step: "window_bounds", passed: true, detail: Some(win_detail) });
+
+        // --- Step 1: Liveness ---
+        match history.check_liveness(h_start, h_end) {
+            ValidityResult::Confirmed => {
+                steps.push(StepResult { step: "did_liveness", passed: true, detail: None });
+            }
+            ValidityResult::Ambiguous { gaps } => {
+                for g in &gaps {
+                    issues.push(g.reason.clone());
+                }
+                steps.push(StepResult { step: "did_liveness", passed: true, detail: None });
+            }
+            ValidityResult::Absent => {
+                return Err(VerificationError::DidDeactivated);
+            }
+        }
+
+        // --- Step 2: Key validity ---
         let key_ref = KeyRef::new(holder_key.to_string().as_bytes().to_vec())
             .map_err(|_| VerificationError::KeyNotFound)?;
-        if !history.is_key_valid_across(&key_ref, h_start, h_end) {
-            return Err(VerificationError::KeyNotFound);
+        match history.check_key_validity(&key_ref, h_start, h_end) {
+            ValidityResult::Confirmed => {
+                steps.push(StepResult { step: "key_validity", passed: true, detail: None });
+            }
+            ValidityResult::Ambiguous { gaps } => {
+                for g in &gaps {
+                    issues.push(g.reason.clone());
+                }
+                steps.push(StepResult { step: "key_validity", passed: true, detail: None });
+            }
+            ValidityResult::Absent => {
+                return Err(VerificationError::KeyNotFound);
+            }
         }
-        steps.push(StepResult { step: "key_validity", passed: true, detail: None });
 
-        // --- Step 4: Check on-chain rights (continuous across window) ---
+        // --- Step 3: Right (union of on-chain + off-chain + implicit) ---
         let right_enum: Right = right.parse().map_err(|_| VerificationError::RightNotGranted)?;
-        let onchain_continuous = history.rights.iter().any(|rg| {
-            rg.key_ref == key_ref
-                && rg.right == right_enum
-                && rg.is_active_at(h_start)
-                && rg.revoked_at_height.is_none_or(|h| h > h_end)
-                && rg.expires_at_height.is_none_or(|h| h > h_end)
-        });
-        steps.push(StepResult { step: "on_chain_right", passed: true, detail: None });
-        if onchain_continuous {
-            if let Some(policy) = policy {
-                policy.check(strength)?;
+        match history.verify_right_window(&key_ref, right_enum, h_start, h_end, rights_documents) {
+            ValidityResult::Confirmed => {
+                steps.push(StepResult { step: "right", passed: true, detail: None });
             }
-            steps.push(StepResult { step: "policy_gate", passed: true, detail: None });
-            return Ok(VerificationResult { valid: true, strength, issues: Vec::new(), steps });
+            ValidityResult::Ambiguous { gaps } => {
+                for g in &gaps {
+                    issues.push(g.reason.clone());
+                }
+                steps.push(StepResult { step: "right", passed: true, detail: None });
+            }
+            ValidityResult::Absent => {
+                return Err(VerificationError::RightNotGranted);
+            }
         }
 
-        // --- Step 5: Off-chain commitment path ---
-        // Local helper: compute ContentId for a rights document.
-        let doc_cid = |d: &RightsDocument| -> Result<ContentId, VerificationError> {
-            let hash = d.compute_hash().map_err(VerificationError::DigestError)?;
-            Ok(ContentId::from_bytes(hash.as_bytes()))
+        // --- Step 4: Proof strength classification ---
+        let achieved = if smt_envelope.is_some() {
+            ProofStrength::Finalized
+        } else if after_proof.is_some() || before_proof.is_some() {
+            ProofStrength::AfterProof
+        } else {
+            ProofStrength::Minimal
         };
+        steps.push(StepResult {
+            step: "proof_strength",
+            passed: true,
+            detail: Some(alloc::format!("{achieved:?}")),
+        });
 
-        // Wrap in a closure so interior `return` statements exit the closure,
-        // not the outer function (allowing the policy gate to run).
-        let verification = (|| -> Result<VerificationResult, VerificationError> {
-            match strength {
-                ProofStrength::Minimal => {
-                    // Any matching document in any timeline version grants the right.
-                    for (seq, doc) in rights_documents {
-                        let commitment = doc_cid(doc)?;
-                        if history
-                            .commitments
-                            .iter()
-                            .any(|cv| cv.sequence == *seq && cv.commitment == commitment)
-                            && doc.grants_right(holder_key, right)
-                        {
-                            return Ok(VerificationResult {
-                                valid: true,
-                                strength: ProofStrength::Minimal,
-                                issues: Vec::new(),
-                                steps: Vec::new(),
-                            });
-                        }
-                    }
-                    Err(VerificationError::RightNotGranted)
-                }
-                ProofStrength::AfterProof | ProofStrength::Finalized => {
-                    // Find the commitment active at `h_start`.
-                    let _active_at_start =
-                        history.commitment_at(h_start).ok_or(VerificationError::RightNotGranted)?;
-
-                    // Collect all commitments from the one active at `h_start` through `h_end`.
-                    let start_idx = history
-                        .commitments
-                        .iter()
-                        .rposition(|cv| cv.published_at_height <= h_start)
-                        .unwrap_or(0);
-
-                    let relevant_commitments: Vec<&CommitmentVersion> = history.commitments
-                        [start_idx..]
-                        .iter()
-                        .take_while(|cv| cv.published_at_height <= h_end)
-                        .collect();
-
-                    if relevant_commitments.is_empty() {
-                        return Err(VerificationError::RightNotGranted);
-                    }
-
-                    // Every commitment active in the window must have a matching
-                    // presenter-supplied document that grants the right.
-                    for &cv in &relevant_commitments {
-                        let doc = docs_by_seq(rights_documents, cv.sequence)?;
-                        if cv.commitment != doc_cid(doc)? {
-                            return Err(VerificationError::CommitmentHashMismatch);
-                        }
-                        if !doc.grants_right(holder_key, right) {
-                            return Err(VerificationError::RightNotGranted);
-                        }
-                    }
-
-                    // For Finalized: verify the previousCommitment hash chain.
-                    if strength == ProofStrength::Finalized && relevant_commitments.len() > 1 {
-                        for i in 1..relevant_commitments.len() {
-                            let prev_doc = docs_by_seq(
-                                rights_documents,
-                                relevant_commitments[i - 1].sequence,
-                            )?;
-                            let curr_doc =
-                                docs_by_seq(rights_documents, relevant_commitments[i].sequence)?;
-                            let expected_prev_cid = doc_cid(prev_doc)?;
-                            let chain_ok = curr_doc
-                                .previous_commitment()
-                                .is_some_and(|pc| *pc == expected_prev_cid);
-                            if !chain_ok {
-                                return Err(VerificationError::CommitmentChainBroken);
-                            }
-                        }
-                    }
-
-                    Ok(VerificationResult {
-                        valid: true,
-                        strength,
-                        issues: Vec::new(),
-                        steps: Vec::new(),
-                    })
-                }
-            }
-        })()?;
-
-        steps.push(StepResult { step: "off_chain_commitment", passed: true, detail: None });
-
-        // --- Step 5: Policy gate ---
+        // --- Policy gate ---
         if let Some(policy) = policy {
-            policy.check(verification.strength)?;
+            policy.check(achieved)?;
         }
         steps.push(StepResult { step: "policy_gate", passed: true, detail: None });
 
-        Ok(VerificationResult {
-            valid: true,
-            strength: verification.strength,
-            issues: Vec::new(),
-            steps,
-        })
+        Ok(VerificationResult { valid: true, strength: achieved, issues, steps })
     }
 }
 
@@ -706,6 +661,7 @@ impl DidDocument {
 }
 
 /// Look up a rights document by sequence number.
+#[allow(dead_code)]
 fn docs_by_seq<'a>(
     rights_documents: &'a [(u64, &'a RightsDocument)], seq: u64,
 ) -> Result<&'a RightsDocument, VerificationError> {
@@ -727,23 +683,6 @@ mod tests {
     use crate::rights::{RIGHTS_DOCUMENT_V1_SCHEMA, RightsDocument, UnsafeRightsDocument};
     use crate::signed::{AfterEnvelope, AfterProof, Signed, SmtContent};
     use crate::smt;
-
-    /// A test BeforeProof verifier that succeeds for a given set of anchors.
-    struct TestBeforeProofVerifier {
-        anchors: Vec<(u32, String)>,
-    }
-
-    impl TestBeforeProofVerifier {
-        fn new(anchors: Vec<(u32, String)>) -> Self {
-            Self { anchors }
-        }
-    }
-
-    impl BeforeProofVerifier for TestBeforeProofVerifier {
-        fn verify_before_proof(&self, block_height: u32, content_id: &str) -> bool {
-            self.anchors.iter().any(|(h, c)| *h == block_height && c == content_id)
-        }
-    }
 
     fn make_test_document() -> DidDocument {
         let key_ref = "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB";
@@ -1059,65 +998,72 @@ mod tests {
     #[test]
     fn after_proof_happy_path() {
         // Key added at height 10. Commitment published at height 100 grants impersonate.
-        // AfterProof: H_start = 100, end = 200.
+        // AfterProof at block 99 → H_start = 100, received_at = 200 → H_end = 200.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
         let cid = ContentId::from_bytes(h1.as_bytes());
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
+        let after = ValidatedAfterProof { block_height: 99 };
         let result = history
             .check_right(&test_key(), "impersonate")
-            .during(100, 200)
             .with_documents(&[(1, &d1)])
-            .require(ProofStrength::AfterProof)
+            .with_after_proof(after)
+            .with_received_at(200)
             .verify()
             .unwrap();
         assert!(result.valid);
         assert_eq!(result.strength, ProofStrength::AfterProof);
+        assert!(result.issues.is_empty());
     }
 
     #[test]
-    fn after_proof_fails_when_key_added_after_h_start() {
-        // Key added at height 120. H_start = 100. Key not valid at H_start.
+    fn after_proof_key_added_after_h_start_ambiguous() {
+        // Key added at height 120. H_start = 100 (AfterProof block 99+1).
+        // Window [100, 200): key absent [100, 120), valid [120, 200) → Ambiguous.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
         let cid = ContentId::from_bytes(h1.as_bytes());
         let history = add_commitment(history_with_key(120, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
-        let err = history
+        let after = ValidatedAfterProof { block_height: 99 };
+        let result = history
             .check_right(&test_key(), "impersonate")
-            .during(100, 200)
             .with_documents(&[(1, &d1)])
-            .require(ProofStrength::AfterProof)
+            .with_after_proof(after)
+            .with_received_at(200)
             .verify()
-            .unwrap_err();
-        assert_eq!(err, VerificationError::KeyNotFound);
+            .unwrap();
+        assert!(result.valid);
+        assert!(result.issues.iter().any(|i| i.contains("absent [100, 120)")));
     }
 
     #[test]
-    fn after_proof_fails_when_key_revoked_before_end() {
-        // Key added at 10, revoked at 150. H_start = 100, end = 200.
+    fn after_proof_key_revoked_mid_window_ambiguous() {
+        // Key added at 10, revoked at 150. Window [100, 200): valid [100, 150), absent [150, 200).
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
         let cid = ContentId::from_bytes(h1.as_bytes());
         let history = add_commitment(history_with_key(10, Some(150), None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
-        let err = history
+        let after = ValidatedAfterProof { block_height: 99 };
+        let result = history
             .check_right(&test_key(), "impersonate")
-            .during(100, 200)
             .with_documents(&[(1, &d1)])
-            .require(ProofStrength::AfterProof)
+            .with_after_proof(after)
+            .with_received_at(200)
             .verify()
-            .unwrap_err();
-        assert_eq!(err, VerificationError::KeyNotFound);
+            .unwrap();
+        assert!(result.valid);
+        assert!(result.issues.iter().any(|i| i.contains("absent [150, 200)")));
     }
 
     #[test]
-    fn after_proof_fails_when_did_tombstoned_during_window() {
-        // DID tombstoned at 180. H_start = 100, end = 200.
+    fn after_proof_did_tombstoned_during_window_error() {
+        // DID tombstoned at 180. Window [100, 200). Still an error (tombstone ⇒ Absent).
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
         let cid = ContentId::from_bytes(h1.as_bytes());
@@ -1125,22 +1071,21 @@ mod tests {
         history = replace_commitment_hash(history, 1, cid);
         history.tombstoned_at = Some(180);
 
+        let after = ValidatedAfterProof { block_height: 99 };
         let err = history
             .check_right(&test_key(), "impersonate")
-            .during(100, 200)
             .with_documents(&[(1, &d1)])
-            .require(ProofStrength::AfterProof)
+            .with_after_proof(after)
+            .with_received_at(200)
             .verify()
             .unwrap_err();
         assert_eq!(err, VerificationError::DidDeactivated);
     }
 
     #[test]
-    fn after_proof_fails_when_commitment_omits_right_mid_window() {
-        // Two commitments:
-        //   D1 at height 100 grants impersonate
-        //   D2 at height 150 grants issue (no impersonate)
-        // H_start = 100, end = 180 — D2 is in the window and does NOT grant.
+    fn after_proof_commitment_omits_right_mid_window_ambiguous() {
+        // D1 at 100 grants impersonate, D2 at 150 grants issue (no impersonate).
+        // Window [100, 180): right absent [150, 180) → Ambiguous.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
         let cid1 = ContentId::from_bytes(h1.as_bytes());
@@ -1154,34 +1099,35 @@ mod tests {
         let history = add_commitment(history, 2, 150);
         let history = replace_commitment_hash(history, 2, cid2);
 
-        let err = history
+        let after = ValidatedAfterProof { block_height: 99 };
+        let result = history
             .check_right(&test_key(), "impersonate")
-            .during(100, 180)
             .with_documents(&[(1, &d1), (2, &d2)])
-            .require(ProofStrength::AfterProof)
+            .with_after_proof(after)
+            .with_received_at(180)
             .verify()
-            .unwrap_err();
-        assert_eq!(err, VerificationError::RightNotGranted);
+            .unwrap();
+        assert!(result.valid);
+        assert!(result.issues.iter().any(|i| i.contains("absent [150, 180)")));
     }
 
     #[test]
-    fn after_proof_fails_when_no_commitment_at_h_start() {
-        // Commitment published at height 100, but H_start = 50.
-        // No commitment active at H_start → no off-chain right.
+    fn after_proof_no_commitment_at_h_start_error() {
+        // Commitment at height 100, window [50, 80). No commitment active → Absent.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
         let cid = ContentId::from_bytes(h1.as_bytes());
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
+        let after = ValidatedAfterProof { block_height: 49 };
         let err = history
             .check_right(&test_key(), "impersonate")
-            .during(50, 80)
             .with_documents(&[(1, &d1)])
-            .require(ProofStrength::AfterProof)
+            .with_after_proof(after)
+            .with_received_at(80)
             .verify()
             .unwrap_err();
-        // No commitment active at H_start=50 → off-chain right not granted
         assert_eq!(err, VerificationError::RightNotGranted);
     }
 
@@ -1207,7 +1153,7 @@ mod tests {
     }
 
     #[test]
-    fn verify_right_windowed_rejects_when_below_policy() {
+    fn verify_right_policy_rejects_when_below_minimum() {
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
         let cid = ContentId::from_bytes(h1.as_bytes());
@@ -1215,11 +1161,10 @@ mod tests {
         let history = replace_commitment_hash(history, 1, cid);
         let policy = VerifierPolicy::notarization(); // requires Finalized
 
+        // No proofs → achieved = Minimal → below Finalized minimum.
         let err = history
             .check_right(&test_key(), "impersonate")
-            .during(100, 200)
             .with_documents(&[(1, &d1)])
-            .require(ProofStrength::AfterProof)
             .with_policy(&policy)
             .verify()
             .unwrap_err();
@@ -1227,24 +1172,23 @@ mod tests {
     }
 
     #[test]
-    fn verify_right_windowed_accepts_when_meets_policy() {
+    fn verify_right_policy_accepts_when_meets_minimum() {
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
         let cid = ContentId::from_bytes(h1.as_bytes());
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
-        let policy = VerifierPolicy::chat(); // accepts anything
+        let policy = VerifierPolicy::chat(); // accepts Minimal
 
+        // No proofs → achieved = Minimal → meets chat minimum.
         let result = history
             .check_right(&test_key(), "impersonate")
-            .during(100, 200)
             .with_documents(&[(1, &d1)])
-            .require(ProofStrength::AfterProof)
             .with_policy(&policy)
             .verify()
             .unwrap();
         assert!(result.valid);
-        assert!(result.steps.iter().any(|s| s.passed));
+        assert_eq!(result.strength, ProofStrength::Minimal);
     }
 
     // ===== FinalizedProof tests =====
@@ -1266,22 +1210,15 @@ mod tests {
 
     #[test]
     fn finalized_proof_happy_path() {
-        // Setup: key added at 10, commitment at height 50 grants impersonate.
-        // AfterProof at block 120 → H_start = 121 (after commitment exists).
-        // BeforeProof at block 200 → H_end = 200.
-        // Window [121, 200]: commitment is active throughout.
+        // Key at 10, commitment at 50 grants impersonate.
+        // AfterProof in envelope at 120 → H_start=121, validated BeforeProof at 200 → H_end=200.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
         let cid = ContentId::from_bytes(h1.as_bytes());
         let history = add_commitment(history_with_key(10, None, None), 1, 50);
         let history = replace_commitment_hash(history, 1, cid);
 
-        // Create Signed<AfterEnvelope<SmtContent>> with AfterProof block 120.
-        // SmtContent.root can be anything — the verifier recomputes the root
-        // from the inclusion proof and checks it against before_proof_content_id.
         let signed = make_signed_envelope(120, "unused-root");
-
-        // Compute fingerprint of the signed envelope and build an SMT.
         let fingerprint = json_digest::digest_data(&signed).unwrap();
         let leaf_hash = smt::Hash::from_digest(fingerprint);
         let mut trie = smt::SparseMerkleTrie::new();
@@ -1289,40 +1226,29 @@ mod tests {
         let root = trie.root().clone();
         let inclusion_proof = trie.inclusion_proof(0).unwrap();
 
-        // H_start = 120 + 1 = 121, H_end = 200
-        let before_proof_block_height = 200;
-        let finalized_input = FinalizedProofInput {
+        let smt = SmtEnvelopeProof {
             signed_envelope: signed,
             inclusion_proof,
-            before_proof_block_height,
             before_proof_content_id: root.as_str().to_string(),
         };
 
-        let verifier = TestBeforeProofVerifier::new(alloc::vec![(200, root.as_str().to_string()),]);
-
-        let result = history.check_right(&test_key(), "impersonate")
-            .during(0, 0) // window overridden by finalized proof
+        let result = history
+            .check_right(&test_key(), "impersonate")
             .with_documents(&[(1, &d1)])
-            .require(ProofStrength::Finalized)
-            .with_finalized_proof(finalized_input)
-            .with_before_proof_verifier(&verifier)
+            .with_after_proof(ValidatedAfterProof { block_height: 120 })
+            .with_before_proof(ValidatedBeforeProof { block_height: 200 })
+            .with_smt_envelope(smt)
             .verify()
             .unwrap();
         assert!(result.valid);
         assert_eq!(result.strength, ProofStrength::Finalized);
-        // All steps should have passed
         assert!(result.steps.iter().any(|s| s.step == "smt_leaf_hash_match" && s.passed));
         assert!(result.steps.iter().any(|s| s.step == "smt_root_match" && s.passed));
-        assert!(result.steps.iter().any(|s| s.step == "before_proof_anchor" && s.passed));
         assert!(result.steps.iter().any(|s| s.step == "window_bounds" && s.passed));
-        assert!(result.steps.iter().any(|s| s.step == "did_liveness" && s.passed));
-        assert!(result.steps.iter().any(|s| s.step == "key_validity" && s.passed));
-        assert!(result.steps.iter().any(|s| s.step == "off_chain_commitment" && s.passed));
     }
 
     #[test]
     fn finalized_proof_fails_when_smt_leaf_hash_mismatch() {
-        // Setup: key, commitment, signed envelope.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
         let cid = ContentId::from_bytes(h1.as_bytes());
@@ -1330,30 +1256,25 @@ mod tests {
         let history = replace_commitment_hash(history, 1, cid);
 
         let signed = make_signed_envelope(90, "unused-root");
-
-        // Build SMT with a DIFFERENT leaf (not the signed envelope).
+        // SMT with wrong leaf (not the signed envelope).
         let wrong_leaf = smt::Hash::from_digest("cmWRONG_LEAF_HASH_000000000000000000".into());
         let mut trie = smt::SparseMerkleTrie::new();
         trie.insert(0, wrong_leaf);
         let inclusion_proof = trie.inclusion_proof(0).unwrap();
         let root = trie.root().clone();
 
-        let finalized_input = FinalizedProofInput {
+        let smt = SmtEnvelopeProof {
             signed_envelope: signed,
             inclusion_proof,
-            before_proof_block_height: 200,
             before_proof_content_id: root.as_str().to_string(),
         };
 
-        let verifier = TestBeforeProofVerifier::new(alloc::vec![]);
-
         let err = history
             .check_right(&test_key(), "impersonate")
-            .during(0, 0)
             .with_documents(&[(1, &d1)])
-            .require(ProofStrength::Finalized)
-            .with_finalized_proof(finalized_input)
-            .with_before_proof_verifier(&verifier)
+            .with_after_proof(ValidatedAfterProof { block_height: 90 })
+            .with_before_proof(ValidatedBeforeProof { block_height: 200 })
+            .with_smt_envelope(smt)
             .verify()
             .unwrap_err();
         assert_eq!(err, VerificationError::SmtInclusionProofFailed);
@@ -1361,7 +1282,6 @@ mod tests {
 
     #[test]
     fn finalized_proof_fails_when_smt_root_mismatch() {
-        // Build a valid SMT proof but claim a wrong before_proof_content_id.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
         let cid = ContentId::from_bytes(h1.as_bytes());
@@ -1374,77 +1294,35 @@ mod tests {
         let mut trie = smt::SparseMerkleTrie::new();
         trie.insert(0, leaf_hash);
         let inclusion_proof = trie.inclusion_proof(0).unwrap();
+        // Valid SMT proof, but claim wrong before_proof_content_id → root mismatch.
 
-        let finalized_input = FinalizedProofInput {
+        let smt = SmtEnvelopeProof {
             signed_envelope: signed,
             inclusion_proof,
-            before_proof_block_height: 200,
             before_proof_content_id: "cmWRONG_ROOT_0000000000000000000000000000".into(),
         };
 
-        let verifier = TestBeforeProofVerifier::new(alloc::vec![]);
-
         let err = history
             .check_right(&test_key(), "impersonate")
-            .during(0, 0)
             .with_documents(&[(1, &d1)])
-            .require(ProofStrength::Finalized)
-            .with_finalized_proof(finalized_input)
-            .with_before_proof_verifier(&verifier)
+            .with_after_proof(ValidatedAfterProof { block_height: 90 })
+            .with_before_proof(ValidatedBeforeProof { block_height: 200 })
+            .with_smt_envelope(smt)
             .verify()
             .unwrap_err();
         assert_eq!(err, VerificationError::SmtInclusionProofFailed);
     }
 
     #[test]
-    fn finalized_proof_fails_when_before_proof_anchor_missing() {
-        let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid = ContentId::from_bytes(h1.as_bytes());
-        let history = add_commitment(history_with_key(10, None, None), 1, 100);
-        let history = replace_commitment_hash(history, 1, cid);
-
-        let signed = make_signed_envelope(90, "unused-root");
-        let fingerprint = json_digest::digest_data(&signed).unwrap();
-        let leaf_hash = smt::Hash::from_digest(fingerprint);
-        let mut trie = smt::SparseMerkleTrie::new();
-        trie.insert(0, leaf_hash);
-        let root = trie.root().clone();
-        let inclusion_proof = trie.inclusion_proof(0).unwrap();
-
-        // The verifier has NO matching anchors.
-        let verifier = TestBeforeProofVerifier::new(alloc::vec![]);
-
-        let finalized_input = FinalizedProofInput {
-            signed_envelope: signed,
-            inclusion_proof,
-            before_proof_block_height: 200,
-            before_proof_content_id: root.as_str().to_string(),
-        };
-
-        let err = history
-            .check_right(&test_key(), "impersonate")
-            .during(0, 0)
-            .with_documents(&[(1, &d1)])
-            .require(ProofStrength::Finalized)
-            .with_finalized_proof(finalized_input)
-            .with_before_proof_verifier(&verifier)
-            .verify()
-            .unwrap_err();
-        assert_eq!(err, VerificationError::BeforeProofVerificationFailed);
-    }
-
-    #[test]
     fn finalized_proof_rejects_impossible_upper_bound() {
-        // BeforeProof at height 100, AfterProof at height 200 → H_start=201, H_end=100
-        // H_start > H_end → impossible window → rejected.
+        // AfterProof at 200 → H_start=201, validated BeforeProof at 100 → H_end=100.
+        // H_start > H_end → rejected.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
         let cid = ContentId::from_bytes(h1.as_bytes());
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
-        // AfterProof at height 200 → H_start = 201
         let signed = make_signed_envelope(200, "unused-root");
         let fingerprint = json_digest::digest_data(&signed).unwrap();
         let leaf_hash = smt::Hash::from_digest(fingerprint);
@@ -1453,37 +1331,31 @@ mod tests {
         let root = trie.root().clone();
         let inclusion_proof = trie.inclusion_proof(0).unwrap();
 
-        // BeforeProof at height 100 → H_end = 100
-        let verifier = TestBeforeProofVerifier::new(alloc::vec![(100, root.as_str().to_string()),]);
-
-        let finalized_input = FinalizedProofInput {
+        let smt = SmtEnvelopeProof {
             signed_envelope: signed,
             inclusion_proof,
-            before_proof_block_height: 100,
             before_proof_content_id: root.as_str().to_string(),
         };
 
         let err = history
             .check_right(&test_key(), "impersonate")
-            .during(0, 0)
             .with_documents(&[(1, &d1)])
-            .require(ProofStrength::Finalized)
-            .with_finalized_proof(finalized_input)
-            .with_before_proof_verifier(&verifier)
+            .with_after_proof(ValidatedAfterProof { block_height: 200 })
+            .with_before_proof(ValidatedBeforeProof { block_height: 100 })
+            .with_smt_envelope(smt)
             .verify()
             .unwrap_err();
         assert_eq!(err, VerificationError::WindowBoundsInvalid);
     }
 
     #[test]
-    fn finalized_proof_omitted_commitment_in_window_fails() {
-        // Two commitments: D1 at height 100 grants impersonate, D2 at height 150
-        // does NOT grant impersonate. Window [91, 200] covers both.
-        // Even with SMT proof, the right must be present in ALL commitments.
+    fn finalized_proof_commitment_omission_mid_window_ambiguous() {
+        // D1 at 100 grants impersonate, D2 at 150 grants issue (no impersonate).
+        // Window [91, 200): absent [150, 200) → Ambiguous.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
         let cid1 = ContentId::from_bytes(h1.as_bytes());
-        let d2 = make_rights_doc(2, Some(&h1), "issue"); // no impersonate!
+        let d2 = make_rights_doc(2, Some(&h1), "issue");
         let h2 = d2.compute_hash().unwrap();
         let cid2 = ContentId::from_bytes(h2.as_bytes());
 
@@ -1501,24 +1373,22 @@ mod tests {
         let root = trie.root().clone();
         let inclusion_proof = trie.inclusion_proof(0).unwrap();
 
-        let verifier = TestBeforeProofVerifier::new(alloc::vec![(200, root.as_str().to_string()),]);
-
-        let finalized_input = FinalizedProofInput {
+        let smt = SmtEnvelopeProof {
             signed_envelope: signed,
             inclusion_proof,
-            before_proof_block_height: 200,
             before_proof_content_id: root.as_str().to_string(),
         };
 
-        let err = history
+        let result = history
             .check_right(&test_key(), "impersonate")
-            .during(0, 0)
             .with_documents(&[(1, &d1), (2, &d2)])
-            .require(ProofStrength::Finalized)
-            .with_finalized_proof(finalized_input)
-            .with_before_proof_verifier(&verifier)
+            .with_after_proof(ValidatedAfterProof { block_height: 90 })
+            .with_before_proof(ValidatedBeforeProof { block_height: 200 })
+            .with_smt_envelope(smt)
             .verify()
-            .unwrap_err();
-        assert_eq!(err, VerificationError::RightNotGranted);
+            .unwrap();
+        assert!(result.valid);
+        assert!(result.issues.iter().any(|i| i.contains("absent [150, 200)")));
+        assert_eq!(result.strength, ProofStrength::Finalized);
     }
 }
