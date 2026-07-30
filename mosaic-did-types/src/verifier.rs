@@ -3,13 +3,14 @@
 //! The verifier operates offline on a `DidDocument` produced by the indexer
 //! at a specific `?versionId`. It checks on-chain rights from the document's
 //! verification relationship arrays and off-chain rights from presenter-
-//! supplied `RightsDocument`s whose hashes match the commitment timeline.
+//! supplied [`RightsDocument`]s whose hashes match the commitment timeline.
 
 use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
+use crate::auth::Authentication;
 use crate::did::{ContentId, KeyRef};
 use crate::document::DidDocument;
 use crate::history::{CommitmentVersion, DidHistory};
@@ -183,20 +184,22 @@ pub struct FinalizedProofInput {
 }
 
 impl DidHistory {
-    /// Start a verification chain for `right` on `holder_key_ref` against
+    /// Start a verification chain for `right` on `holder_key` against
     /// this DID history.
     ///
     /// This is the entry point for the type-state verification builder:
     ///
     /// ```text
-    /// history.check_right(key, "impersonate")
+    /// history.check_right(&key, "impersonate")
     ///     .during(100, 200)
     ///     .with_documents(&docs)
     ///     .require(ProofStrength::AfterProof)
     ///     .verify()?;
     /// ```
-    pub fn check_right<'a>(&'a self, holder_key_ref: &'a str, right: &'a str) -> Identity<'a> {
-        Identity { history: self, holder_key_ref, right }
+    pub fn check_right<'a>(
+        &'a self, holder_key: &'a Authentication, right: &'a str,
+    ) -> Identity<'a> {
+        Identity { history: self, holder_key, right }
     }
 }
 
@@ -209,8 +212,8 @@ impl DidHistory {
 pub struct Identity<'a> {
     // DID history (events reconstructed) for the target DID.
     history: &'a DidHistory,
-    // Key reference to check (e.g. `"ioz..."`).
-    holder_key_ref: &'a str,
+    // Key identity to verify (KeyId or full PublicKey).
+    holder_key: &'a Authentication,
     // The right to verify as a string (`"impersonate"`, `"issue"`, etc.).
     right: &'a str,
 }
@@ -329,7 +332,7 @@ impl<'a> Ready<'a> {
         let Ready {
             prev:
                 Documents {
-                    prev: Window { prev: Identity { history, holder_key_ref, right }, start, end },
+                    prev: Window { prev: Identity { history, holder_key, right }, start, end },
                     rights_documents,
                 },
             strength,
@@ -402,7 +405,7 @@ impl<'a> Ready<'a> {
         steps.push(StepResult { step: "did_liveness", passed: true, detail: None });
 
         // --- Step 3: Key validity across [h_start, h_end] ---
-        let key_ref = KeyRef::new(holder_key_ref.as_bytes().to_vec())
+        let key_ref = KeyRef::new(holder_key.to_string().as_bytes().to_vec())
             .map_err(|_| VerificationError::KeyNotFound)?;
         if !history.is_key_valid_across(&key_ref, h_start, h_end) {
             return Err(VerificationError::KeyNotFound);
@@ -446,7 +449,7 @@ impl<'a> Ready<'a> {
                             .commitments
                             .iter()
                             .any(|cv| cv.sequence == *seq && cv.commitment == commitment)
-                            && doc.grants_right(holder_key_ref, right)
+                            && doc.grants_right(holder_key, right)
                         {
                             return Ok(VerificationResult {
                                 valid: true,
@@ -483,11 +486,11 @@ impl<'a> Ready<'a> {
                     // Every commitment active in the window must have a matching
                     // presenter-supplied document that grants the right.
                     for &cv in &relevant_commitments {
-                        let doc = doc_by_seq(rights_documents, cv.sequence)?;
+                        let doc = docs_by_seq(rights_documents, cv.sequence)?;
                         if cv.commitment != doc_cid(doc)? {
                             return Err(VerificationError::CommitmentHashMismatch);
                         }
-                        if !doc.grants_right(holder_key_ref, right) {
+                        if !doc.grants_right(holder_key, right) {
                             return Err(VerificationError::RightNotGranted);
                         }
                     }
@@ -495,14 +498,15 @@ impl<'a> Ready<'a> {
                     // For Finalized: verify the previousCommitment hash chain.
                     if strength == ProofStrength::Finalized && relevant_commitments.len() > 1 {
                         for i in 1..relevant_commitments.len() {
-                            let prev_doc =
-                                doc_by_seq(rights_documents, relevant_commitments[i - 1].sequence)?;
+                            let prev_doc = docs_by_seq(
+                                rights_documents,
+                                relevant_commitments[i - 1].sequence,
+                            )?;
                             let curr_doc =
-                                doc_by_seq(rights_documents, relevant_commitments[i].sequence)?;
+                                docs_by_seq(rights_documents, relevant_commitments[i].sequence)?;
                             let expected_prev_cid = doc_cid(prev_doc)?;
                             let chain_ok = curr_doc
-                                .previous_commitment
-                                .as_ref()
+                                .previous_commitment()
                                 .is_some_and(|pc| *pc == expected_prev_cid);
                             if !chain_ok {
                                 return Err(VerificationError::CommitmentChainBroken);
@@ -538,11 +542,11 @@ impl<'a> Ready<'a> {
 }
 
 impl DidDocument {
-    /// Verify that `holder_key_ref` has `right` at the document's resolution height.
+    /// Verify that `holder_key` has `right` at the document's resolution height.
     ///
     /// On-chain rights are checked against the DID document's verification
     /// relationship arrays. Off-chain rights require presenter-supplied
-    /// `RightsDocument`s, keyed by their sequence number.
+    /// [`RightsDocument`]s, keyed by their sequence number.
     ///
     /// # Proof strengths
     ///
@@ -553,8 +557,8 @@ impl DidDocument {
     ///   match. The `previousCommitment` chain is verified between consecutive
     ///   documents.
     pub fn verify_right(
-        &self, holder_key_ref: &str, right: &str, rights_documents: &[(u64, &RightsDocument)],
-        strength: ProofStrength,
+        &self, holder_key: &Authentication, right: &str,
+        rights_documents: &[(u64, &RightsDocument)], strength: ProofStrength,
     ) -> Result<VerificationResult, VerificationError> {
         let mut steps: Vec<StepResult> = Vec::new();
 
@@ -564,7 +568,7 @@ impl DidDocument {
         steps.push(StepResult { step: "did_liveness", passed: true, detail: None });
 
         // Check that the key appears in verificationMethod
-        let key_fragment = format!("#{holder_key_ref}");
+        let key_fragment = format!("#{holder_key}");
         let key_in_doc = self.verification_method.iter().any(|vm| vm.id.ends_with(&key_fragment));
         if !key_in_doc {
             return Err(VerificationError::KeyNotFound);
@@ -629,7 +633,7 @@ impl DidDocument {
                         let doc_hash =
                             doc.compute_hash().map_err(VerificationError::DigestError)?;
                         if timeline.iter().any(|(s, h)| *s == *seq && *h == doc_hash)
-                            && doc.grants_right(holder_key_ref, right)
+                            && doc.grants_right(holder_key, right)
                         {
                             return Ok(VerificationResult {
                                 valid: true,
@@ -643,14 +647,14 @@ impl DidDocument {
                 }
                 ProofStrength::AfterProof | ProofStrength::Finalized => {
                     // Every version in the timeline MUST have a matching document
-                    let doc_by_seq: Vec<Option<&RightsDocument>> = timeline
+                    let docs_by_seq: Vec<Option<&RightsDocument>> = timeline
                         .iter()
                         .map(|(seq, _expected_hash)| {
                             rights_documents.iter().find(|(s, _)| s == seq).map(|(_, doc)| *doc)
                         })
                         .collect();
 
-                    for (i, maybe_doc) in doc_by_seq.iter().enumerate() {
+                    for (i, maybe_doc) in docs_by_seq.iter().enumerate() {
                         let (_seq, expected_hash) = &timeline[i];
                         let doc = maybe_doc.ok_or(VerificationError::MissingCommitmentDocument)?;
 
@@ -662,16 +666,16 @@ impl DidDocument {
                         }
 
                         // Right must be granted in every version
-                        if !doc.grants_right(holder_key_ref, right) {
+                        if !doc.grants_right(holder_key, right) {
                             return Err(VerificationError::RightNotGranted);
                         }
 
                         // Hash chain: D_i.previousCommitment must equal blake3(canonical(D_{i-1}))
                         if i > 0 {
-                            let prev_doc = doc_by_seq[i - 1].expect("previous doc must exist");
+                            let prev_doc = docs_by_seq[i - 1].expect("previous doc must exist");
                             let expected_prev =
                                 prev_doc.compute_hash().map_err(VerificationError::DigestError)?;
-                            let chain_ok = doc.previous_commitment.as_ref().is_some_and(|pc| {
+                            let chain_ok = doc.previous_commitment().is_some_and(|pc| {
                                 *pc == crate::did::ContentId::from_bytes(expected_prev.as_bytes())
                             });
                             if !chain_ok {
@@ -702,7 +706,7 @@ impl DidDocument {
 }
 
 /// Look up a rights document by sequence number.
-fn doc_by_seq<'a>(
+fn docs_by_seq<'a>(
     rights_documents: &'a [(u64, &'a RightsDocument)], seq: u64,
 ) -> Result<&'a RightsDocument, VerificationError> {
     rights_documents
@@ -715,8 +719,12 @@ fn doc_by_seq<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::{DidDocument, DidDocumentService, DidDocumentVerificationMethod};
+    use crate::document::{
+        DID_DOCUMENT_MOSAIC_CONTEXT, DID_DOCUMENT_W3C_CONTEXT, DidDocument, DidDocumentService,
+        DidDocumentVerificationMethod,
+    };
     use crate::ed25519_blake3_signature;
+    use crate::rights::{RIGHTS_DOCUMENT_V1_SCHEMA, RightsDocument, UnsafeRightsDocument};
     use crate::signed::{AfterEnvelope, AfterProof, Signed, SmtContent};
     use crate::smt;
 
@@ -742,8 +750,8 @@ mod tests {
         let did = "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb";
         DidDocument {
             context: alloc::vec![
-                "https://www.w3.org/ns/did/v1".into(),
-                "https://mosaic-trust.net/ns/did/v1".into(),
+                DID_DOCUMENT_W3C_CONTEXT.into(),
+                DID_DOCUMENT_MOSAIC_CONTEXT.into(),
             ],
             id: did.into(),
             controller: None,
@@ -768,17 +776,20 @@ mod tests {
     }
 
     fn make_rights_doc(seq: u64, previous_hash: Option<&str>, right: &str) -> RightsDocument {
-        RightsDocument {
-            schema: "https://mosaic-trust.net/ns/did-rights/v1".into(),
+        let kid: iop_keyvault::multicipher::MKeyId =
+            "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB".parse().unwrap();
+        let raw = UnsafeRightsDocument {
+            schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
             did: "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb".into(),
             sequence: seq,
             previous_commitment: previous_hash
                 .map(|h| crate::did::ContentId::from_bytes(h.as_bytes())),
-            rights: alloc::vec![crate::rights::RightEntry {
-                key_ref: "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB".into(),
+            rights: alloc::vec![crate::rights::UnsafeRightEntry {
+                key: kid.to_string(),
                 rights: alloc::vec![right.into()],
             }],
-        }
+        };
+        raw.try_into().expect("test rights doc should be valid")
     }
 
     fn set_timeline(doc: &mut DidDocument, versions: &[(u64, &str)]) {
@@ -805,14 +816,8 @@ mod tests {
     #[test]
     fn verify_right_with_key_in_document() {
         let doc = make_test_document();
-        let result = doc
-            .verify_right(
-                "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB",
-                "impersonate",
-                &[],
-                ProofStrength::Minimal,
-            )
-            .unwrap();
+        let result =
+            doc.verify_right(&test_key(), "impersonate", &[], ProofStrength::Minimal).unwrap();
         assert!(result.valid);
         assert_eq!(result.strength, ProofStrength::Finalized);
     }
@@ -821,12 +826,7 @@ mod tests {
     fn verify_right_with_key_not_in_document() {
         let doc = make_test_document();
         let err = doc
-            .verify_right(
-                "iozUNKNOWN0000000000000000000000000000000",
-                "impersonate",
-                &[],
-                ProofStrength::Minimal,
-            )
+            .verify_right(&test_other_key(), "impersonate", &[], ProofStrength::Minimal)
             .unwrap_err();
         assert_eq!(err, VerificationError::KeyNotFound);
     }
@@ -834,14 +834,8 @@ mod tests {
     #[test]
     fn verify_right_with_on_chain_impersonate() {
         let doc = make_test_document();
-        let result = doc
-            .verify_right(
-                "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB",
-                "impersonate",
-                &[],
-                ProofStrength::Minimal,
-            )
-            .unwrap();
+        let result =
+            doc.verify_right(&test_key(), "impersonate", &[], ProofStrength::Minimal).unwrap();
         assert!(result.valid);
     }
 
@@ -849,14 +843,8 @@ mod tests {
     fn verify_right_with_deactivated_did() {
         let mut doc = make_test_document();
         doc.deactivated = true;
-        let err = doc
-            .verify_right(
-                "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB",
-                "impersonate",
-                &[],
-                ProofStrength::Minimal,
-            )
-            .unwrap_err();
+        let err =
+            doc.verify_right(&test_key(), "impersonate", &[], ProofStrength::Minimal).unwrap_err();
         assert_eq!(err, VerificationError::DidDeactivated);
     }
 
@@ -864,14 +852,8 @@ mod tests {
     fn verify_right_rejected_when_right_not_in_on_chain_relationships() {
         let mut doc = make_test_document();
         doc.assertion_method.clear();
-        let err = doc
-            .verify_right(
-                "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB",
-                "impersonate",
-                &[],
-                ProofStrength::Minimal,
-            )
-            .unwrap_err();
+        let err =
+            doc.verify_right(&test_key(), "impersonate", &[], ProofStrength::Minimal).unwrap_err();
         assert_eq!(err, VerificationError::RightNotGranted);
     }
 
@@ -886,12 +868,7 @@ mod tests {
         set_timeline(&mut doc, &[(1, &hash)]);
 
         let result = doc
-            .verify_right(
-                "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB",
-                "impersonate",
-                &[(1, &rights_doc)],
-                ProofStrength::Minimal,
-            )
+            .verify_right(&test_key(), "impersonate", &[(1, &rights_doc)], ProofStrength::Minimal)
             .unwrap();
         assert!(result.valid);
         assert_eq!(result.strength, ProofStrength::Minimal);
@@ -905,12 +882,7 @@ mod tests {
         set_timeline(&mut doc, &[(1, "cmWRONG_HASH_0000000000000000000000000000")]);
 
         let err = doc
-            .verify_right(
-                "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB",
-                "impersonate",
-                &[(1, &rights_doc)],
-                ProofStrength::Minimal,
-            )
+            .verify_right(&test_key(), "impersonate", &[(1, &rights_doc)], ProofStrength::Minimal)
             .unwrap_err();
         assert_eq!(err, VerificationError::RightNotGranted);
     }
@@ -924,12 +896,7 @@ mod tests {
         set_timeline(&mut doc, &[(1, &hash)]);
 
         let err = doc
-            .verify_right(
-                "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB",
-                "impersonate",
-                &[(1, &rights_doc)],
-                ProofStrength::Minimal,
-            )
+            .verify_right(&test_key(), "impersonate", &[(1, &rights_doc)], ProofStrength::Minimal)
             .unwrap_err();
         assert_eq!(err, VerificationError::RightNotGranted);
     }
@@ -950,7 +917,7 @@ mod tests {
 
         let result = doc
             .verify_right(
-                "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB",
+                &test_key(),
                 "impersonate",
                 &[(1, &d1), (2, &d2)],
                 ProofStrength::Finalized,
@@ -971,7 +938,7 @@ mod tests {
 
         let err = doc
             .verify_right(
-                "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB",
+                &test_key(),
                 "impersonate",
                 &[(1, &d1)], // missing doc for version 2
                 ProofStrength::Finalized,
@@ -995,7 +962,7 @@ mod tests {
 
         let err = doc
             .verify_right(
-                "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB",
+                &test_key(),
                 "impersonate",
                 &[(1, &d1), (2, &d2)],
                 ProofStrength::Finalized,
@@ -1018,7 +985,7 @@ mod tests {
 
         let err = doc
             .verify_right(
-                "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB",
+                &test_key(),
                 "impersonate",
                 &[(1, &d1), (2, &d2)],
                 ProofStrength::Finalized,
@@ -1033,6 +1000,20 @@ mod tests {
     const TEST_KEY_REF: &str = "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB";
     /// A test DID reused across windowed tests.
     const TEST_DID_STR: &str = "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb";
+
+    /// A lazily-parsed test authentication key.
+    fn test_key() -> Authentication {
+        use iop_keyvault::multicipher::MKeyId;
+        let kid: MKeyId = "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB".parse().unwrap();
+        Authentication::KeyId(kid)
+    }
+
+    /// A different valid key not present in test documents.
+    fn test_other_key() -> Authentication {
+        use iop_keyvault::multicipher::MKeyId;
+        let kid: MKeyId = "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH".parse().unwrap();
+        Authentication::KeyId(kid)
+    }
 
     fn history_with_key(
         key_added_at: u32, revoked_at: Option<u32>, expires_at: Option<u32>,
@@ -1086,7 +1067,7 @@ mod tests {
         let history = replace_commitment_hash(history, 1, cid);
 
         let result = history
-            .check_right(TEST_KEY_REF, "impersonate")
+            .check_right(&test_key(), "impersonate")
             .during(100, 200)
             .with_documents(&[(1, &d1)])
             .require(ProofStrength::AfterProof)
@@ -1106,7 +1087,7 @@ mod tests {
         let history = replace_commitment_hash(history, 1, cid);
 
         let err = history
-            .check_right(TEST_KEY_REF, "impersonate")
+            .check_right(&test_key(), "impersonate")
             .during(100, 200)
             .with_documents(&[(1, &d1)])
             .require(ProofStrength::AfterProof)
@@ -1125,7 +1106,7 @@ mod tests {
         let history = replace_commitment_hash(history, 1, cid);
 
         let err = history
-            .check_right(TEST_KEY_REF, "impersonate")
+            .check_right(&test_key(), "impersonate")
             .during(100, 200)
             .with_documents(&[(1, &d1)])
             .require(ProofStrength::AfterProof)
@@ -1145,7 +1126,7 @@ mod tests {
         history.tombstoned_at = Some(180);
 
         let err = history
-            .check_right(TEST_KEY_REF, "impersonate")
+            .check_right(&test_key(), "impersonate")
             .during(100, 200)
             .with_documents(&[(1, &d1)])
             .require(ProofStrength::AfterProof)
@@ -1174,7 +1155,7 @@ mod tests {
         let history = replace_commitment_hash(history, 2, cid2);
 
         let err = history
-            .check_right(TEST_KEY_REF, "impersonate")
+            .check_right(&test_key(), "impersonate")
             .during(100, 180)
             .with_documents(&[(1, &d1), (2, &d2)])
             .require(ProofStrength::AfterProof)
@@ -1194,7 +1175,7 @@ mod tests {
         let history = replace_commitment_hash(history, 1, cid);
 
         let err = history
-            .check_right(TEST_KEY_REF, "impersonate")
+            .check_right(&test_key(), "impersonate")
             .during(50, 80)
             .with_documents(&[(1, &d1)])
             .require(ProofStrength::AfterProof)
@@ -1235,7 +1216,7 @@ mod tests {
         let policy = VerifierPolicy::notarization(); // requires Finalized
 
         let err = history
-            .check_right(TEST_KEY_REF, "impersonate")
+            .check_right(&test_key(), "impersonate")
             .during(100, 200)
             .with_documents(&[(1, &d1)])
             .require(ProofStrength::AfterProof)
@@ -1255,7 +1236,7 @@ mod tests {
         let policy = VerifierPolicy::chat(); // accepts anything
 
         let result = history
-            .check_right(TEST_KEY_REF, "impersonate")
+            .check_right(&test_key(), "impersonate")
             .during(100, 200)
             .with_documents(&[(1, &d1)])
             .require(ProofStrength::AfterProof)
@@ -1319,7 +1300,7 @@ mod tests {
 
         let verifier = TestBeforeProofVerifier::new(alloc::vec![(200, root.as_str().to_string()),]);
 
-        let result = history.check_right(TEST_KEY_REF, "impersonate")
+        let result = history.check_right(&test_key(), "impersonate")
             .during(0, 0) // window overridden by finalized proof
             .with_documents(&[(1, &d1)])
             .require(ProofStrength::Finalized)
@@ -1367,7 +1348,7 @@ mod tests {
         let verifier = TestBeforeProofVerifier::new(alloc::vec![]);
 
         let err = history
-            .check_right(TEST_KEY_REF, "impersonate")
+            .check_right(&test_key(), "impersonate")
             .during(0, 0)
             .with_documents(&[(1, &d1)])
             .require(ProofStrength::Finalized)
@@ -1404,7 +1385,7 @@ mod tests {
         let verifier = TestBeforeProofVerifier::new(alloc::vec![]);
 
         let err = history
-            .check_right(TEST_KEY_REF, "impersonate")
+            .check_right(&test_key(), "impersonate")
             .during(0, 0)
             .with_documents(&[(1, &d1)])
             .require(ProofStrength::Finalized)
@@ -1442,7 +1423,7 @@ mod tests {
         };
 
         let err = history
-            .check_right(TEST_KEY_REF, "impersonate")
+            .check_right(&test_key(), "impersonate")
             .during(0, 0)
             .with_documents(&[(1, &d1)])
             .require(ProofStrength::Finalized)
@@ -1483,7 +1464,7 @@ mod tests {
         };
 
         let err = history
-            .check_right(TEST_KEY_REF, "impersonate")
+            .check_right(&test_key(), "impersonate")
             .during(0, 0)
             .with_documents(&[(1, &d1)])
             .require(ProofStrength::Finalized)
@@ -1530,7 +1511,7 @@ mod tests {
         };
 
         let err = history
-            .check_right(TEST_KEY_REF, "impersonate")
+            .check_right(&test_key(), "impersonate")
             .during(0, 0)
             .with_documents(&[(1, &d1), (2, &d2)])
             .require(ProofStrength::Finalized)

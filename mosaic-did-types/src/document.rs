@@ -11,6 +11,14 @@ use serde_json;
 
 use crate::operation::KeyType;
 
+// ========== DID Document context URIs ==========
+
+/// W3C DID Core 1.0 JSON-LD context URI.
+pub const DID_DOCUMENT_W3C_CONTEXT: &str = "https://www.w3.org/ns/did/v1";
+
+/// Mosaic DID extension JSON-LD context URI for mosaic-prefixed properties.
+pub const DID_DOCUMENT_MOSAIC_CONTEXT: &str = "https://mosaic-trust.net/ns/did/v1";
+
 // ========== W3C DID DOCUMENT TYPES ==========
 
 /// W3C DID Core 1.0 compliant DID Document for external consumption.

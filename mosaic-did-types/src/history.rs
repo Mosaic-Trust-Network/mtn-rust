@@ -13,8 +13,9 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use crate::did::{ContentId, Did, KeyRef};
+use crate::document::{DID_DOCUMENT_MOSAIC_CONTEXT, DID_DOCUMENT_W3C_CONTEXT};
 use crate::operation::{KeyType, Right};
-use crate::rights::RightsDocument;
+use crate::rights::UnsafeRightsDocument;
 
 /// A commitment version in the DID history, reconstructed from events.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -138,7 +139,7 @@ pub enum DidHistoryEvent {
 /// intentionally publishes the rights document publicly.
 pub trait CommitmentResolver {
     /// Resolve a content ID to the full rights document.
-    fn resolve(&self, content_id: &ContentId) -> Option<RightsDocument>;
+    fn resolve(&self, content_id: &ContentId) -> Option<UnsafeRightsDocument>;
 }
 
 impl DidHistory {
@@ -268,7 +269,7 @@ impl DidHistory {
         if let Some(cv) = self.commitment_at(height)
             && let Some(doc) = commitment_resolver.resolve(&cv.commitment)
             && doc.rights.iter().any(|entry| {
-                entry.key_ref == key_ref.to_string() && entry.rights.contains(&right.to_string())
+                entry.key == key_ref.to_string() && entry.rights.contains(&right.to_string())
             })
         {
             return true;
@@ -450,8 +451,8 @@ impl DidHistory {
 
         DidDocument {
             context: alloc::vec![
-                "https://www.w3.org/ns/did/v1".into(),
-                "https://mosaic-trust.net/ns/did/v1".into(),
+                DID_DOCUMENT_W3C_CONTEXT.into(),
+                DID_DOCUMENT_MOSAIC_CONTEXT.into(),
             ],
             id: did_string,
             controller: None, // DID is self-controlled
@@ -474,10 +475,11 @@ impl DidHistory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rights::RIGHTS_DOCUMENT_V1_SCHEMA;
 
-    /// A test resolver that holds a map of ContentId -> RightsDocument.
+    /// A test resolver that holds a map of ContentId -> UnsafeRightsDocument.
     struct TestResolver {
-        documents: Vec<(ContentId, RightsDocument)>,
+        documents: Vec<(ContentId, UnsafeRightsDocument)>,
     }
 
     impl TestResolver {
@@ -485,13 +487,13 @@ mod tests {
             Self { documents: Vec::new() }
         }
 
-        fn insert(&mut self, content_id: ContentId, doc: RightsDocument) {
+        fn insert(&mut self, content_id: ContentId, doc: UnsafeRightsDocument) {
             self.documents.push((content_id, doc));
         }
     }
 
     impl CommitmentResolver for TestResolver {
-        fn resolve(&self, content_id: &ContentId) -> Option<RightsDocument> {
+        fn resolve(&self, content_id: &ContentId) -> Option<UnsafeRightsDocument> {
             self.documents.iter().find(|(cid, _)| cid == content_id).map(|(_, doc)| doc.clone())
         }
     }
@@ -659,13 +661,13 @@ mod tests {
         let mut resolver = TestResolver::new();
         resolver.insert(
             commitment,
-            RightsDocument {
-                schema: "https://mosaic-trust.net/ns/did-rights/v1".into(),
+            UnsafeRightsDocument {
+                schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
                 did: "did:mosaic:iozABC".into(),
                 sequence: 1,
                 previous_commitment: None,
-                rights: alloc::vec![crate::rights::RightEntry {
-                    key_ref: kr.to_string(),
+                rights: alloc::vec![crate::rights::UnsafeRightEntry {
+                    key: kr.to_string(),
                     rights: alloc::vec!["impersonate".into()],
                 }],
             },

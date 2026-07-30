@@ -14,6 +14,8 @@
 
 use core::fmt;
 
+use alloc::string::ToString;
+
 use iop_keyvault::PublicKey;
 use iop_keyvault::multicipher::{MKeyId, MPublicKey};
 
@@ -104,6 +106,24 @@ impl From<MKeyId> for Authentication {
 impl From<MPublicKey> for Authentication {
     fn from(pk: MPublicKey) -> Self {
         Authentication::PublicKey(pk)
+    }
+}
+
+// ========== String parsing ==========
+
+impl core::str::FromStr for Authentication {
+    type Err = alloc::string::String;
+
+    fn from_str(s: &str) -> Result<Self, alloc::string::String> {
+        if s.starts_with(MPublicKey::PREFIX) {
+            let pk: MPublicKey = s.parse().map_err(|e| alloc::format!("{e}"))?;
+            Ok(Authentication::PublicKey(pk))
+        } else if s.starts_with(MKeyId::PREFIX) {
+            let kid: MKeyId = s.parse().map_err(|e| alloc::format!("{e}"))?;
+            Ok(Authentication::KeyId(kid))
+        } else {
+            Err("Authentication string must start with 'p' (PublicKey) or 'i' (KeyId)".to_string())
+        }
     }
 }
 
@@ -200,7 +220,6 @@ mod scale_impls {
 
 mod serde_impls {
     use super::*;
-    use alloc::string::String;
     use alloc::string::ToString;
 
     // Serialize as a simple string (matching Morpheus `serde_str` pattern).
@@ -213,19 +232,8 @@ mod serde_impls {
 
     impl<'de> serde::Deserialize<'de> for Authentication {
         fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            let s = String::deserialize(deserializer)?;
-            // PublicKey strings start with 'p', KeyId strings start with 'i'
-            if s.starts_with(MPublicKey::PREFIX) {
-                let pk: MPublicKey = s.parse().map_err(serde::de::Error::custom)?;
-                Ok(Authentication::PublicKey(pk))
-            } else if s.starts_with(MKeyId::PREFIX) {
-                let kid: MKeyId = s.parse().map_err(serde::de::Error::custom)?;
-                Ok(Authentication::KeyId(kid))
-            } else {
-                Err(serde::de::Error::custom(
-                    "Authentication string must start with 'p' (PublicKey) or 'i' (KeyId)",
-                ))
-            }
+            let s = alloc::string::String::deserialize(deserializer)?;
+            s.parse().map_err(serde::de::Error::custom)
         }
     }
 }
@@ -323,5 +331,23 @@ mod tests {
         assert!(json.contains("ioz"));
         let parsed: Authentication = serde_json::from_str(&json).unwrap();
         assert_eq!(auth, parsed);
+    }
+
+    #[test]
+    fn from_str_parses_key_id() {
+        let auth: Authentication = alice_kid().to_string().parse().unwrap();
+        assert!(matches!(auth, Authentication::KeyId(_)));
+    }
+
+    #[test]
+    fn from_str_parses_public_key() {
+        let auth: Authentication = alice_pk().to_string().parse().unwrap();
+        assert!(matches!(auth, Authentication::PublicKey(_)));
+    }
+
+    #[test]
+    fn from_str_rejects_unknown_prefix() {
+        let result: Result<Authentication, _> = "xxxABC".parse();
+        assert!(result.is_err());
     }
 }
