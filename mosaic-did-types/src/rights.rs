@@ -5,7 +5,7 @@
 //! ID is committed on-chain. The full document stays private — carried by
 //! presenters in Verifiable Presentations.
 
-use alloc::{string::String, vec::Vec};
+use alloc::{format, string::String, string::ToString, vec::Vec};
 
 use crate::did::ContentId;
 
@@ -37,6 +37,27 @@ pub struct RightsDocument {
     pub previous_commitment: Option<ContentId>,
     /// Key-reference-to-rights mappings.
     pub rights: Vec<RightEntry>,
+}
+
+impl RightsDocument {
+    /// Compute the `cm`-prefixed content ID for this rights document.
+    ///
+    /// Uses BLAKE3-256 of the canonical JSON representation, matching the
+    /// commitment stored on-chain in `CommitmentVersion.commitment`.
+    pub fn compute_hash(&self) -> Result<String, String> {
+        let json = serde_json::to_value(self).map_err(|e| e.to_string())?;
+        let canonical = json_digest::canonical_json(&json).map_err(|e| e.to_string())?;
+        let hash_bytes = blake3::hash(canonical.as_bytes());
+        let encoded = bs58::encode(hash_bytes.as_bytes()).into_string();
+        Ok(format!("cm{encoded}"))
+    }
+
+    /// Check whether this document grants `right` to `holder_key_ref`.
+    pub fn grants_right(&self, holder_key_ref: &str, right: &str) -> bool {
+        self.rights
+            .iter()
+            .any(|e| e.key_ref == holder_key_ref && e.rights.iter().any(|r| r == right))
+    }
 }
 
 #[cfg(test)]
