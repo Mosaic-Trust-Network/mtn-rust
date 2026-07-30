@@ -41,6 +41,10 @@ pub use weights::WeightInfo;
 pub mod pallet {
     use super::*;
     use frame_support::pallet_prelude::*;
+    use frame_support::traits::tokens::{
+        Fortitude, Precision, Restriction, fungible::Inspect as FungibleInspect,
+        fungible::hold::Mutate as HoldMutate,
+    };
     use frame_system::pallet_prelude::*;
     use sp_std::vec::Vec;
 
@@ -55,12 +59,18 @@ pub mod pallet {
 
     /// A pending governed operation awaiting its delay window.
     #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]
-    pub struct PendingGovernedOp<AccountId> {
+    pub struct PendingGovernedOp<AccountId, Balance> {
         pub operation: GovernedOperation,
         pub announced_at_height: u32,
         pub deposit_account: AccountId,
-        pub deposit_amount: u128,
+        pub deposit_amount: Balance,
     }
+
+    /// Convenience alias for the Balance type used by this pallet's Currency.
+    #[allow(type_alias_bounds)]
+    pub type BalanceOf<T: Config> = <<T as Config>::Currency as FungibleInspect<
+        <T as frame_system::Config>::AccountId,
+    >>::Balance;
 
     /// Number of blocks before a newly granted Update/Delegate right becomes
     /// exercisable. Gives the controller time to detect and revoke rights
@@ -75,12 +85,32 @@ pub mod pallet {
 
     pub const GOVERNED_OP_EXPIRY_BLOCKS: u32 = 400;
 
+    /// Reasons for holding (locking) funds in this pallet.
+    #[pallet::composite_enum]
+    pub enum HoldReason {
+        /// Deposit held while a governed operation awaits its delay window.
+        GovernedOpDeposit,
+    }
+
     #[pallet::config]
     pub trait Config: polkadot_sdk::frame_system::Config {
         #[pallet::constant]
         type MaxOperationsPerTx: Get<u32>;
 
         type WeightInfo: WeightInfo;
+
+        /// Aggregated `HoldReason` from the runtime's `construct_runtime!`.
+        type RuntimeHoldReason: From<HoldReason>;
+
+        /// Currency type supporting holds for governed-operation deposits.
+        type Currency: HoldMutate<Self::AccountId, Reason = Self::RuntimeHoldReason>;
+
+        /// Amount of the native currency locked as a deposit when announcing a
+        /// governed operation. On successful execution the deposit is released back
+        /// to the announcer. On cancellation the deposit is transferred to the
+        /// canceler as an anti-griefing bounty.
+        #[pallet::constant]
+        type GovernedOpDeposit: Get<<Self::Currency as FungibleInspect<Self::AccountId>>::Balance>;
     }
 
     #[pallet::pallet]
@@ -99,8 +129,13 @@ pub mod pallet {
 
     /// Pending governed operations, keyed by DID.
     #[pallet::storage]
-    pub type PendingGovernedOps<T: Config> =
-        StorageMap<_, Blake2_128Concat, Did, PendingGovernedOp<T::AccountId>, OptionQuery>;
+    pub type PendingGovernedOps<T: Config> = StorageMap<
+        _,
+        Blake2_128Concat,
+        Did,
+        PendingGovernedOp<T::AccountId, BalanceOf<T>>,
+        OptionQuery,
+    >;
 
     // ========== EVENTS ==========
 
@@ -161,7 +196,7 @@ pub mod pallet {
             did: Did,
             operation: GovernedOperation,
             deposit_account: T::AccountId,
-            deposit: u128,
+            deposit: BalanceOf<T>,
             previous_version_id: Option<(u32, u32)>,
         },
 
@@ -202,6 +237,8 @@ pub mod pallet {
         GovernedOpExpired,
         RightNotYetMatured,
         CannotModifyOwnKey,
+        /// The deposit for a governed operation could not be reserved or transferred.
+        DepositLockFailed,
     }
 
     // ========== EXTRINSICS ==========
@@ -543,15 +580,16 @@ pub mod pallet {
                         },
                     )?;
 
-                    // Build the pending governed operation record.
-                    // deposit_account stores who funded the announcement.
-                    // deposit_amount is currently 0; a future Fungible integration
-                    // will lock the actual deposit from the caller's balance
+                    // Hold the deposit from the submitter's balance.
+                    let deposit = T::GovernedOpDeposit::get();
+                    T::Currency::hold(&HoldReason::GovernedOpDeposit.into(), submitter, deposit)
+                        .map_err(|_| Error::<T>::DepositLockFailed)?;
+
                     let pending = PendingGovernedOp {
                         operation: operation.clone(),
                         announced_at_height: height_u32,
                         deposit_account: submitter.clone(),
-                        deposit_amount: 0u128,
+                        deposit_amount: deposit,
                     };
                     PendingGovernedOps::<T>::insert(&did, pending);
 
@@ -559,7 +597,7 @@ pub mod pallet {
                         did,
                         operation: operation.clone(),
                         deposit_account: submitter.clone(),
-                        deposit: 0u128,
+                        deposit,
                         previous_version_id,
                     });
                 }
@@ -578,16 +616,38 @@ pub mod pallet {
                             Ok(Some(prev))
                         },
                     )?;
-                    PendingGovernedOps::<T>::remove(&did);
+
+                    let pending = PendingGovernedOps::<T>::take(&did)
+                        .ok_or(Error::<T>::NoPendingGovernedOp)?;
+
+                    // Transfer the held deposit to the canceler as an anti-griefing bounty.
+                    T::Currency::transfer_on_hold(
+                        &HoldReason::GovernedOpDeposit.into(),
+                        &pending.deposit_account,
+                        submitter,
+                        pending.deposit_amount,
+                        Precision::Exact,
+                        Restriction::Free,
+                        Fortitude::Force,
+                    )
+                    .map_err(|_| Error::<T>::DepositLockFailed)?;
 
                     Self::deposit_event(Event::GovernedOpCancelled { did, previous_version_id });
                 }
 
                 DidOperation::ExecuteGoverned { did: _ } => {
-                    let pending_op = PendingGovernedOps::<T>::get(&did)
+                    let pending_op = PendingGovernedOps::<T>::take(&did)
                         .ok_or(Error::<T>::NoPendingGovernedOp)?;
                     let op = pending_op.operation.clone();
-                    PendingGovernedOps::<T>::remove(&did);
+
+                    // Release the deposit back to the announcer.
+                    T::Currency::release(
+                        &HoldReason::GovernedOpDeposit.into(),
+                        &pending_op.deposit_account,
+                        pending_op.deposit_amount,
+                        Precision::Exact,
+                    )
+                    .map_err(|_| Error::<T>::DepositLockFailed)?;
 
                     let previous_version_id = DidStates::<T>::try_mutate(
                         &did,

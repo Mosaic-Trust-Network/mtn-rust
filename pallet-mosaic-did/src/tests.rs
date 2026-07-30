@@ -934,6 +934,29 @@ mod unit_tests {
         }
 
         #[test]
+        fn execute_commitment_reset_rejects_sequence_gap() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                // Establish commitment sequence 1.
+                rt.submit(&update_commitment(&rt.did, cid("v1"), 1));
+
+                rt.at_block(2);
+                // Announce CommitmentReset with sequence 5 — gap from 1 → 5 (missing 2,3,4).
+                rt.submit(&announce_commitment_reset(&rt.did, cid("reason"), cid("v2"), 5));
+
+                rt.at_block(202); // delay = 200
+                // Execute should fail due to gapless sequence violation.
+                rt.submit_fails(
+                    &execute_governed(&rt.did),
+                    crate::Error::<Test>::InvalidCommitmentSequence,
+                );
+
+                // State should be unchanged.
+                assert_eq!(rt.state().commitment, Some((1, cid("v1"))));
+            });
+        }
+
+        #[test]
         fn execute_commitment_reset_updates_state() {
             new_test_ext().execute_with(|| {
                 let mut rt = TestDriver::new();
