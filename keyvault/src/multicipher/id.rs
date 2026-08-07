@@ -66,7 +66,7 @@ impl MKeyId {
 
 #[cfg(feature = "serde")]
 impl Serialize for MKeyId {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -88,7 +88,7 @@ fn deser(bytes: Vec<u8>) -> Result<MKeyId> {
 
 #[cfg(feature = "serde")]
 impl<'de> Deserialize<'de> for MKeyId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
