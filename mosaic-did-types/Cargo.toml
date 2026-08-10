@@ -43,5 +43,5 @@ std = [
 	"scale-info?/std",
 	"serde?/std",
 ]
-serde = [ "bounded-collections/serde", "dep:serde" ]
+serde = [ "bounded-collections/serde", "dep:serde", "iop-keyvault/serde" ]
 substrate = [ "json-digest/substrate", "parity-scale-codec", "scale-info" ]

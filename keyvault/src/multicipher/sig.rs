@@ -66,7 +66,7 @@ impl MSignature {
 
 #[cfg(feature = "serde")]
 impl serde::Serialize for MSignature {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -82,7 +82,7 @@ fn deser(erased: ErasedBytes) -> Result<MSignature> {
 
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for MSignature {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {

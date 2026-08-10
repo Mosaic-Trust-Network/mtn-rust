@@ -545,4 +545,50 @@ mod tests {
         let doc = state.to_did_document_at(100);
         assert!(doc.deactivated);
     }
+
+    /// Golden DID document vector for the TypeScript port in authority-poc
+    /// (`services/blockchain-provider`, did-operations.test.ts pins this exact
+    /// output as a conformance test). Regenerate with:
+    ///
+    /// ```sh
+    /// cargo test -p mosaic-did-types --features serde conformance_document_vector -- --nocapture
+    /// ```
+    ///
+    /// When the expected JSON changes, update the pinned vector on the TS
+    /// side in the same change.
+    #[cfg(feature = "serde")]
+    #[test]
+    fn conformance_document_vector() {
+        // RFC 8032 test vector 1 public key.
+        let pk_hex = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+        let pk_bytes = hex::decode(pk_hex).unwrap();
+        let did = Did::from_public_key(&pk_bytes).unwrap();
+
+        let mut state = DidState::new(did.clone());
+        state
+            .keys
+            .try_push(VerificationMethod {
+                key_ref: "key-1".parse().unwrap(),
+                key_type: KeyType::Ed25519,
+                controller: did,
+                public_key: pk_bytes.try_into().unwrap(),
+                purposes: alloc::vec![
+                    KeyPurpose::Authentication,
+                    KeyPurpose::AssertionMethod,
+                    KeyPurpose::CapabilityDelegation,
+                ]
+                .try_into()
+                .unwrap(),
+                added_at_height: 1,
+                expires_at_height: None,
+                revoked_at_height: None,
+            })
+            .unwrap();
+
+        let doc = state.to_did_document_at(10);
+        println!(
+            "CONFORMANCE_DOCUMENT_JSON={}",
+            serde_json::to_string(&doc).unwrap()
+        );
+    }
 }
