@@ -14,6 +14,8 @@
 
 use core::fmt;
 
+use alloc::string::ToString;
+
 use iop_keyvault::PublicKey;
 use iop_keyvault::multicipher::{MKeyId, MPublicKey};
 
@@ -32,15 +34,15 @@ pub enum Authentication {
 impl Authentication {
     /// Construct a `PublicKey` variant from a [`KeyType`] and raw public key bytes.
     ///
-    /// Maps `KeyType` to the correct keyvault cipher suite via [`MultiPublicKey`].
+    /// Maps `KeyType` to the correct keyvault cipher suite via [`public_key_from_key_type`].
     /// Returns `None` for unsupported key types or invalid bytes.
     ///
-    /// [`MultiPublicKey`]: crate::signature::MultiPublicKey
+    /// [`public_key_from_key_type`]: crate::signature::public_key_from_key_type
     pub fn from_key_type_and_bytes(
         key_type: crate::operation::KeyType, bytes: &[u8],
     ) -> Option<Self> {
-        let pk = crate::signature::MultiPublicKey::from_key_type_and_bytes(key_type, bytes)?;
-        Some(Authentication::PublicKey(pk.0))
+        let pk = crate::signature::public_key_from_key_type(key_type, bytes)?;
+        Some(Authentication::PublicKey(pk))
     }
 
     /// Resolve the key ID, deriving it from the public key if necessary.
@@ -64,13 +66,11 @@ impl Authentication {
         }
     }
 
-    /// Wrap the public key as a [`MultiPublicKey`] for verification.
+    /// Extract the public key for verification.
     ///
     /// Returns `None` if this is the `KeyId` variant.
-    ///
-    /// [`MultiPublicKey`]: crate::signature::MultiPublicKey
-    pub fn to_multi_public_key(&self) -> Option<crate::signature::MultiPublicKey> {
-        self.public_key().map(|pk| crate::signature::MultiPublicKey(pk.clone()))
+    pub fn to_multi_public_key(&self) -> Option<MPublicKey> {
+        self.public_key().cloned()
     }
 }
 
@@ -106,6 +106,24 @@ impl From<MKeyId> for Authentication {
 impl From<MPublicKey> for Authentication {
     fn from(pk: MPublicKey) -> Self {
         Authentication::PublicKey(pk)
+    }
+}
+
+// ========== String parsing ==========
+
+impl core::str::FromStr for Authentication {
+    type Err = alloc::string::String;
+
+    fn from_str(s: &str) -> Result<Self, alloc::string::String> {
+        if s.starts_with(MPublicKey::PREFIX) {
+            let pk: MPublicKey = s.parse().map_err(|e| alloc::format!("{e}"))?;
+            Ok(Authentication::PublicKey(pk))
+        } else if s.starts_with(MKeyId::PREFIX) {
+            let kid: MKeyId = s.parse().map_err(|e| alloc::format!("{e}"))?;
+            Ok(Authentication::KeyId(kid))
+        } else {
+            Err("Authentication string must start with 'p' (PublicKey) or 'i' (KeyId)".to_string())
+        }
     }
 }
 
@@ -200,10 +218,9 @@ mod scale_impls {
 
 // ========== Serde ==========
 
-#[cfg(feature = "serde")]
 mod serde_impls {
     use super::*;
-    use alloc::string::String;
+    use alloc::string::ToString;
 
     // Serialize as a simple string (matching Morpheus `serde_str` pattern).
     // KeyId produces "ioz..." / "iez...", PublicKey produces "poz..." / "pez...".
@@ -215,19 +232,8 @@ mod serde_impls {
 
     impl<'de> serde::Deserialize<'de> for Authentication {
         fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-            let s = String::deserialize(deserializer)?;
-            // PublicKey strings start with 'p', KeyId strings start with 'i'
-            if s.starts_with(MPublicKey::PREFIX) {
-                let pk: MPublicKey = s.parse().map_err(serde::de::Error::custom)?;
-                Ok(Authentication::PublicKey(pk))
-            } else if s.starts_with(MKeyId::PREFIX) {
-                let kid: MKeyId = s.parse().map_err(serde::de::Error::custom)?;
-                Ok(Authentication::KeyId(kid))
-            } else {
-                Err(serde::de::Error::custom(
-                    "Authentication string must start with 'p' (PublicKey) or 'i' (KeyId)",
-                ))
-            }
+            let s = alloc::string::String::deserialize(deserializer)?;
+            s.parse().map_err(serde::de::Error::custom)
         }
     }
 }
@@ -309,7 +315,6 @@ mod tests {
         assert!(kid_auth.public_key().is_none());
     }
 
-    #[cfg(feature = "serde")]
     #[test]
     fn serde_roundtrip_public_key() {
         let auth = Authentication::PublicKey(alice_pk());
@@ -319,7 +324,6 @@ mod tests {
         assert_eq!(auth, parsed);
     }
 
-    #[cfg(feature = "serde")]
     #[test]
     fn serde_roundtrip_key_id() {
         let auth = Authentication::KeyId(alice_kid());
@@ -327,5 +331,23 @@ mod tests {
         assert!(json.contains("ioz"));
         let parsed: Authentication = serde_json::from_str(&json).unwrap();
         assert_eq!(auth, parsed);
+    }
+
+    #[test]
+    fn from_str_parses_key_id() {
+        let auth: Authentication = alice_kid().to_string().parse().unwrap();
+        assert!(matches!(auth, Authentication::KeyId(_)));
+    }
+
+    #[test]
+    fn from_str_parses_public_key() {
+        let auth: Authentication = alice_pk().to_string().parse().unwrap();
+        assert!(matches!(auth, Authentication::PublicKey(_)));
+    }
+
+    #[test]
+    fn from_str_rejects_unknown_prefix() {
+        let result: Result<Authentication, _> = "xxxABC".parse();
+        assert!(result.is_err());
     }
 }

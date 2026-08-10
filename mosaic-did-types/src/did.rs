@@ -88,7 +88,6 @@ mod scale_impls {
 
 // ========== Serde ==========
 
-#[cfg(feature = "serde")]
 mod serde_impls {
     use super::*;
 
@@ -202,7 +201,7 @@ impl fmt::Display for DidParseError {
 
 /// Key identifier within a DID document.
 ///
-/// References a specific verification method, e.g. `"key-1"`, `"key-recovery"`.
+/// References a specific verification method, e.g. `"ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH"`.
 /// Stored as bounded bytes with a maximum length of 64.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(
@@ -215,7 +214,33 @@ impl fmt::Display for DidParseError {
         scale_info::TypeInfo
     )
 )]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(serde::Serialize, serde::Deserialize)]
+/// A key reference (document-fragment identifier) within a DID document.
+///
+/// # Convention
+///
+/// `KeyRef` SHOULD be the **string representation of an `MKeyId`** (multicipher
+/// key ID). Multicipher key IDs use the format `i<suite>z<base58btc-bytes>`:
+///
+/// | Position | Meaning | Examples |
+/// |---|---|---|
+/// | `i` | key-ID prefix (distinguishes from `p` public key and `s` signature) | always `i` |
+/// | `<suite>` | cipher suite | `e` = Ed25519, `o` = Ed25519Blake3, `s` = secp256k1 |
+/// | `z` | multibase base58btc prefix | always `z` |
+/// | `<bytes>` | inner key-ID bytes in base58btc | 32-byte blake3 hash for `o`, 20-byte ripemd160 for `s` |
+///
+/// The `Authentication` type carried by `DidOperation::AddKey` wraps the
+/// `MKeyId`, so callers derive the `KeyRef` from that. The pallet extracts
+/// the `MKeyId` from the `PublicKey` variant (currently the only supported
+/// variant; `keyvault-plan.md` describes future `KeyId`-variant registration
+/// where the public key is not revealed on-chain immediately).
+///
+/// `KeyRef` does NOT enforce the MKeyId convention at the type level — it is
+/// a bounded byte vector (`BoundedVec<u8, 64>`) that accepts any bytes. This
+/// flexibility is intentional:
+/// - It lets the indexer reconstruct `KeyRef` values from SCALE-encoded events
+///   without depending on `iop_keyvault`.
+/// - It keeps `mosaic-did-types` independent of specific cipher-suite formats.
 pub struct KeyRef(BoundedVec<u8, ConstU32<MAX_KEY_REF_LEN>>);
 
 impl KeyRef {
@@ -444,14 +469,12 @@ impl fmt::Display for ContentIdParseError {
     }
 }
 
-#[cfg(feature = "serde")]
 impl serde::Serialize for ContentId {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.to_string())
     }
 }
 
-#[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for ContentId {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;

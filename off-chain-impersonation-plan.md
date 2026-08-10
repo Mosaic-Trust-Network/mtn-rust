@@ -274,13 +274,13 @@ canonicalises to a `json_digest::JsonDigest`:
 
 ```jsonc
 {
-  "$schema": "https://mosaic.network/ns/did-rights/v1",
+  "$schema": "https://mosaic-trust.net/ns/did-rights/v1",
   "did": "did:mosaic:iozABC...",
   "sequence": 3,
   "previousCommitment": "cmXXXX...",   // content-ID of sequence-2 document
   "rights": [
-    { "keyRef": "key-impersonate-1", "rights": ["impersonate"] },
-    { "keyRef": "key-issuer-1",  "rights": ["issue", "revoke"] }
+    { "keyRef": "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH", "rights": ["impersonate"] },
+    { "keyRef": "iozXyZ9AbC3DfG7HjK2MnP5QrSt8UvW1Yz4BcE6FgH9Jk",  "rights": ["issue", "revoke"] }
   ]
 }
 ```
@@ -322,13 +322,13 @@ impersonation key holder receives:
 
 ```json
 {
-  "$schema": "https://mosaic.network/ns/did-rights/v1",
+  "$schema": "https://mosaic-trust.net/ns/did-rights/v1",
   "did": "did:mosaic:iozABC...",
   "sequence": 3,
   "previousCommitment": "cmAAAA...",
   "rights": [
     "cmBBBB...",
-    { "keyRef": "key-impersonate-1", "rights": ["impersonate"] },
+    { "keyRef": "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH", "rights": ["impersonate"] },
     "cmCCCC..."
   ]
 }
@@ -992,7 +992,7 @@ intentionally publishes the rights document publicly.)
   "@context": [
     "https://www.w3.org/ns/did/v1",
     "https://w3id.org/security/suites/ed25519-2020/v1",
-    "https://mosaic.network/ns/did/v1"
+    "https://mosaic-trust.net/ns/did/v1"
   ],
   "id": "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb",
 
@@ -1039,7 +1039,7 @@ intentionally publishes the rights document publicly.)
 }
 ```
 
-**Custom mosaic extensions** (registered under `https://mosaic.network/ns/did/v1`):
+**Custom mosaic extensions** (registered under `https://mosaic-trust.net/ns/did/v1`):
 
 | Property | W3C category | Purpose |
 |----------|-------------|---------|

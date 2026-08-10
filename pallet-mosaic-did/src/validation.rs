@@ -17,11 +17,14 @@ use parity_scale_codec::Encode;
 use scale_info::prelude::format;
 use sp_std::vec::Vec;
 
+use iop_keyvault::PublicKey;
+use iop_keyvault::multicipher::MPublicKey;
 use mosaic_did_types::{
-    Did, DidOperation, DidState, KeyType, MultiPublicKey, Right, SignedDidOperation,
+    Did, DidOperation, DidState, GovernedOperation, KeyType, Right, SignedDidOperation,
+    public_key_raw_bytes, public_key_to_key_type,
 };
 
-use crate::pallet::{Config, DidStates, Error};
+use crate::pallet::{Config, DidStates, Error, PendingGovernedOps};
 
 /// Validate a signed DID operation before applying it.
 ///
@@ -39,8 +42,8 @@ pub fn validate_did_operation<T: Config>(
         DidOperation::AddKey { did, auth, .. } => {
             // AddKey requires the PublicKey variant — the chain needs actual key bytes.
             let mpk = auth.to_multi_public_key().ok_or(Error::<T>::InvalidPublicKey)?;
-            let key_type = mpk.key_type().ok_or(Error::<T>::InvalidPublicKey)?;
-            let raw_bytes = mpk.raw_bytes();
+            let key_type = public_key_to_key_type(&mpk).ok_or(Error::<T>::InvalidPublicKey)?;
+            let raw_bytes = public_key_raw_bytes(&mpk);
 
             // Derive the KeyRef from the Authentication's key ID string
             let key_ref = mosaic_did_types::KeyRef::new(format!("{}", auth.key_id()).into_bytes())
@@ -75,7 +78,7 @@ pub fn validate_did_operation<T: Config>(
             }
         }
 
-        DidOperation::RevokeKey { .. } => {
+        DidOperation::RevokeKey { key_ref, .. } => {
             let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
@@ -83,10 +86,11 @@ pub fn validate_did_operation<T: Config>(
                 state.has_right_at(&signed_op.signer_key_ref, Right::Update, height_u32),
                 Error::<T>::InsufficientRight
             );
+            ensure!(signed_op.signer_key_ref != *key_ref, Error::<T>::CannotModifyOwnKey);
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
         }
 
-        DidOperation::AddRight { .. } => {
+        DidOperation::AddRight { key_ref, .. } => {
             let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
@@ -94,10 +98,11 @@ pub fn validate_did_operation<T: Config>(
                 state.has_right_at(&signed_op.signer_key_ref, Right::Delegate, height_u32),
                 Error::<T>::InsufficientRight
             );
+            ensure!(signed_op.signer_key_ref != *key_ref, Error::<T>::CannotModifyOwnKey);
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
         }
 
-        DidOperation::RevokeRight { .. } => {
+        DidOperation::RevokeRight { key_ref, .. } => {
             let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
@@ -105,6 +110,7 @@ pub fn validate_did_operation<T: Config>(
                 state.has_right_at(&signed_op.signer_key_ref, Right::Delegate, height_u32),
                 Error::<T>::InsufficientRight
             );
+            ensure!(signed_op.signer_key_ref != *key_ref, Error::<T>::CannotModifyOwnKey);
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
         }
 
@@ -117,6 +123,81 @@ pub fn validate_did_operation<T: Config>(
                 Error::<T>::InsufficientRight
             );
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
+        }
+
+        DidOperation::UpdateCommitment { did: _, commitment: _, sequence } => {
+            let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
+            ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
+            validate_nonce::<T>(state, signed_op)?;
+            ensure!(
+                state.has_right_at(&signed_op.signer_key_ref, Right::Update, height_u32),
+                Error::<T>::InsufficientRight
+            );
+            validate_signature_from_state::<T>(signed_op, state, height_u32)?;
+
+            // Sequence must equal stored_sequence + 1 (gapless).
+            let stored_sequence = state.commitment.map(|(seq, _)| seq).unwrap_or(0);
+            ensure!(*sequence == stored_sequence + 1, Error::<T>::InvalidCommitmentSequence);
+        }
+
+        DidOperation::AnnounceGoverned { did: _, operation: _ } => {
+            let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
+            ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
+            validate_nonce::<T>(state, signed_op)?;
+            ensure!(
+                state.has_right_at(&signed_op.signer_key_ref, Right::Update, height_u32),
+                Error::<T>::InsufficientRight
+            );
+            validate_signature_from_state::<T>(signed_op, state, height_u32)?;
+
+            // Only one pending governed operation per DID
+            ensure!(
+                PendingGovernedOps::<T>::get(did).is_none(),
+                Error::<T>::PendingGovernedOpExists
+            );
+        }
+
+        DidOperation::CancelGoverned { did: _ } => {
+            let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
+            // Cancel is allowed even on a tombstoned DID (to release a pending op)
+            validate_nonce::<T>(state, signed_op)?;
+            ensure!(
+                state.has_right_at(&signed_op.signer_key_ref, Right::Update, height_u32),
+                Error::<T>::InsufficientRight
+            );
+            validate_signature_from_state::<T>(signed_op, state, height_u32)?;
+
+            // Must have a pending operation to cancel
+            ensure!(PendingGovernedOps::<T>::get(did).is_some(), Error::<T>::NoPendingGovernedOp);
+        }
+
+        DidOperation::ExecuteGoverned { did: _ } => {
+            let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
+            ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
+            validate_nonce::<T>(state, signed_op)?;
+            ensure!(
+                state.has_right_at(&signed_op.signer_key_ref, Right::Update, height_u32),
+                Error::<T>::InsufficientRight
+            );
+            validate_signature_from_state::<T>(signed_op, state, height_u32)?;
+
+            // Must have a pending operation to execute
+            let pending =
+                PendingGovernedOps::<T>::get(did).ok_or(Error::<T>::NoPendingGovernedOp)?;
+
+            // Check delay window elapsed
+            let min_exec_height = pending.announced_at_height + crate::GOVERNED_OP_DELAY_BLOCKS;
+            ensure!(height_u32 >= min_exec_height, Error::<T>::GovernedOpNotYetExecutable);
+
+            // Check not yet expired
+            let max_exec_height = pending.announced_at_height + crate::GOVERNED_OP_EXPIRY_BLOCKS;
+            ensure!(height_u32 <= max_exec_height, Error::<T>::GovernedOpExpired);
+
+            // For CommitmentReset, enforce gapless sequence (same as direct UpdateCommitment).
+            if let GovernedOperation::CommitmentReset { sequence, .. } = &pending.operation {
+                let stored_sequence = state.commitment.map(|(seq, _)| seq).unwrap_or(0);
+                ensure!(*sequence == stored_sequence + 1, Error::<T>::InvalidCommitmentSequence);
+            }
         }
     }
 
@@ -154,10 +235,11 @@ fn validate_signature_from_state<T: Config>(
     // A revoked or expired key MUST NOT be accepted for signing operations.
     ensure!(signer_key.is_valid_at(height), Error::<T>::SignerKeyInvalid);
 
+    use mosaic_did_types::public_key_from_key_type;
+
     // Construct the typed public key from stored key_type + raw bytes
-    let public_key =
-        MultiPublicKey::from_key_type_and_bytes(signer_key.key_type, &signer_key.public_key)
-            .ok_or(Error::<T>::InvalidPublicKey)?;
+    let public_key = public_key_from_key_type(signer_key.key_type, &signer_key.public_key)
+        .ok_or(Error::<T>::InvalidPublicKey)?;
 
     let message = signable_payload(signed_op);
     ensure!(public_key.verify(&message, &signed_op.signature), Error::<T>::InvalidSignature);
@@ -170,7 +252,7 @@ fn validate_signature_from_state<T: Config>(
 /// registered in the AddKey operation itself. This proves the submitter controls
 /// the private key corresponding to the DID identifier.
 fn validate_signature_for_creation<T: Config>(
-    signed_op: &SignedDidOperation, public_key: &MultiPublicKey,
+    signed_op: &SignedDidOperation, public_key: &MPublicKey,
 ) -> Result<(), sp_runtime::DispatchError> {
     let message = signable_payload(signed_op);
     ensure!(public_key.verify(&message, &signed_op.signature), Error::<T>::InvalidSignature);

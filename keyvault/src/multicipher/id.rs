@@ -66,7 +66,7 @@ impl MKeyId {
 
 #[cfg(feature = "serde")]
 impl Serialize for MKeyId {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -88,10 +88,11 @@ fn deser(bytes: Vec<u8>) -> Result<MKeyId> {
 
 #[cfg(feature = "serde")]
 impl<'de> Deserialize<'de> for MKeyId {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
+        use alloc::string::ToString;
         serde_bytes::deserialize(deserializer)
             .and_then(|b| deser(b).map_err(|e| serde::de::Error::custom(e.to_string())))
     }
@@ -149,6 +150,50 @@ impl From<EdKeyId> for MKeyId {
 impl From<SecpKeyId> for MKeyId {
     fn from(src: SecpKeyId) -> Self {
         Self::Secp256k1(src)
+    }
+}
+
+// ========== SCALE codec (Substrate) ==========
+
+#[cfg(feature = "substrate")]
+mod scale_impls {
+    use super::*;
+    use alloc::vec::Vec;
+    use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, EncodeLike};
+    use scale_info::TypeInfo;
+
+    impl EncodeLike for MKeyId {}
+
+    impl Encode for MKeyId {
+        fn encode_to<W: parity_scale_codec::Output + ?Sized>(&self, dest: &mut W) {
+            let bytes = self.to_bytes();
+            Encode::encode_to(&bytes, dest);
+        }
+    }
+
+    impl Decode for MKeyId {
+        fn decode<I: parity_scale_codec::Input>(
+            input: &mut I,
+        ) -> core::result::Result<Self, parity_scale_codec::Error> {
+            let bytes = Vec::<u8>::decode(input)
+                .map_err(|_| parity_scale_codec::Error::from("failed to decode MKeyId bytes"))?;
+            MKeyId::from_bytes(bytes)
+                .map_err(|_| parity_scale_codec::Error::from("invalid multicipher key id"))
+        }
+    }
+
+    impl DecodeWithMemTracking for MKeyId {}
+
+    impl TypeInfo for MKeyId {
+        type Identity = Self;
+        fn type_info() -> scale_info::Type {
+            scale_info::Type::builder()
+                .path(scale_info::Path::new("MKeyId", "iop_keyvault::multicipher"))
+                .composite(
+                    scale_info::build::Fields::unnamed()
+                        .field(|f| f.ty::<Vec<u8>>().type_name("MKeyId")),
+                )
+        }
     }
 }
 
@@ -325,6 +370,32 @@ mod test {
             let id_tostr = id_deser.to_string();
             assert_eq!(id, id_deser);
             assert_eq!(id_str, id_tostr);
+        }
+    }
+
+    #[cfg(feature = "substrate")]
+    mod scale_roundtrip {
+        use crate::multicipher::MKeyId;
+        use parity_scale_codec::{Decode, Encode};
+
+        #[test]
+        fn ed25519_key_id_scale_roundtrip() {
+            let id_str = "iez21JXEtMzXjbCK6BAYFU9ewX";
+            let id = id_str.parse::<MKeyId>().unwrap();
+            let encoded = id.encode();
+            let decoded = MKeyId::decode(&mut &encoded[..]).unwrap();
+            assert_eq!(id, decoded);
+            assert_eq!(decoded.to_string(), id_str);
+        }
+
+        #[test]
+        fn secp256k1_key_id_scale_roundtrip() {
+            let id_str = "isz7un9h2Ddua9rfHefJMKiPLxSy2pX";
+            let id = id_str.parse::<MKeyId>().unwrap();
+            let encoded = id.encode();
+            let decoded = MKeyId::decode(&mut &encoded[..]).unwrap();
+            assert_eq!(id, decoded);
+            assert_eq!(decoded.to_string(), id_str);
         }
     }
 }

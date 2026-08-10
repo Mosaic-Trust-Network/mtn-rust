@@ -25,7 +25,7 @@ impl SecpPublicKey {
     ///
     /// [`from_bytes`]: #method.from_bytes
     pub fn to_bytes(&self) -> Vec<u8> {
-        self.0.to_encoded_point(true).as_bytes().to_vec()
+        self.0.to_sec1_point(true).as_bytes().to_vec()
     }
 
     /// Creates a public key from a byte slice possibly returned by the [`to_bytes`] method.
@@ -47,7 +47,7 @@ impl SecpPublicKey {
     ///
     /// [`SecpKeyId::bitcoin_address`]: ../struct.SecpKeyId.html#method.bitcoin_address
     pub fn uncompressed(&self) -> [u8; PUBLIC_KEY_UNCOMPRESSED_SIZE] {
-        let encoded = self.0.to_encoded_point(false);
+        let encoded = self.0.to_sec1_point(false);
         let mut bytes = [0u8; PUBLIC_KEY_UNCOMPRESSED_SIZE];
         bytes.copy_from_slice(encoded.as_bytes());
         bytes

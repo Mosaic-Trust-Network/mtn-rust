@@ -49,13 +49,32 @@ wildcards = "deny"
 allow-wildcard-paths = true
 highlight = "all"
 skip = [
-    #duplicates
+    # polkadot-sdk still pins old RustCrypto stack
+    { name = "base16ct" },
+    { name = "blake2" },
+    { name = "const-oid" },
+    { name = "crypto-bigint" },
+    { name = "crypto-common" },
+    { name = "curve25519-dalek" },
+    { name = "der" },
+    { name = "ecdsa" },
+    { name = "ed25519" },
+    { name = "ed25519-dalek" },
+    { name = "elliptic-curve" },
+    { name = "ff" },
+    { name = "group" },
+    { name = "hmac" },
+    { name = "k256" },
+    { name = "rfc6979" },
+    { name = "sec1" },
+    { name = "signature" },
+    { name = "spki" },
+    # pre-existing duplicates
     { name = "bitflags" },
     { name = "block-buffer" },
     { name = "cpufeatures" },
     { name = "digest" },
     { name = "fiat-crypto" },
-    { name = "foldhash" },
     { name = "getrandom" },
     { name = "hashbrown" },
     { name = "itertools" },
@@ -68,8 +87,6 @@ skip = [
     { name = "thiserror-impl" },
     { name = "toml_edit" },
     { name = "toml_datetime" },
-    { name = "winnow" },
-    { name = "wit-bindgen" },
 ]
 skip-tree = [
     # duplicate mess

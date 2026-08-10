@@ -3,7 +3,7 @@
 //! Unified entry point for the IOP Stack crates. Each sub-module re-exports
 //! one workspace crate so downstream code only needs a single dependency.
 //!
-//! ```ignore
+//! ```no_run
 //! use iop_sdk::vault::Vault;
 //! use iop_sdk::did::Did;
 //! ```

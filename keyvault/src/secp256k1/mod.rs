@@ -20,7 +20,7 @@ use k256::{
         Signature as KSignature, SigningKey, VerifyingKey,
         signature::hazmat::{PrehashSigner, PrehashVerifier},
     },
-    elliptic_curve::{PrimeField, sec1::ToEncodedPoint},
+    elliptic_curve::{PrimeField, sec1::ToSec1Point},
 };
 use ripemd::Ripemd160;
 use sha2::{Digest, Sha256};
@@ -29,8 +29,8 @@ fn scalar_from_bytes(bytes: &[u8]) -> Result<Scalar> {
     if bytes.len() != PRIVATE_KEY_SIZE {
         return Err(KeyvaultError::ScalarLength { expected: PRIVATE_KEY_SIZE });
     }
-    Option::<Scalar>::from(Scalar::from_repr(FieldBytes::clone_from_slice(bytes)))
-        .ok_or(KeyvaultError::InvalidScalar)
+    let field_bytes = FieldBytes::try_from(bytes).map_err(|_| KeyvaultError::InvalidScalar)?;
+    Option::from(Scalar::from_repr(field_bytes)).ok_or(KeyvaultError::InvalidScalar)
 }
 
 fn hash160<B: AsRef<[u8]>>(input: B) -> [u8; 20] {

@@ -6,7 +6,7 @@
 use parity_scale_codec::{Decode, Encode, MaxEncodedLen};
 use scale_info::TypeInfo;
 
-pub use mosaic_did_types::document::*;
+pub use mosaic_did_types::state::*;
 
 /// Record stored on-chain for a registered BeforeProof.
 #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, MaxEncodedLen, TypeInfo)]

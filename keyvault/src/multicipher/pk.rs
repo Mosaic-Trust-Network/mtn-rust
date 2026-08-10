@@ -125,7 +125,7 @@ impl PublicKey<MultiCipher> for MPublicKey {
 
 #[cfg(feature = "serde")]
 impl serde::Serialize for MPublicKey {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -141,10 +141,11 @@ fn deser(erased: crate::multicipher::ErasedBytes) -> Result<MPublicKey> {
 
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for MPublicKey {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
+        use alloc::string::ToString;
         ErasedBytes::deserialize(deserializer)
             .and_then(|b| deser(b).map_err(|e| serde::de::Error::custom(e.to_string())))
     }
@@ -202,6 +203,51 @@ impl From<EdPublicKey> for MPublicKey {
 impl From<SecpPublicKey> for MPublicKey {
     fn from(src: SecpPublicKey) -> Self {
         Self::Secp256k1(src)
+    }
+}
+
+// ========== SCALE codec (Substrate) ==========
+
+#[cfg(feature = "substrate")]
+mod scale_impls {
+    use super::*;
+    use alloc::vec::Vec;
+    use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, EncodeLike};
+    use scale_info::TypeInfo;
+
+    impl EncodeLike for MPublicKey {}
+
+    impl Encode for MPublicKey {
+        fn encode_to<W: parity_scale_codec::Output + ?Sized>(&self, dest: &mut W) {
+            let bytes = self.to_bytes();
+            Encode::encode_to(&bytes, dest);
+        }
+    }
+
+    impl Decode for MPublicKey {
+        fn decode<I: parity_scale_codec::Input>(
+            input: &mut I,
+        ) -> core::result::Result<Self, parity_scale_codec::Error> {
+            let bytes = Vec::<u8>::decode(input).map_err(|_| {
+                parity_scale_codec::Error::from("failed to decode MPublicKey bytes")
+            })?;
+            MPublicKey::from_bytes(bytes)
+                .map_err(|_| parity_scale_codec::Error::from("invalid multicipher public key"))
+        }
+    }
+
+    impl DecodeWithMemTracking for MPublicKey {}
+
+    impl TypeInfo for MPublicKey {
+        type Identity = Self;
+        fn type_info() -> scale_info::Type {
+            scale_info::Type::builder()
+                .path(scale_info::Path::new("MPublicKey", "iop_keyvault::multicipher"))
+                .composite(
+                    scale_info::build::Fields::unnamed()
+                        .field(|f| f.ty::<Vec<u8>>().type_name("MPublicKey")),
+                )
+        }
     }
 }
 
@@ -342,6 +388,32 @@ mod test {
             let pk_tostr = pk_deser.to_string();
             assert_eq!(pk, pk_deser);
             assert_eq!(pk_str, pk_tostr);
+        }
+    }
+
+    #[cfg(feature = "substrate")]
+    mod scale_roundtrip {
+        use crate::multicipher::MPublicKey;
+        use parity_scale_codec::{Decode, Encode};
+
+        #[test]
+        fn ed25519_public_key_scale_roundtrip() {
+            let pk_str = "pezAgmjPHe5Qs4VakvXHGnd6NsYjaxt4suMUtf39TayrSfb";
+            let pk = pk_str.parse::<MPublicKey>().unwrap();
+            let encoded = pk.encode();
+            let decoded = MPublicKey::decode(&mut &encoded[..]).unwrap();
+            assert_eq!(pk, decoded);
+            assert_eq!(decoded.to_string(), pk_str);
+        }
+
+        #[test]
+        fn secp256k1_public_key_scale_roundtrip() {
+            let pk_str = "pozHyx62wPQGyvXCoihZq1BrbUjBRh2LuNxWiiqMkfAuSZr";
+            let pk = pk_str.parse::<MPublicKey>().unwrap();
+            let encoded = pk.encode();
+            let decoded = MPublicKey::decode(&mut &encoded[..]).unwrap();
+            assert_eq!(pk, decoded);
+            assert_eq!(decoded.to_string(), pk_str);
         }
     }
 }

@@ -11,8 +11,8 @@ use super::*;
 use frame_benchmarking::v2::*;
 use frame_system::RawOrigin;
 use mosaic_did_types::{
-    Authentication, ContentId, Did, DidOperation, KeyPurpose, KeyRef, KeyType, MAX_KEYS_PER_DID,
-    Right, SignedDidOperation, SsiOperation, VerificationMethod,
+    Authentication, ContentId, Did, DidOperation, KeyRef, KeyType, MAX_KEYS_PER_DID, Right,
+    SignedDidOperation, SsiOperation, VerificationMethod, ed25519_blake3_signature,
 };
 use parity_scale_codec::{Encode, alloc::string::ToString};
 use polkadot_sdk::{sp_core::Get, sp_runtime::BoundedVec};
@@ -31,15 +31,13 @@ const ALICE_PK: [u8; 32] = [
 ];
 
 /// Sign a message using Alice's private key.
-fn sign_with_alice(message: &[u8]) -> mosaic_did_types::MultiSignature {
+fn sign_with_alice(message: &[u8]) -> iop_keyvault::multicipher::MSignature {
     use iop_keyvault::PrivateKey;
     use iop_keyvault::ed25519::EdPrivateKey;
 
     let sk = EdPrivateKey::from_bytes(ALICE_SK).expect("valid alice sk");
     let sig = sk.sign(message);
-    mosaic_did_types::MultiSignature::from(iop_keyvault::multicipher::MSignature::Ed25519Blake3(
-        sig,
-    ))
+    MSignature::Ed25519Blake3(sig)
 }
 
 /// Get Alice's DID (derived from her public key).
@@ -58,31 +56,18 @@ fn alice_key_ref() -> KeyRef {
     KeyRef::new(format!("{}", auth.key_id()).into_bytes()).expect("valid key ref")
 }
 
-fn max_purposes<T: Get<u32>>() -> BoundedVec<KeyPurpose, T> {
-    sp_std::vec![
-        KeyPurpose::Authentication,
-        KeyPurpose::AssertionMethod,
-        KeyPurpose::KeyAgreement,
-        KeyPurpose::CapabilityInvocation,
-        KeyPurpose::CapabilityDelegation
-    ]
-    .try_into()
-    .expect("purposes fit")
-}
-
 /// Create a signed AddKey operation for DID creation (first key).
 fn create_add_key_op(nonce: u64) -> SignedDidOperation {
     let did = alice_did();
     let auth = alice_auth();
     let key_ref = alice_key_ref();
 
-    let operation =
-        DidOperation::AddKey { did, auth, purposes: max_purposes(), expires_at_height: None };
+    let operation = DidOperation::AddKey { did, auth, expires_at_height: None };
 
     let signed_op = SignedDidOperation {
         operation,
         signer_key_ref: key_ref,
-        signature: mosaic_did_types::MultiSignature::ed25519([0u8; 64]),
+        signature: ed25519_blake3_signature([0u8; 64]),
         nonce,
     };
 
@@ -99,7 +84,7 @@ fn create_revoke_key_op(did: &Did, key_ref: &KeyRef, nonce: u64) -> SignedDidOpe
     let signed_op = SignedDidOperation {
         operation,
         signer_key_ref: alice_key_ref(),
-        signature: mosaic_did_types::MultiSignature::ed25519([0u8; 64]),
+        signature: ed25519_blake3_signature([0u8; 64]),
         nonce,
     };
 
@@ -123,7 +108,7 @@ fn create_add_right_op(
     let signed_op = SignedDidOperation {
         operation,
         signer_key_ref: alice_key_ref(),
-        signature: mosaic_did_types::MultiSignature::ed25519([0u8; 64]),
+        signature: ed25519_blake3_signature([0u8; 64]),
         nonce,
     };
 
@@ -142,7 +127,7 @@ fn create_revoke_right_op(
     let signed_op = SignedDidOperation {
         operation,
         signer_key_ref: alice_key_ref(),
-        signature: mosaic_did_types::MultiSignature::ed25519([0u8; 64]),
+        signature: ed25519_blake3_signature([0u8; 64]),
         nonce,
     };
 
@@ -159,7 +144,7 @@ fn create_tombstone_op(did: &Did, nonce: u64) -> SignedDidOperation {
     let signed_op = SignedDidOperation {
         operation,
         signer_key_ref: alice_key_ref(),
-        signature: mosaic_did_types::MultiSignature::ed25519([0u8; 64]),
+        signature: ed25519_blake3_signature([0u8; 64]),
         nonce,
     };
 
@@ -179,7 +164,6 @@ fn setup_existing_did<T: Config>() {
         key_type: KeyType::Ed25519,
         controller: did.clone(),
         public_key: ALICE_PK.to_vec().try_into().expect("pk fits"),
-        purposes: max_purposes(),
         added_at_height: 1,
         expires_at_height: None,
         revoked_at_height: None,
@@ -196,7 +180,6 @@ fn setup_existing_did<T: Config>() {
                 key_type: KeyType::Ed25519,
                 controller: did.clone(),
                 public_key: [0u8; 32].to_vec().try_into().expect("pk size is known"),
-                purposes: max_purposes(),
                 added_at_height: i,
                 expires_at_height: None,
                 revoked_at_height: None,
@@ -224,6 +207,7 @@ fn setup_did_with_right<T: Config>() {
                 granted_at_height: 1,
                 expires_at_height: None,
                 revoked_at_height: None,
+                matures_at_height: None,
             })
             .expect("right fits");
     });

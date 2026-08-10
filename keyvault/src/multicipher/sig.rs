@@ -66,7 +66,7 @@ impl MSignature {
 
 #[cfg(feature = "serde")]
 impl serde::Serialize for MSignature {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -82,10 +82,11 @@ fn deser(erased: ErasedBytes) -> Result<MSignature> {
 
 #[cfg(feature = "serde")]
 impl<'de> serde::Deserialize<'de> for MSignature {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
+        use alloc::string::ToString;
         ErasedBytes::deserialize(deserializer)
             .and_then(|b| deser(b).map_err(|e| serde::de::Error::custom(e.to_string())))
     }
@@ -143,6 +144,51 @@ impl From<EdSignature> for MSignature {
 impl From<SecpSignature> for MSignature {
     fn from(src: SecpSignature) -> Self {
         Self::Secp256k1(src)
+    }
+}
+
+// ========== SCALE codec (Substrate) ==========
+
+#[cfg(feature = "substrate")]
+mod scale_impls {
+    use super::*;
+    use alloc::vec::Vec;
+    use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, EncodeLike};
+    use scale_info::TypeInfo;
+
+    impl EncodeLike for MSignature {}
+
+    impl Encode for MSignature {
+        fn encode_to<W: parity_scale_codec::Output + ?Sized>(&self, dest: &mut W) {
+            let bytes = self.to_bytes();
+            Encode::encode_to(&bytes, dest);
+        }
+    }
+
+    impl Decode for MSignature {
+        fn decode<I: parity_scale_codec::Input>(
+            input: &mut I,
+        ) -> core::result::Result<Self, parity_scale_codec::Error> {
+            let bytes = Vec::<u8>::decode(input).map_err(|_| {
+                parity_scale_codec::Error::from("failed to decode MSignature bytes")
+            })?;
+            MSignature::from_bytes(bytes)
+                .map_err(|_| parity_scale_codec::Error::from("invalid multicipher signature"))
+        }
+    }
+
+    impl DecodeWithMemTracking for MSignature {}
+
+    impl TypeInfo for MSignature {
+        type Identity = Self;
+        fn type_info() -> scale_info::Type {
+            scale_info::Type::builder()
+                .path(scale_info::Path::new("MSignature", "iop_keyvault::multicipher"))
+                .composite(
+                    scale_info::build::Fields::unnamed()
+                        .field(|f| f.ty::<Vec<u8>>().type_name("MSignature")),
+                )
+        }
     }
 }
 
@@ -409,6 +455,32 @@ mod test {
             // Cross-suite verification fails (type mismatch)
             assert!(!legacy_pk.verify(msg.as_ref(), &blake3_sig));
             assert!(!blake3_pk.verify(msg.as_ref(), &legacy_sig));
+        }
+    }
+
+    #[cfg(feature = "substrate")]
+    mod scale_roundtrip {
+        use crate::multicipher::MSignature;
+        use parity_scale_codec::{Decode, Encode};
+
+        #[test]
+        fn ed25519_signature_scale_roundtrip() {
+            let sig_str = "sezAhoNep8B9HTRCAYaJFPL1hNgqxfjM72UD4B75s258aF6pPCtDf5trXm7mppZVzT6ynpC3jyH6h3Li7r9Rw4yjeG2";
+            let sig = sig_str.parse::<MSignature>().unwrap();
+            let encoded = sig.encode();
+            let decoded = MSignature::decode(&mut &encoded[..]).unwrap();
+            assert_eq!(sig, decoded);
+            assert_eq!(decoded.to_string(), sig_str);
+        }
+
+        #[test]
+        fn secp256k1_signature_scale_roundtrip() {
+            let sig_str = "ssz8XFYUjuSro2dzq4mkMMCMJkPH2SEEc6CVJ9VCG9AUXVvRP9QHKY78BnSvpb9zyz5yZf8Pzcq82DzZwLC7xSeGNgq";
+            let sig = sig_str.parse::<MSignature>().unwrap();
+            let encoded = sig.encode();
+            let decoded = MSignature::decode(&mut &encoded[..]).unwrap();
+            assert_eq!(sig, decoded);
+            assert_eq!(decoded.to_string(), sig_str);
         }
     }
 }

@@ -3,23 +3,18 @@
 //! All SSI state changes flow through signed operations submitted in atomic batches.
 //! Phase 1 (MVP) implements the 5 core DID operations + BeforeProof.
 
-use bounded_collections::{BoundedVec, ConstU32};
-
 #[cfg(feature = "substrate")]
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
 #[cfg(feature = "substrate")]
 use scale_info::TypeInfo;
-#[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
 use crate::auth::Authentication;
 use crate::did::{ContentId, Did, KeyRef};
-use crate::signature::MultiSignature;
+use iop_keyvault::multicipher::MSignature;
 
 /// Maximum public key size in bytes.
 pub const MAX_PUBLIC_KEY_LEN: u32 = 64;
-/// Maximum number of key purposes per verification method.
-pub const MAX_PURPOSES_PER_KEY: u32 = 5;
 
 /// Rights that can be assigned to keys in a DID Document.
 ///
@@ -30,7 +25,7 @@ pub const MAX_PURPOSES_PER_KEY: u32 = 5;
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub enum Right {
     /// Can modify the DID Document (add/revoke keys, rights).
     Update,
@@ -95,53 +90,36 @@ impl core::str::FromStr for Right {
 }
 
 /// Supported key types for verification methods.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    PartialEq,
+    Eq,
+    strum::EnumIter,
+    strum::Display,
+    strum::AsRefStr,
+    strum::EnumString,
+)]
 #[cfg_attr(
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
+#[strum(ascii_case_insensitive)]
 pub enum KeyType {
     /// Ed25519 -- default, required.
+    #[strum(serialize = "ed25519")]
     Ed25519,
     /// secp256k1 -- Ethereum compatibility.
+    #[strum(serialize = "secp256k1")]
     Secp256k1,
     /// secp256r1 (P-256) -- HSM compatibility (Phase 2).
+    #[strum(serialize = "secp256r1")]
     Secp256r1,
     /// X25519 -- key agreement only (Phase 2).
+    #[strum(serialize = "x25519")]
     X25519,
-}
-
-impl KeyType {
-    /// Stable lower-case wire name for client bindings.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            KeyType::Ed25519 => "ed25519",
-            KeyType::Secp256k1 => "secp256k1",
-            KeyType::Secp256r1 => "secp256r1",
-            KeyType::X25519 => "x25519",
-        }
-    }
-}
-
-impl core::fmt::Display for KeyType {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-impl core::str::FromStr for KeyType {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "ed25519" | "Ed25519" => Ok(KeyType::Ed25519),
-            "secp256k1" | "Secp256k1" => Ok(KeyType::Secp256k1),
-            "secp256r1" | "Secp256r1" => Ok(KeyType::Secp256r1),
-            "x25519" | "X25519" => Ok(KeyType::X25519),
-            _ => Err("invalid Mosaic DID key type"),
-        }
-    }
 }
 
 /// Key purposes per W3C DID Core verification relationships.
@@ -150,7 +128,7 @@ impl core::str::FromStr for KeyType {
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub enum KeyPurpose {
     /// Prove control of DID (login, challenge-response).
     Authentication,
@@ -207,7 +185,7 @@ impl core::str::FromStr for KeyPurpose {
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub enum DidOperation {
     /// Add a new key to the DID document.
     ///
@@ -220,7 +198,6 @@ pub enum DidOperation {
     AddKey {
         did: Did,
         auth: Authentication,
-        purposes: BoundedVec<KeyPurpose, ConstU32<MAX_PURPOSES_PER_KEY>>,
         /// Optional block height at which this key expires.
         expires_at_height: Option<u32>,
     },
@@ -247,6 +224,29 @@ pub enum DidOperation {
     /// - No further operations are accepted
     /// - Historical state remains queryable
     TombstoneDid { did: Did },
+
+    /// Publish a new rights-document commitment.
+    ///
+    /// Requires `Right::Update`. The `sequence` MUST equal `stored_sequence + 1`
+    /// — no gaps. Every sequence number must be anchored on-chain for the
+    /// verifier to have a provable timestamp for that version.
+    UpdateCommitment { did: Did, commitment: ContentId, sequence: u64 },
+
+    /// Announce a governed operation (commitment reset or tombstone).
+    ///
+    /// Locks a deposit and starts a delay window. Only one governed operation
+    /// can be pending per DID at a time.
+    AnnounceGoverned { did: Did, operation: GovernedOperation },
+
+    /// Cancel a pending governed operation.
+    ///
+    /// Releases the deposit to the gas wallet that submitted the cancel.
+    CancelGoverned { did: Did },
+
+    /// Execute a previously announced governed operation.
+    ///
+    /// Only valid after the delay window has elapsed and before expiry.
+    ExecuteGoverned { did: Did },
 }
 
 impl DidOperation {
@@ -258,6 +258,10 @@ impl DidOperation {
             DidOperation::AddRight { did, .. } => did,
             DidOperation::RevokeRight { did, .. } => did,
             DidOperation::TombstoneDid { did } => did,
+            DidOperation::UpdateCommitment { did, .. } => did,
+            DidOperation::AnnounceGoverned { did, .. } => did,
+            DidOperation::CancelGoverned { did } => did,
+            DidOperation::ExecuteGoverned { did } => did,
         }
     }
 
@@ -269,14 +273,42 @@ impl DidOperation {
             DidOperation::AddRight { .. } => Right::Delegate,
             DidOperation::RevokeRight { .. } => Right::Delegate,
             DidOperation::TombstoneDid { .. } => Right::Update,
+            DidOperation::UpdateCommitment { .. } => Right::Update,
+            DidOperation::AnnounceGoverned { .. } => Right::Update,
+            DidOperation::CancelGoverned { .. } => Right::Update,
+            DidOperation::ExecuteGoverned { .. } => Right::Update,
         }
     }
+}
+
+/// A governed operation that requires a delay window before execution.
+///
+/// Destructive state changes (commitment resets, tombstones) follow a shared
+/// Announce → Delay → Execute lifecycle backed by an economic deposit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "substrate",
+    derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
+)]
+#[derive(Serialize, Deserialize)]
+pub enum GovernedOperation {
+    /// Reset the commitment hash chain to a new starting point.
+    CommitmentReset {
+        /// Content ID of a document explaining the reason for the reset.
+        reason: ContentId,
+        /// The new commitment hash.
+        commitment: ContentId,
+        /// The new sequence number (must equal stored_sequence + 1).
+        sequence: u64,
+    },
+    /// Permanently deactivate the DID.
+    Tombstone,
 }
 
 /// A top-level SSI operation: either a DID operation or a BeforeProof timestamp.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "substrate", derive(Encode, Decode, TypeInfo, DecodeWithMemTracking))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 #[allow(clippy::large_enum_variant)] // Not worth Box-ing it in WASM
 pub enum SsiOperation {
     /// A signed DID document operation.
@@ -291,14 +323,14 @@ pub enum SsiOperation {
 /// The nonce provides replay protection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "substrate", derive(Encode, Decode, TypeInfo, DecodeWithMemTracking))]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub struct SignedDidOperation {
     /// The DID operation to execute.
     pub operation: DidOperation,
     /// The key reference of the signer within the target DID document.
     pub signer_key_ref: KeyRef,
     /// Cryptographic signature over the operation.
-    pub signature: MultiSignature,
+    pub signature: MSignature,
     /// Monotonic nonce for replay protection (per-DID, per-key).
     pub nonce: u64,
 }
@@ -309,13 +341,17 @@ pub struct SignedDidOperation {
     feature = "substrate",
     derive(Encode, Decode, MaxEncodedLen, TypeInfo, DecodeWithMemTracking)
 )]
-#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub enum DidOperationType {
     AddKey,
     RevokeKey,
     AddRight,
     RevokeRight,
     TombstoneDid,
+    UpdateCommitment,
+    AnnounceGoverned,
+    CancelGoverned,
+    ExecuteGoverned,
 }
 
 impl From<&DidOperation> for DidOperationType {
@@ -326,6 +362,10 @@ impl From<&DidOperation> for DidOperationType {
             DidOperation::AddRight { .. } => DidOperationType::AddRight,
             DidOperation::RevokeRight { .. } => DidOperationType::RevokeRight,
             DidOperation::TombstoneDid { .. } => DidOperationType::TombstoneDid,
+            DidOperation::UpdateCommitment { .. } => DidOperationType::UpdateCommitment,
+            DidOperation::AnnounceGoverned { .. } => DidOperationType::AnnounceGoverned,
+            DidOperation::CancelGoverned { .. } => DidOperationType::CancelGoverned,
+            DidOperation::ExecuteGoverned { .. } => DidOperationType::ExecuteGoverned,
         }
     }
 }
@@ -349,14 +389,8 @@ mod tests {
     fn operation_did_accessor() {
         let did = Did::alice();
 
-        let op = DidOperation::AddKey {
-            did: did.clone(),
-            auth: test_auth(),
-            purposes: alloc::vec![KeyPurpose::Authentication, KeyPurpose::AssertionMethod]
-                .try_into()
-                .unwrap(),
-            expires_at_height: None,
-        };
+        let op =
+            DidOperation::AddKey { did: did.clone(), auth: test_auth(), expires_at_height: None };
 
         assert_eq!(op.did(), &did);
         assert_eq!(op.required_right(), Right::Update);
@@ -365,15 +399,11 @@ mod tests {
     #[test]
     fn operation_type_conversion() {
         let did = Did::alice();
-        let key_ref: KeyRef = "key-1".parse().unwrap();
+        let auth = test_auth();
+        let key_ref = KeyRef::new(format!("{}", auth.key_id()).into_bytes()).unwrap();
 
         let ops = alloc::vec![
-            DidOperation::AddKey {
-                did: did.clone(),
-                auth: test_auth(),
-                purposes: BoundedVec::default(),
-                expires_at_height: None,
-            },
+            DidOperation::AddKey { did: did.clone(), auth: test_auth(), expires_at_height: None },
             DidOperation::RevokeKey { did: did.clone(), key_ref: key_ref.clone() },
             DidOperation::AddRight {
                 did: did.clone(),
@@ -435,5 +465,65 @@ mod tests {
         assert!("admin".parse::<Right>().is_err());
         assert!("rsa".parse::<KeyType>().is_err());
         assert!("signing".parse::<KeyPurpose>().is_err());
+    }
+
+    #[test]
+    fn update_commitment_operation() {
+        let did = Did::alice();
+        let commitment = ContentId::from_bytes(b"test commitment");
+        let op = DidOperation::UpdateCommitment { did: did.clone(), commitment, sequence: 1 };
+        assert_eq!(op.did(), &did);
+        assert_eq!(op.required_right(), Right::Update);
+    }
+
+    #[test]
+    fn governed_operation_variants() {
+        let did = Did::alice();
+        let commitment = ContentId::from_bytes(b"new commitment");
+        let reason = ContentId::from_bytes(b"reason doc");
+
+        let announce = DidOperation::AnnounceGoverned {
+            did: did.clone(),
+            operation: GovernedOperation::CommitmentReset { reason, commitment, sequence: 1 },
+        };
+        assert_eq!(announce.did(), &did);
+        assert_eq!(announce.required_right(), Right::Update);
+
+        let cancel = DidOperation::CancelGoverned { did: did.clone() };
+        assert_eq!(cancel.did(), &did);
+        assert_eq!(cancel.required_right(), Right::Update);
+
+        let execute = DidOperation::ExecuteGoverned { did: did.clone() };
+        assert_eq!(execute.did(), &did);
+        assert_eq!(execute.required_right(), Right::Update);
+    }
+
+    #[test]
+    fn governed_operation_type_conversion() {
+        let did = Did::alice();
+        let ops = alloc::vec![
+            DidOperation::UpdateCommitment {
+                did: did.clone(),
+                commitment: ContentId::from_bytes(b"c1"),
+                sequence: 1,
+            },
+            DidOperation::AnnounceGoverned {
+                did: did.clone(),
+                operation: GovernedOperation::Tombstone,
+            },
+            DidOperation::CancelGoverned { did: did.clone() },
+            DidOperation::ExecuteGoverned { did },
+        ];
+
+        let types: Vec<DidOperationType> = ops.iter().map(DidOperationType::from).collect();
+        assert_eq!(
+            types,
+            alloc::vec![
+                DidOperationType::UpdateCommitment,
+                DidOperationType::AnnounceGoverned,
+                DidOperationType::CancelGoverned,
+                DidOperationType::ExecuteGoverned,
+            ]
+        );
     }
 }
