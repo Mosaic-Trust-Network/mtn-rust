@@ -1007,4 +1007,113 @@ mod unit_tests {
         let batch = [create_op, before_proof_op];
         assert_eq!(batch.len(), 2);
     }
+
+    /// SPEC-009 (DID signer) reference-vector dump for the TypeScript
+    /// `shared/did-signer` Rust+TS agreement tests. Writes golden DID
+    /// derivation, SCALE signable payloads for every operation variant
+    /// (nonce 0 = creation carve-out, nonce 1 = existing DID), a signed
+    /// example, and intra-batch nonce-allocation vectors to
+    /// `/tmp/spec009-vectors.json`. Run: `./scripts/check.sh test:dump_scale_vectors`.
+    #[test]
+    fn dump_scale_vectors() {
+        use parity_scale_codec::Encode;
+        let hexstr = |b: &[u8]| b.iter().map(|x| format!("{:02x}", x)).collect::<String>();
+
+        let pk = pk_bytes(&ALICE_SK);
+        let did = did_from_sk(&ALICE_SK);
+        let auth = auth_from_sk(&ALICE_SK);
+        let key_ref = key_ref_from_sk(&ALICE_SK);
+        let did_str = did.to_did_string();
+        let key_id = auth.key_id().to_string();
+        let pubkey_armored = auth.to_string();
+
+        // REQ-001 golden vector (defense-in-depth pin in Rust, not just TS).
+        assert_eq!(
+            did_str,
+            "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb"
+        );
+
+        // Mirrors pallet-mosaic-did/src/validation.rs `signable_payload`:
+        // the SCALE-encoded tuple (operation, signer_key_ref, nonce).
+        let payload = |op: &DidOperation, nonce: u64| -> Vec<u8> {
+            (op, &key_ref, &nonce).encode()
+        };
+
+        let addkey = DidOperation::AddKey {
+            did: did.clone(),
+            auth: auth.clone(),
+            expires_at_height: None,
+        };
+        let addkey_expires = DidOperation::AddKey {
+            did: did.clone(),
+            auth: auth.clone(),
+            expires_at_height: Some(1000),
+        };
+        let revokekey = DidOperation::RevokeKey { did: did.clone(), key_ref: key_ref.clone() };
+        let addright = DidOperation::AddRight {
+            did: did.clone(),
+            key_ref: key_ref.clone(),
+            right: Right::Issue,
+            expires_at_height: None,
+        };
+        let revokeright = DidOperation::RevokeRight {
+            did: did.clone(),
+            key_ref: key_ref.clone(),
+            right: Right::Issue,
+        };
+        let tombstone = DidOperation::TombstoneDid { did: did.clone() };
+
+        let op_entry = |name: &str, op: &DidOperation| -> serde_json::Value {
+            serde_json::json!({
+                "name": name,
+                "signable_hex_nonce0": hexstr(&payload(op, 0)),
+                "signable_hex_nonce1": hexstr(&payload(op, 1)),
+            })
+        };
+
+        // Signed example: implicit-creation AddKey at nonce 0, signed by Alice.
+        let creation_payload = payload(&addkey, 0);
+        let signature_armored = {
+            use iop_keyvault::PrivateKey;
+            let ed_sig = iop_keyvault::ed25519::EdPrivateKey::from_bytes(&ALICE_SK)
+                .expect("valid sk")
+                .sign(creation_payload.as_slice());
+            let sig = MSignature::Ed25519Blake3(ed_sig);
+            String::from(&sig)
+        };
+
+        let out = serde_json::json!({
+            "schema": "spec009-vectors/v1",
+            "source": "iop-rs pallet-mosaic-did/src/tests.rs::dump_scale_vectors",
+            "golden": {
+                "sk_hex": hexstr(&ALICE_SK[..]),
+                "pk_hex": hexstr(&pk[..]),
+                "did": did_str,
+                "key_id_armored": key_id,
+                "pubkey_armored": pubkey_armored,
+                "signer_key_ref_utf8": auth.key_id().to_string(),
+            },
+            "operations": [
+                op_entry("addKey", &addkey),
+                op_entry("addKey_expires_1000", &addkey_expires),
+                op_entry("revokeKey", &revokekey),
+                op_entry("addRight_issue", &addright),
+                op_entry("revokeRight_issue", &revokeright),
+                op_entry("tombstoneDid", &tombstone),
+            ],
+            "signed_example": {
+                "operation": "addKey",
+                "nonce": 0u64,
+                "signable_hex": hexstr(&creation_payload),
+                "signature_armored": signature_armored,
+            },
+            "batches": {
+                "creation_0_1": [hexstr(&payload(&addkey, 0)), hexstr(&payload(&addright, 1))],
+                "existing_1_2": [hexstr(&payload(&addright, 1)), hexstr(&payload(&revokekey, 2))],
+            },
+        });
+
+        std::fs::write("/tmp/spec009-vectors.json", serde_json::to_string_pretty(&out).unwrap())
+            .unwrap();
+    }
 }
