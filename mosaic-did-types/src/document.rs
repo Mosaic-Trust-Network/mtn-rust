@@ -126,6 +126,9 @@ pub fn multibase_encode_key(key_bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::did::{Did, KeyRef};
+    use crate::operation::Right;
+    use crate::state::{DidState, RightGrant, VerificationMethod};
 
     #[test]
     fn w3c_key_type_roundtrip_all_variants() {
@@ -155,23 +158,41 @@ mod tests {
         let did = Did::from_public_key(&pk_bytes).unwrap();
 
         let mut state = DidState::new(did.clone());
+        let key_ref: KeyRef = "key-1".parse().unwrap();
         state
             .keys
             .try_push(VerificationMethod {
-                key_ref: "key-1".parse().unwrap(),
+                key_ref: key_ref.clone(),
                 key_type: KeyType::Ed25519,
                 controller: did,
                 public_key: pk_bytes.try_into().unwrap(),
-                purposes: alloc::vec![
-                    KeyPurpose::Authentication,
-                    KeyPurpose::AssertionMethod,
-                    KeyPurpose::CapabilityDelegation,
-                ]
-                .try_into()
-                .unwrap(),
                 added_at_height: 1,
                 expires_at_height: None,
                 revoked_at_height: None,
+            })
+            .unwrap();
+        // Rights produce the W3C relationships in to_did_document_at:
+        // Impersonate -> authentication + assertionMethod, Delegate -> capabilityDelegation.
+        state
+            .rights
+            .try_push(RightGrant {
+                key_ref: key_ref.clone(),
+                right: Right::Impersonate,
+                granted_at_height: 1,
+                expires_at_height: None,
+                revoked_at_height: None,
+                matures_at_height: None,
+            })
+            .unwrap();
+        state
+            .rights
+            .try_push(RightGrant {
+                key_ref,
+                right: Right::Delegate,
+                granted_at_height: 1,
+                expires_at_height: None,
+                revoked_at_height: None,
+                matures_at_height: None,
             })
             .unwrap();
 

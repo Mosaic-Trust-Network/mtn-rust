@@ -229,6 +229,107 @@ impl DidState {
         }
         Ok(())
     }
+
+    /// Render this state as a W3C DID Document evaluated at `height`.
+    ///
+    /// Mirrors `DidHistory::to_did_document_at` (history.rs) but operates
+    /// directly on the materialized `DidState` — keys + rights — matching the
+    /// TypeScript port `buildDidDocument` in authority-poc
+    /// (services/blockchain-provider). W3C verification relationships are
+    /// DERIVED from on-chain rights; keys without active rights are excluded:
+    ///   authentication        ← any active right
+    ///   assertionMethod       ← Right::Issue | Right::Impersonate
+    ///   capabilityInvocation  ← Right::Update
+    ///   capabilityDelegation  ← Right::Delegate
+    pub fn to_did_document_at(&self, height: u32) -> crate::document::DidDocument {
+        use crate::document::{
+            DidDocument, DidDocumentVerificationMethod, DID_DOCUMENT_MOSAIC_CONTEXT,
+            DID_DOCUMENT_W3C_CONTEXT, key_type_to_w3c_string, multibase_encode_key,
+        };
+
+        // Active on-chain rights per key at `height`.
+        let rights_of = |key_ref: &KeyRef| -> Vec<Right> {
+            self.rights
+                .iter()
+                .filter(|rg| rg.key_ref == *key_ref && rg.is_active_at(height))
+                .map(|rg| rg.right)
+                .collect()
+        };
+
+        // Valid keys that also hold active rights (righted_keys).
+        let righted: Vec<(&VerificationMethod, Vec<Right>)> = self
+            .keys
+            .iter()
+            .filter(|k| k.is_valid_at(height))
+            .filter_map(|k| {
+                let rs = rights_of(&k.key_ref);
+                if rs.is_empty() { None } else { Some((k, rs)) }
+            })
+            .collect();
+
+        let did_string = self.did.to_did_string();
+        let verification_method: Vec<DidDocumentVerificationMethod> = righted
+            .iter()
+            .map(|(k, _)| DidDocumentVerificationMethod {
+                id: alloc::format!("{}#{}", did_string, k.key_ref),
+                type_: key_type_to_w3c_string(k.key_type),
+                controller: did_string.clone(),
+                public_key_multibase: multibase_encode_key(&k.public_key),
+            })
+            .collect();
+
+        let authentication: Vec<alloc::string::String> = righted
+            .iter()
+            .map(|(k, _)| alloc::format!("{}#{}", did_string, k.key_ref))
+            .collect();
+        let assertion_method: Vec<alloc::string::String> = righted
+            .iter()
+            .filter(|(_, rs)| rs.iter().any(|r| matches!(r, Right::Issue | Right::Impersonate)))
+            .map(|(k, _)| alloc::format!("{}#{}", did_string, k.key_ref))
+            .collect();
+        let capability_invocation: Vec<alloc::string::String> = righted
+            .iter()
+            .filter(|(_, rs)| rs.iter().any(|r| matches!(r, Right::Update)))
+            .map(|(k, _)| alloc::format!("{}#{}", did_string, k.key_ref))
+            .collect();
+        let capability_delegation: Vec<alloc::string::String> = righted
+            .iter()
+            .filter(|(_, rs)| rs.iter().any(|r| matches!(r, Right::Delegate)))
+            .map(|(k, _)| alloc::format!("{}#{}", did_string, k.key_ref))
+            .collect();
+
+        let created_at_height = self.keys.iter().map(|k| k.added_at_height).min();
+        let last_modified_at_height = {
+            let candidates: [Option<u32>; 4] = [
+                self.keys.iter().map(|k| k.added_at_height).max(),
+                self.keys.iter().filter_map(|k| k.revoked_at_height).max(),
+                self.rights.iter().map(|r| r.granted_at_height).max(),
+                self.rights.iter().filter_map(|r| r.revoked_at_height).max(),
+            ];
+            candidates.into_iter().flatten().max().map(|h| u32::min(h, height))
+        };
+
+        DidDocument {
+            context: alloc::vec![
+                DID_DOCUMENT_W3C_CONTEXT.into(),
+                DID_DOCUMENT_MOSAIC_CONTEXT.into(),
+            ],
+            id: did_string,
+            controller: None,
+            also_known_as: None,
+            verification_method,
+            authentication,
+            assertion_method,
+            key_agreement: Vec::new(),
+            capability_invocation,
+            capability_delegation,
+            service: Vec::new(),
+            deactivated: self.tombstoned_at_height.is_some_and(|h| height >= h),
+            created_at_height,
+            last_modified_at_height,
+            tombstoned_at_height: self.tombstoned_at_height,
+        }
+    }
 }
 
 #[cfg(test)]
