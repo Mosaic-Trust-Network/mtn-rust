@@ -306,7 +306,16 @@ impl DidState {
                 self.rights.iter().map(|r| r.granted_at_height).max(),
                 self.rights.iter().filter_map(|r| r.revoked_at_height).max(),
             ];
-            candidates.into_iter().flatten().max().map(|h| u32::min(h, height))
+            let from_candidates = candidates.into_iter().flatten().max();
+            // `last_modified_at` is the authoritative last-mutation height —
+            // revoked keys/rights are physically removed from the state, so
+            // candidate heights alone would understate it (e.g. after
+            // RevokeKey/RevokeRight). Fall back to candidates only when it is
+            // unset (freshly-constructed states).
+            match self.last_modified_at {
+                (h, _) if h > 0 => Some(u32::min(h, height)),
+                _ => from_candidates.map(|h| u32::min(h, height)),
+            }
         };
 
         DidDocument {
@@ -596,5 +605,24 @@ mod tests {
 
         let unknown = "key-nonexistent".parse().unwrap();
         assert_eq!(state.nonce_for_key(&unknown), 0);
+    }
+
+    #[test]
+    fn to_did_document_at_prefers_last_modified_at_over_candidates() {
+        let mut state = make_test_state();
+        // Revoked keys/rights are physically removed, so candidate heights
+        // understate the last mutation — `last_modified_at` is authoritative.
+        state.last_modified_at = (40, 1);
+        let doc = state.to_did_document_at(100);
+        assert_eq!(doc.last_modified_at_height, Some(40));
+    }
+
+    #[test]
+    fn to_did_document_at_falls_back_to_candidates_when_unset() {
+        let mut state = make_test_state();
+        state.last_modified_at = (0, 0);
+        let doc = state.to_did_document_at(100);
+        // make_test_state adds its key at height 1 → candidate max is 1.
+        assert_eq!(doc.last_modified_at_height, Some(1));
     }
 }
