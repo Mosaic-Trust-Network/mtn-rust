@@ -20,8 +20,8 @@ json-digest = { workspace = true }
 
 [features]
 std = [
-	"mosaic-keyvault/std",
-	"mosaic-vault/std",
 	"json-digest/std",
 	"mosaic-did-types/std",
+	"mosaic-keyvault/std",
+	"mosaic-vault/std",
 ]

@@ -23,8 +23,8 @@ serde_json = { workspace = true }
 [features]
 default = [ "std" ]
 std = [
-	"mosaic-keyvault/std",
 	"mosaic-did-types/std",
+	"mosaic-keyvault/std",
 	"parity-scale-codec/std",
 	"polkadot-sdk/std",
 	"scale-info/std",

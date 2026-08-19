@@ -39,8 +39,8 @@ std = [
 	"bounded-collections/std",
 	"bs58/std",
 	"hex/std",
-	"mosaic-keyvault/std",
 	"json-digest/std",
+	"mosaic-keyvault/std",
 	"parity-scale-codec?/std",
 	"scale-info?/std",
 	"serde/std",
@@ -48,8 +48,8 @@ std = [
 ]
 serde = []
 substrate = [
-	"mosaic-keyvault/substrate",
 	"json-digest/substrate",
+	"mosaic-keyvault/substrate",
 	"parity-scale-codec",
 	"scale-info",
 ]
