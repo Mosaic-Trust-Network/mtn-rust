@@ -1,41 +1,44 @@
-use std::fmt;
-use std::ops::Add;
-use std::str::FromStr;
+use core::fmt;
+use core::ops::Add;
+use core::str::FromStr;
 
 use super::*;
 use crate::PublicKey;
+use crate::error::KeyvaultError;
 
 /// The size of the public key in the compressed format used by [`to_bytes`]
 ///
 /// [`to_bytes`]: #method.to_bytes
-pub const PUBLIC_KEY_SIZE: usize = secp::util::COMPRESSED_PUBLIC_KEY_SIZE;
+pub const PUBLIC_KEY_SIZE: usize = 33;
 
 /// The size of the public key in the uncompressed format used by [`uncompressed`]
 ///
 /// [`uncompressed`]: #method.uncompressed
-pub const PUBLIC_KEY_UNCOMPRESSED_SIZE: usize = secp::util::FULL_PUBLIC_KEY_SIZE;
+pub const PUBLIC_KEY_UNCOMPRESSED_SIZE: usize = 65;
 
 /// Implementation of Secp256k1::PublicKey
 #[derive(Clone, Eq, PartialEq)]
-pub struct SecpPublicKey(pub(super) secp::PublicKey);
+pub struct SecpPublicKey(pub(super) KPublicKey);
 
 impl SecpPublicKey {
     /// The public key serialized in a format that can be fed to [`from_bytes`]
     ///
     /// [`from_bytes`]: #method.from_bytes
     pub fn to_bytes(&self) -> Vec<u8> {
-        self.0.serialize_compressed().to_vec()
+        self.0.to_sec1_point(true).as_bytes().to_vec()
     }
 
     /// Creates a public key from a byte slice possibly returned by the [`to_bytes`] method.
     ///
     /// # Error
-    /// If `bytes` is rejected by `libsecp256k1::PublicKey::parse_slice`
+    /// If `bytes` is rejected by `k256::PublicKey::from_sec1_bytes`
     ///
     /// [`to_bytes`]: #method.to_bytes
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
-        let format = Some(secp::PublicKeyFormat::Compressed);
-        let pk = secp::PublicKey::parse_slice(bytes.as_ref(), format)?;
+        if bytes.as_ref().len() != PUBLIC_KEY_SIZE {
+            return Err(KeyvaultError::PublicKeyLength { expected: PUBLIC_KEY_SIZE });
+        }
+        let pk = KPublicKey::from_sec1_bytes(bytes.as_ref()).map_err(display_err)?;
         Ok(Self(pk))
     }
 
@@ -44,7 +47,10 @@ impl SecpPublicKey {
     ///
     /// [`SecpKeyId::bitcoin_address`]: ../struct.SecpKeyId.html#method.bitcoin_address
     pub fn uncompressed(&self) -> [u8; PUBLIC_KEY_UNCOMPRESSED_SIZE] {
-        self.0.serialize()
+        let encoded = self.0.to_sec1_point(false);
+        let mut bytes = [0u8; PUBLIC_KEY_UNCOMPRESSED_SIZE];
+        bytes.copy_from_slice(encoded.as_bytes());
+        bytes
     }
 
     /// ARK uses a non-standards hashing of the compressed public key.
@@ -62,10 +68,9 @@ impl Add<&[u8]> for &SecpPublicKey {
     type Output = Result<SecpPublicKey>;
 
     fn add(self, rhs: &[u8]) -> Self::Output {
-        let sk = secp::SecretKey::parse_slice(rhs)?;
-        let mut sum = self.0;
-        sum.tweak_add_assign(&sk)?;
-        Ok(SecpPublicKey(sum))
+        let tweak = scalar_from_bytes(rhs)?;
+        let sum = self.0.to_projective() + ProjectivePoint::GENERATOR * tweak;
+        Ok(SecpPublicKey(KPublicKey::from_affine(sum.to_affine()).map_err(display_err)?))
     }
 }
 
@@ -80,11 +85,10 @@ impl PublicKey<Secp256k1> for SecpPublicKey {
 
     fn verify<D: AsRef<[u8]>>(&self, data: D, sig: &SecpSignature) -> bool {
         let msg = Secp256k1::hash_message(data);
-        secp::verify(&msg, &sig.0, &self.0)
+        VerifyingKey::from(self.0).verify_prehash(&msg, &sig.0).is_ok()
     }
 }
 
-#[allow(clippy::derive_hash_xor_eq)] // If the 2 pks are equal. their hashes will be equal, too
 impl Hash for SecpPublicKey {
     fn hash<H: Hasher>(&self, hasher: &mut H) {
         self.to_bytes().hash(hasher);
@@ -104,33 +108,21 @@ impl Ord for SecpPublicKey {
 }
 
 impl FromStr for SecpPublicKey {
-    type Err = anyhow::Error;
+    type Err = KeyvaultError;
     fn from_str(src: &str) -> Result<Self> {
-        Self::from_bytes(hex::decode(src)?)
+        Self::from_bytes(crate::hex_decode(src)?)
     }
 }
 
 impl fmt::Display for SecpPublicKey {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str(&hex::encode(self.to_bytes()))
     }
 }
 
 impl fmt::Debug for SecpPublicKey {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         fmt::Display::fmt(self, formatter)
-    }
-}
-
-impl From<secp::PublicKey> for SecpPublicKey {
-    fn from(pk: secp::PublicKey) -> Self {
-        Self(pk)
-    }
-}
-
-impl From<SecpPublicKey> for secp::PublicKey {
-    fn from(pk: SecpPublicKey) -> secp::PublicKey {
-        pk.0
     }
 }
 

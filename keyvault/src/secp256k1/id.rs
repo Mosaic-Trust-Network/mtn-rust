@@ -1,6 +1,8 @@
-use std::fmt;
+use alloc::borrow::ToOwned;
+use core::fmt;
 
 use super::*;
+use crate::error::KeyvaultError;
 use crate::multicipher::MKeyId;
 
 /// The size of the key identifier in bytes. Since a version byte is prepended to the
@@ -32,12 +34,12 @@ impl SecpKeyId {
     /// [`KEY_ID_SIZE`]: ../constant.KEY_ID_SIZE
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
         let bytes = bytes.as_ref();
-        ensure!(bytes.len() == KEY_ID_SIZE, "Identifier length is not {}", KEY_ID_SIZE);
-        ensure!(
-            bytes[0] == KEY_ID_VERSION1,
-            "Only identifier version {:x} is supported",
-            KEY_ID_VERSION1
-        );
+        if bytes.len() != KEY_ID_SIZE {
+            return Err(KeyvaultError::IdLength { expected: KEY_ID_SIZE });
+        }
+        if bytes[0] != KEY_ID_VERSION1 {
+            return Err(KeyvaultError::UnsupportedSignatureVersion { version: KEY_ID_VERSION1 });
+        }
         Ok(Self(bytes.to_owned()))
     }
 
@@ -64,17 +66,19 @@ impl SecpKeyId {
         debug_assert_eq!(ADDR_PREFIX_SIZE, 1);
 
         let data = from_base58check(addr)?;
-        ensure!(
-            data.len() == ADDR_PREFIX_SIZE + KEY_ID_SIZE - VERSION_SIZE,
-            "Invalid length of address"
-        );
+        if data.len() != ADDR_PREFIX_SIZE + KEY_ID_SIZE - VERSION_SIZE {
+            return Err(KeyvaultError::DataLength {
+                expected: ADDR_PREFIX_SIZE + KEY_ID_SIZE - VERSION_SIZE,
+                actual: data.len(),
+            });
+        }
 
         let actual_prefix = &data[0..1];
-        ensure!(
-            actual_prefix == expected_prefix,
-            "Invalid network prefix found: {}",
-            hex::encode(actual_prefix)
-        );
+        if actual_prefix != expected_prefix {
+            return Err(KeyvaultError::InvalidWifNetworkPrefix {
+                prefix: hex::encode(actual_prefix),
+            });
+        }
 
         let mut id = Vec::with_capacity(KEY_ID_SIZE);
         id.push(KEY_ID_VERSION1);
@@ -86,10 +90,10 @@ impl SecpKeyId {
     /// ARK uses a non-standard hashing of the compressed public key.
     pub fn from_ark_pk(pk: &SecpPublicKey) -> Self {
         let mut hasher = Ripemd160::default();
-        hasher.update(&pk.to_bytes());
+        hasher.update(pk.to_bytes());
         let hash = hasher.finalize_fixed();
 
-        Self::from_v1_bytes(&*hash)
+        Self::from_v1_bytes(&hash)
     }
 
     fn from_v1_bytes(hash: &[u8]) -> Self {
@@ -105,12 +109,12 @@ impl From<&SecpPublicKey> for SecpKeyId {
     // https://en.bitcoin.it/wiki/Technical_background_of_version_1_Bitcoin_addresses
     fn from(pk: &SecpPublicKey) -> Self {
         let hash = hash160(&pk.to_bytes()[..]);
-        Self::from_v1_bytes(&*hash)
+        Self::from_v1_bytes(&hash)
     }
 }
 
 impl fmt::Debug for SecpKeyId {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         let id = MKeyId::from(self.clone());
         id.fmt(formatter)
     }

@@ -1,0 +1,252 @@
+{
+  "description": "Golden test vectors for canonical JSON digest (json-digest spec).\n  Each vector tests: SHA3-256 hashing with multibase Base64Url encoding\n  and 'cj' prefix, following the iop-rs Rust reference implementation.\n  The digest function recursively masks sub-objects with their content\n  hashes before hashing the top-level flattened form.\n\n  Rust reference (iop-rs): test_json_digest, reject_non_nfkd tests in\n  json-digest/src/digest.rs.\n\n  Verified against Rust reference implementation for vectors labeled\n  cjo-verified: true.",
+  "reference": "https://github.com/Internet-of-People/iop-rs/blob/develop/json-digest/src/digest.rs",
+  "vectors": [
+    {
+      "id": "simple-flat-object",
+      "description": "Flat object with primitive values. No recursive masking.",
+      "input": { "subject": "Widget-123", "classification": "public" },
+      "expected": {
+        "digestHash": "cjuncxBNjjOmB-7xJ5rwO4rHlANVzajVKH0P7AAYOP8EmY"
+      }
+    },
+    {
+      "id": "empty-object",
+      "description": "Empty object, no properties to mask.",
+      "input": {},
+      "expected": {
+        "digestHash": "cjuhA63qiqZNd5jNmusvp2X6XioWek9x5KgM03mDtUvjpk"
+      }
+    },
+    {
+      "id": "nested-object",
+      "description": "Object with nested sub-object and array values.\n      Sub-objects and arrays are recursively masked before\n      the top-level hash is computed.",
+      "input": { "doc": { "id": 42, "tags": ["a", "b"] }, "meta": { "version": 1 } },
+      "expected": {
+        "digestHash": "cjuK9FHSHq7DgvTQ6ldFrHZQjVj_-fVBBF_arieoMimslQ"
+      }
+    },
+    {
+      "id": "rust-testdata-simple",
+      "description": "Rust TestData { b: 1, a: 2 } -> canonical keys sorted.\n      Verified against iop-rs test_json_digest.",
+      "cjo-verified": true,
+      "input": { "a": 2, "b": 1 },
+      "expected": {
+        "canonical": "{\"a\":2,\"b\":1}",
+        "digestHash": "cjumTq1s6Tn6xkXolxHj4LmAo7DAb-zoPLhEa1BvpovAFU"
+      }
+    },
+    {
+      "id": "rust-nfkd-key",
+      "description": "NFKD-normalized key. Rust reject_non_nfkd test:\n      key 'a\\\\u0301lom' (a + combining acute).\n      Input keys MUST be NFKD-normalized per iop-rs convention.",
+      "cjo-verified": true,
+      "input": { "a\u0301lom": 1 },
+      "expected": {
+        "canonical": "{\"a\u0301lom\":1}",
+        "digestHash": "cjuRab8yOeLzxmFY_fEMC79cW5z9XyihRhaGnTSvMabrA8"
+      }
+    },
+    {
+      "id": "rust-self-describing-id",
+      "description": "A JSON string value digests to itself. The Rust test\n      passes &str \"\\\"cjuzC-...\\\"\" (with embedded double quotes) to\n      digest_data; serde serializes it as a JSON string value, and\n      selective_digest_json returns it unchanged. Idempotent for any\n      string regardless of content.",
+      "cjo-verified": true,
+      "input": "cjuzC-XxgzNMwYXtw8aMIAeS2Xjlw1hlSNKTvVtUwPuyYo",
+      "expected": {
+        "digestHash": "cjuzC-XxgzNMwYXtw8aMIAeS2Xjlw1hlSNKTvVtUwPuyYo"
+      }
+    },
+    {
+      "id": "float-decimal-0.1",
+      "description": "IEEE 754 canonicalization: 0.1 in decimal notation\n      remains 0.1. Verifies that the shortest round-trip\n      representation is used for simple floats.",
+      "input": { "value": 0.1 },
+      "expected": {
+        "canonical": "{\"value\":0.1}",
+        "digestHash": "cjuQ5kMPP2dBk-5Ja7f1Vld1ZgH0Gi9UTxrH046xOeTU28"
+      }
+    },
+    {
+      "id": "float-exponent-4.2E-5",
+      "description": "IEEE 754 canonicalization: 4.2E-5 (scientific notation)\n      canonicalizes to 0.000042 in decimal. Verifies that\n      exponent notation is expanded to the shortest decimal form.",
+      "input": { "value": 4.2E-5 },
+      "expected": {
+        "canonical": "{\"value\":0.000042}",
+        "digestHash": "cjuHoZBnPCRKxEvrq2VWBtZh7fHgRaMPBh8BalCMtp_1w0"
+      }
+    },
+    {
+      "id": "rust-ts-roundtrip-3.0",
+      "description": "Rust-vs-TS canonicalization difference: 3.0 has a\n      trailing decimal-zero in the input. TS round-trips\n      through f64 and emits 3 (the shortest representation),\n      while Rust preserves the original 3.0 text via\n      serde_json Number. This vector captures the TS side\n      as reference when fixing the Rust implementation.",
+      "input": { "value": 3.0 },
+      "expected": {
+        "canonical": "{\"value\":3}",
+        "digestHash": "cjuzuMc4d0HgrlHbEtr5EXAxhlVnF5Z3siA1Na0OvQTUqc"
+      }
+    },
+    {
+      "id": "rust-ts-roundtrip-65.50",
+      "description": "Rust-vs-TS canonicalization difference: 65.50 has\n      trailing zero in the decimal part. TS canonicalizes\n      to 65.5 (shortest round-trip), while Rust preserves\n      the original 65.50 text. Reference vector for the\n      Rust-side fix.",
+      "input": { "value": 65.50 },
+      "expected": {
+        "canonical": "{\"value\":65.5}",
+        "digestHash": "cjuroOCqVWtd-Aj6LM_eIqQfSACIvEy0b7RO3TexpCX6TY"
+      }
+    },
+    {
+      "id": "rust-ts-roundtrip-3e30",
+      "description": "Rust-vs-TS canonicalization: 3.0E+30 (large positive\n      exponent). JS emits 3e+30 (with + sign). Ryu-based\n      serializers emit 3e30 (without +). This vector targets\n      the JS convention; Rust side must add the + to match.",
+      "input": { "a": 3.0E+30 },
+      "expected": {
+        "canonical": "{\"a\":3e+30}",
+        "digestHash": "cjuc8jSbCUW4iwvbDVhHFqWIP3wBYaI8zY43fd1ctwO3mk"
+      }
+    },
+    {
+      "id": "rust-ts-roundtrip-5.4e-21",
+      "description": "Rust-vs-TS canonicalization: 5.40E-21 (tiny negative\n      exponent). Both JS and Ryu emit 5.4e-21 (with - sign).\n      Already aligned — reference to confirm agreement.",
+      "input": { "a": 5.40E-21 },
+      "expected": {
+        "canonical": "{\"a\":5.4e-21}",
+        "digestHash": "cjukdoLqPUV-ulMHatpjzYSrUDRFSXnfZfYrxlSTUApknw"
+      }
+    },
+    {
+      "id": "boundary-large-decimal-1e20",
+      "description": "Large number boundary (n=21): 1e20 is the largest\n      exact power of 10 still rendered in decimal notation\n      by ECMAScript (21 digits). Ryu may emit scientific\n      \"1e+20\" since it is shorter. Reference: TS output.",
+      "input": { "a": 100000000000000000000 },
+      "expected": {
+        "canonical": "{\"a\":100000000000000000000}",
+        "digestHash": "cjuARubWQRrY6_OrpinFP5wR9l71WjM6TtMnJAK5Pz1Bz8"
+      }
+    },
+    {
+      "id": "boundary-large-scientific-1e21",
+      "description": "Large number boundary (n=22): 1e21 is the smallest\n      exact power of 10 rendered in scientific notation by\n      ECMAScript. Ryu also uses scientific but omits +.\n      Reference: TS convention includes +.",
+      "input": { "a": 1e21 },
+      "expected": {
+        "canonical": "{\"a\":1e+21}",
+        "digestHash": "cju-9jdi-d4bwxRHPAKZNUbt09HvQdV8DSRpwlftXTy4Ik"
+      }
+    },
+    {
+      "id": "boundary-small-decimal-1e-6",
+      "description": "Small number boundary (n=-5): 1e-6 is the smallest\n      positive value rendered in 0.000... decimal notation\n      by ECMAScript. Ryu may emit scientific \"1e-6\" since\n      it is shorter. Reference: TS output.",
+      "input": { "a": 0.000001 },
+      "expected": {
+        "canonical": "{\"a\":0.000001}",
+        "digestHash": "cjuBwTjgAhoBdWeU9KBiElWpIp7_d8-ezk-T0n6m_HJ770"
+      }
+    },
+    {
+      "id": "boundary-small-scientific-1e-7",
+      "description": "Small number boundary (n=-6): 1e-7 is the smallest\n      positive value rendered in scientific notation by\n      ECMAScript. Ryu also emits 1e-7. Both agree.",
+      "input": { "a": 1e-7 },
+      "expected": {
+        "canonical": "{\"a\":1e-7}",
+        "digestHash": "cjuM7In7emwaEp0vjUlzq5aJLp_FBoSsu1hykD9CnUkt9g"
+      }
+    },
+    {
+      "id": "boundary-int-float-100.00",
+      "description": "Integer-valued float with trailing zeros: 100.00\n      carries no fractional part. TS canonicalizes to 100\n      (integer). Rust preserves 100.00 via serde_json\n      Number::Float. Reference for Rust-side fix.",
+      "input": { "a": 100.00 },
+      "expected": {
+        "canonical": "{\"a\":100}",
+        "digestHash": "cju_qLLwzfQdnskCTNMjegXE5qvl4dQ_9enKuLITdRJD6s"
+      }
+    },
+    {
+      "id": "boundary-precision-1.2345678901234567",
+      "description": "IEEE 754 double precision boundary: 1.2345678901234567\n      has 17 significant digits (the maximum for reliable\n      round-trip). Both JS and Ryu produce the same output.\n      Trailing zeros after the 17th digit are lost.",
+      "input": { "a": 1.2345678901234567890 },
+      "expected": {
+        "canonical": "{\"a\":1.2345678901234567}",
+        "digestHash": "cjuutkvCRD2TrPnTzppf04TIABJu9wf49g2IJJWi2596mk"
+      }
+    },
+    {
+      "id": "boundary-trailing-zeros-0.001000",
+      "description": "Trailing zeros in the decimal part: 0.001000 has two\n      trailing zeros after the significant digits. TS\n      strips them to 0.001 (shortest representation).\n      Rust preserves the original text. Reference for\n      Rust-side fix.",
+      "input": { "a": 0.001000 },
+      "expected": {
+        "canonical": "{\"a\":0.001}",
+        "digestHash": "cjuiqqtsBFbw0zAcQkgGMqiHn2PtJ8kGgPM4zX4qvQesO0"
+      }
+    }
+  ],
+  "selectiveVectors": [
+    {
+      "id": "rust-composite-keep-y",
+      "description": "Keep the y subtree open and mask z. Verified against iop-rs test_selective_digesting.",
+      "cjo-verified": true,
+      "input": {
+        "z": { "b": 1, "a": 2 },
+        "y": { "b": 1, "a": 2 }
+      },
+      "keepPaths": ".y",
+      "expected": {
+        "selectiveDigest": "{\"y\":{\"a\":2,\"b\":1},\"z\":\"cjumTq1s6Tn6xkXolxHj4LmAo7DAb-zoPLhEa1BvpovAFU\"}",
+        "redigestHash": "cjubdcpA0FfHhD8yEpDzZ8vS5sm7yxkrX_wAJgmke2bWRQ"
+      }
+    },
+    {
+      "id": "rust-double-composite-keep-y-z",
+      "description": "Keep nested y.z open and mask siblings. Verified against iop-rs test_selective_digesting.",
+      "cjo-verified": true,
+      "input": {
+        "z": {
+          "z": { "b": 1, "a": 2 },
+          "y": { "b": 1, "a": 2 }
+        },
+        "y": {
+          "z": { "b": 1, "a": 2 },
+          "y": { "b": 1, "a": 2 }
+        }
+      },
+      "keepPaths": ".y.z",
+      "expected": {
+        "selectiveDigest": "{\"y\":{\"y\":\"cjumTq1s6Tn6xkXolxHj4LmAo7DAb-zoPLhEa1BvpovAFU\",\"z\":{\"a\":2,\"b\":1}},\"z\":\"cjubdcpA0FfHhD8yEpDzZ8vS5sm7yxkrX_wAJgmke2bWRQ\"}",
+        "redigestHash": "cjuQLebyl_BJipFLibhWiStDBqK5J4JZq15ehUqybfTTKA"
+      }
+    },
+    {
+      "id": "float-selective-keep-a",
+      "description": "Selective disclosure with float values: keep .a subtree\n      open and mask .b. Verifies float canonicalization in\n      selective disclosure context.",
+      "input": {
+        "a": { "x": 0.1, "y": 0.2 },
+        "b": { "x": 0.1, "y": 0.2 }
+      },
+      "keepPaths": ".a",
+      "expected": {
+        "selectiveDigest": "{\"a\":{\"x\":0.1,\"y\":0.2},\"b\":\"cjuuHWoOZ82bI9OICm-u0ps6NbiDaAn-juK5_Za2AJbbnM\"}",
+        "redigestHash": "cjum9T6xyNJe-IL8iGLwfsOSt1eNk7WIbU5Hb7XtzwPs5g"
+      }
+    }
+  ]
+,
+  "blake3Vectors": [
+    { "id": "simple-flat-object", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmubZ00m9rLN6yfWykQ9jq2Pi2YTEDYBmvmbuDfi9ncDcE" } },
+    { "id": "empty-object", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmubkbdEN78m1bCmm7Fa1CMIfVMCBkhlOTfJb828MnDwnk" } },
+    { "id": "nested-object", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuazWbCvtAyzX_IY3m1eIcy-ltrIHJkRwb2j-dF514N5E" } },
+    { "id": "rust-testdata-simple", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmursDCffzo2qmg4225E9FojsU5yn92SZfE3oufMQH2QYs" } },
+    { "id": "rust-nfkd-key", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuaLw7DB8fDQZRIEksyjLYB8lSSMGTNPKcbKq8OsqhOZw" } },
+    { "id": "rust-self-describing-id", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cjuzC-XxgzNMwYXtw8aMIAeS2Xjlw1hlSNKTvVtUwPuyYo" } },
+    { "id": "float-decimal-0.1", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuj_WRZzNco_naEcY7YV0rj0CP_D1nJK6L2TaAxLKaW0U" } },
+    { "id": "float-exponent-4.2E-5", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmurqhKcJaPtG8ux_uIOwZACeGkA_D5ceMMa3qr-OX0E-0" } },
+    { "id": "rust-ts-roundtrip-3.0", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuNNabNqvDctzCsVVQIgzX9XBgA-T3pTF_WfMSTjZd0rw" } },
+    { "id": "rust-ts-roundtrip-65.50", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuwYCy31D0duMLn8vujgq3mbvH93uVUw9UB342jW37etc" } },
+    { "id": "rust-ts-roundtrip-3e30", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuncPXpLM9fclSiuEOzH8iVm9aFbUzHHDL9YoSVFD7Q0s" } },
+    { "id": "rust-ts-roundtrip-5.4e-21", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuH3qDQGrm1CwtoRpzl_d9DiG_uPNgOeTFDJxUuiya4PQ" } },
+    { "id": "boundary-large-decimal-1e20", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuuxXnE-y3Hm13m5rwXx-ZUT4pTbVKoC1cVP30P2BRpCE" } },
+    { "id": "boundary-large-scientific-1e21", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuMruMokaEWCdQYwS_fJbcJFE-u2ifhhXSmuMSwWWfIps" } },
+    { "id": "boundary-small-decimal-1e-6", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmubI2jWy3bKrIS4AU1wFu-2bRBPkpNKmKSUJFNa9uwduk" } },
+    { "id": "boundary-small-scientific-1e-7", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmunSwb3RZ7S6NzZUSQVFz8Fac_e_K1tiTHZZlk3qK6jp0" } },
+    { "id": "boundary-int-float-100.00", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuTeuSODb2iHPN6xxkRy4gOevgrkVn8SQ_4ZSoW0_jCNk" } },
+    { "id": "boundary-precision-1.2345678901234567", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmuUwVE5sdKW9pzSVcmI0ely9sGd6O6ft7OgHlaQPMcmBA" } },
+    { "id": "boundary-trailing-zeros-0.001000", "description": "BLAKE3-256 digest — same canonical JSON as SHA3 vector.", "expected": { "digestHash": "cmupJuamm9lYbKIIBpbzTH9kB4lPbgGlUETdr3gav4P270" } }
+  ],
+  "blake3SelectiveVectors": [
+    { "id": "rust-composite-keep-y", "description": "BLAKE3-256 selective digest.", "keepPaths": ".y", "expected": { "selectiveDigest": "{\"y\":{\"a\":2,\"b\":1},\"z\":\"cmursDCffzo2qmg4225E9FojsU5yn92SZfE3oufMQH2QYs\"}", "redigestHash": "cmuCN0sPTWwivYj8XyX5eaKKRbKb832i5F1uiKKhvdKous" } },
+    { "id": "rust-double-composite-keep-y-z", "description": "BLAKE3-256 selective digest.", "keepPaths": ".y.z", "expected": { "selectiveDigest": "{\"y\":{\"y\":\"cmursDCffzo2qmg4225E9FojsU5yn92SZfE3oufMQH2QYs\",\"z\":{\"a\":2,\"b\":1}},\"z\":\"cmuCN0sPTWwivYj8XyX5eaKKRbKb832i5F1uiKKhvdKous\"}", "redigestHash": "cmuODjpLaA_FJ-rb54M5FSCaBWIdHtErnvb1s0Hcg9EbUs" } },
+    { "id": "float-selective-keep-a", "description": "BLAKE3-256 selective digest.", "keepPaths": ".a", "expected": { "selectiveDigest": "{\"a\":{\"x\":0.1,\"y\":0.2},\"b\":\"cmuDQTX_-eCA3cR8AO4hbPMcYUeN4bhAMXzelKplbjyJ7I\"}", "redigestHash": "cmuZFXlvckSgVSFdBYe-H8AgG4hTDCl0mDuk4aG7ETyQ50" } }
+  ]
+}

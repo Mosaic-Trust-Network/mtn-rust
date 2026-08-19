@@ -1,11 +1,16 @@
+#[cfg(feature = "std")]
 use ::bip39::{Mnemonic, Seed as Bip39Seed};
 
+#[cfg(feature = "serde")]
+use serde::{Deserialize, Serialize};
+
 use super::*;
+use crate::error::KeyvaultError;
 
 // TODO consider de/serialize attributes here, currently only needed for demo
 /// The seed used for BIP32 derivations. A seed cannot be turned back into a phrase, because there is salted hashing involed
 /// in creating it from the BIP39 mnemonic phrase.
-#[derive(Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct Seed {
     // Note that you cannot restore the mnemonic from the seed, because it goes through a one-way function
     bytes: Vec<u8>,
@@ -28,12 +33,13 @@ impl Seed {
     /// # Example
     ///
     /// ```
-    /// # use iop_keyvault::{Bip39, Seed};
+    /// # use mosaic_keyvault::{Bip39, Seed};
     /// let phrase = "plastic attend shadow hill conduct whip staff shoe achieve repair museum improve below inform youth alpha above limb paddle derive spoil offer hospital advance";
     /// let seed_expected = "86f07ba8b38f3de2080912569a07b21ca4ae2275bc305a14ff928c7dc5407f32a1a3a26d4e2c4d9d5e434209c1db3578d94402cf313f3546344d0e4661c9f8d9";
     /// let seed = Bip39::new().phrase(phrase).unwrap().password("morpheus");
     /// assert_eq!(hex::encode(seed.as_bytes()), seed_expected);
     /// ```
+    #[cfg(feature = "std")]
     pub(crate) fn from_bip39(mnemonic: &Mnemonic, password: &str) -> Self {
         let bytes = Bip39Seed::new(mnemonic, password).as_bytes().to_owned();
         Self { bytes }
@@ -44,14 +50,14 @@ impl Seed {
     /// # Example
     ///
     /// ```
-    /// # use iop_keyvault::Seed;
+    /// # use mosaic_keyvault::Seed;
     /// let bytes = "86f07ba8b38f3de2080912569a07b21ca4ae2275bc305a14ff928c7dc5407f32a1a3a26d4e2c4d9d5e434209c1db3578d94402cf313f3546344d0e4661c9f8d9";
     /// let seed_res = Seed::from_bytes(hex::decode(bytes).unwrap().as_slice());
     /// assert!(seed_res.is_ok());
     /// ```
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() * 8 != Self::BITS {
-            bail!("Only {}-bit seeds are supported", Self::BITS)
+            return Err(KeyvaultError::InvalidSeedBits { bit_count: Self::BITS });
         }
         let bytes = bytes.to_vec();
         Ok(Self { bytes })
@@ -61,5 +67,11 @@ impl Seed {
     /// Returns the bytes of the seed
     pub fn as_bytes(&self) -> &[u8] {
         self.bytes.as_slice()
+    }
+}
+
+impl fmt::Debug for Seed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Seed").field("bytes", &"***redacted***").finish()
     }
 }

@@ -1,24 +1,61 @@
 [workspace]
+resolver = "2"
 members = [
-    "coeus-node",
-    "coeus-proto",
-    "hydra-proto",
-    "hydra-sdk",
-    "journal-proto",
-    "json-digest-wasm",
     "json-digest",
     "keyvault",
-    "keyvault-wasm",
-    "morpheus-node",
-    "morpheus-proto",
-    "morpheus-sdk",
-    "node-wasm",
-    "proto-wasm",
+    "mosaic-did-types",
+    "pallet-mosaic-did",
     "sdk",
-    "sdk-ffi",
-    "sdk-wasm",
     "vault"
 ]
+
+[workspace.package]
+version = "0.1.0"
+rust-version = "1.88"
+edition = "2024"
+repository = "https://mosaicchain.io"
+license = "LGPL-3.0-or-later"
+homepage = "https://mosaic-trust.network"
+
+[workspace.dependencies]
+mosaic-keyvault = { version = "0.1.0", default-features = false }
+mosaic-vault = { version = "0.1.0" }
+json-digest = { version = "0.1.0", default-features = false }
+mosaic-did-types = { version = "0.1.0", default-features = false }
+pallet-mosaic-did = { version = "0.1.0" }
+
+android_logger = { version = "0.15.1" }
+blake2 = { version = "0.11.0-rc.6", default-features = false }
+blake3 = { version = "1", default-features = false }
+byteorder = { version = "1.5.0" }
+digest = { version = "0.11.3", default-features = false, features = ["mac"] }
+ed25519-dalek = { version = "3.0.0", default-features = false, features = ["alloc"] }
+getrandom = { version = "0.4.1", default-features = false, features = ["wasm_js"]}
+getrandom-2 = { package = "getrandom", version = "0.2", default-features = false, features = ["js"]}
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+hmac = { version = "0.13.0", default-features = false }
+jni = { version = "0.21.1", default-features = false }
+k256 = { version = "0.14", default-features = false, features = ["alloc", "arithmetic", "ecdsa"] }
+multibase = { version = "0.9.1", default-features = false }
+orion = { version = "0.17.11" }
+parity-scale-codec = { version = "3", default-features = false, features = ["derive", "max-encoded-len"] }
+parking_lot = { version = "0.12.4", features = ["serde"] }
+polkadot-sdk = { version = "2512.3.3", git = "https://github.com/Mosaic-Chain/polkadot-sdk", branch = "private-address-range-2512-2", default-features = false }
+rand = { version = "0.10.0", default-features = false }
+ripemd = { version = "0.2.0", default-features = false }
+rmp-serde = { version = "1.3.0" }
+scale-info = { version = "2", default-features = false, features = ["derive"] }
+serde = { version = "1.0.219", default-features = false, features = ["derive", "alloc"] }
+serde_bytes = { version = "0.11.17", default-features = false, features = ["alloc"]}
+# NOTE: do NOT add `preserve_order` here — it force-enables serde_json/std,
+# which drags serde_core/std into the wasm32v1-none (bare, no-std) runtime
+# build and breaks it. See iop-rs ca5c08b. Canonical JSON sorts keys, so
+# insertion-order preservation is not needed on-chain.
+serde_json = { version = "1.0.142", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.11.0", default-features = false }
+bip39 = { package = "tiny-bip39", version = "2.0.0", features = ["rand"], default-features = false }
+typetag = { version = "0.2.20" }
+thiserror = { version = "2", default-features = false }
 
 # Experiment for optimizing WASM and FFI binary sizes
 [profile.release]
@@ -26,26 +63,9 @@ lto = true
 opt-level = 's'
 
 [patch.crates-io]
-iop-coeus-node = { path="./coeus-node" }
-iop-coeus-proto = { path="./coeus-proto" }
-iop-hydra-proto = { path="./hydra-proto" }
-iop-hydra-sdk = { path="./hydra-sdk" }
-iop-journal-proto = { path="./journal-proto" }
-iop-keyvault = { path="./keyvault" }
-iop-keyvault-wasm = { path="./keyvault-wasm" }
-iop-morpheus-node = { path="./morpheus-node" }
-iop-morpheus-proto = { path="./morpheus-proto" }
-iop-morpheus-sdk = { path="./morpheus-sdk" }
-iop-node-wasm = { path="./node-wasm" }
-iop-proto-wasm = { path="./proto-wasm" }
-iop-vault = { path="./vault" }
-json-digest-wasm = { path="./json-digest-wasm" }
-json-digest = { path="./json-digest" }
-
-# Local clone at parent folder
-#iop-keyvault = { path="../keyvault-rs/keyvault" }
-#iop-keyvault-wasm = { path="../keyvault-rs/keyvault-wasm" }
-
-# Github branch
-#iop-keyvault = { git="https://github.com/Internet-of-People/keyvault-rust", branch="develop" }
-#iop-keyvault-wasm = { git="https://github.com/Internet-of-People/keyvault-rust", branch="develop" }
+core2 = { path = "./vendor/core2-0.4.0" }
+mosaic-keyvault = { path = "./keyvault" }
+mosaic-vault = { path = "./vault" }
+json-digest = { path = "./json-digest" }
+mosaic-did-types = { path="./mosaic-did-types" }
+pallet-mosaic-did = { path="./pallet-mosaic-did" }

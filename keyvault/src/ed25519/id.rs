@@ -1,9 +1,11 @@
+use alloc::borrow::ToOwned;
 use blake2::{
-    digest::{consts::U16, typenum::Unsigned},
     Blake2bMac,
+    digest::{consts::U16, typenum::Unsigned},
 };
 
 use super::*;
+use crate::error::KeyvaultError;
 use crate::multicipher::MKeyId;
 
 type HashSize = U16;
@@ -13,13 +15,61 @@ type HashSize = U16;
 /// hash of the public key with the same algorithm.
 pub const KEY_ID_SALT: &[u8; 17] = b"open social graph";
 
-/// The size of the key identifier in bytes. Since a version byte is prepended to the
-/// hash result, it is not a standard size.
+/// The size of the legacy key identifier in bytes (version byte + 128-bit Blake2b MAC).
 pub const KEY_ID_SIZE: usize = <HashSize as Unsigned>::USIZE + VERSION_SIZE;
 
-/// The serialized byte representation for the current version of the hash algorithm
+/// The serialized byte representation for the legacy morpheus non-multihash algorithm
 /// applied on the public key to obtain the key identifier
 pub const KEY_ID_VERSION1: u8 = b'\x01';
+
+/// Version byte for Blake3-derived key identifiers (multihash prefix for blake3).
+pub const KEY_ID_VERSION_BLAKE3: u8 = b'\x1e';
+
+/// The size of a Blake3 key identifier in bytes (version byte + 256-bit Blake3 hash).
+pub const BLAKE3_KEY_ID_SIZE: usize = 32 + VERSION_SIZE;
+
+/// A trait that makes it possible to use different hashing strategies for calculating key ids from public keys
+pub trait IdHasher {
+    /// A single-byte version prefix that will be prepended to the hash to discriminate it from other strategies
+    const VERSION_BYTE: u8;
+
+    /// The actual algorithm that hashes the public key bytes
+    fn hash(pk: &EdPublicKey) -> Vec<u8>;
+}
+
+type Blake2bMacVar = Blake2bMac<HashSize>;
+
+/// A hashing strategy used by legacy Morpheus, which is a salted Blake2b MAC using a non-standard version byte prefix
+pub struct LegacyV1;
+
+impl IdHasher for LegacyV1 {
+    // 128-bit Blake2bMac with a salt would still use 0xb210 in multihash, but our legacy code just used
+    // 0x01 as a version number
+    const VERSION_BYTE: u8 = KEY_ID_VERSION1;
+
+    fn hash(pk: &EdPublicKey) -> Vec<u8> {
+        let mut hasher = <Blake2bMacVar as KeyInit>::new_from_slice(KEY_ID_SALT)
+            .expect("KEY_ID_SALT is shorter than 512 bits for Blake2b512; qed");
+        hasher.update(&pk.to_bytes());
+        hasher.finalize().into_bytes().to_vec()
+        // let mut hash = [0u8; KEY_ID_SIZE];
+        // hash[0] = KEY_ID_VERSION1;
+        // hash[VERSION_SIZE..].clone_from_slice(&hasher.finalize().into_bytes());
+        // hash.into()
+    }
+}
+
+/// A hashing strategy using plain Blake3 and the standard multihash prefix
+pub struct Blake3;
+
+impl IdHasher for Blake3 {
+    const VERSION_BYTE: u8 = KEY_ID_VERSION_BLAKE3;
+
+    fn hash(pk: &EdPublicKey) -> Vec<u8> {
+        let hash = blake3::hash(&pk.to_bytes());
+        hash.as_slice().to_vec()
+    }
+}
 
 /// Implementation of Ed25519::KeyId
 #[derive(Clone, Eq, Hash, PartialEq, PartialOrd, Ord)]
@@ -35,39 +85,55 @@ impl EdKeyId {
 
     /// Creates a key id from a byte slice possibly returned by the [`to_bytes`] method.
     ///
-    /// # Error
-    /// If `bytes` is not [`KEY_ID_SIZE`] long
+    /// Accepts both legacy V1 key IDs (17 bytes, version `0x01`) and
+    /// Blake3 key IDs (33 bytes, version `0x1e`).
     ///
-    /// [`to_bytes`]: #method.to_bytes
-    /// [`KEY_ID_SIZE`]: ../constant.KEY_ID_SIZE
+    /// # Error
+    /// If `bytes` has an unrecognised version byte or wrong length for its version.
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
         let bytes = bytes.as_ref();
-        ensure!(bytes.len() == KEY_ID_SIZE, "Identifier length is not {}", KEY_ID_SIZE);
-        ensure!(
-            bytes[0] == KEY_ID_VERSION1,
-            "Only identifier version {:x} is supported",
-            KEY_ID_VERSION1
-        );
-        Ok(Self(bytes.to_owned()))
+        match bytes.first() {
+            Some(&KEY_ID_VERSION1) => {
+                if bytes.len() != KEY_ID_SIZE {
+                    return Err(KeyvaultError::LegacyKeyIdSize { expected: KEY_ID_SIZE });
+                }
+                Ok(Self(bytes.to_owned()))
+            }
+            Some(&KEY_ID_VERSION_BLAKE3) => {
+                if bytes.len() != BLAKE3_KEY_ID_SIZE {
+                    return Err(KeyvaultError::LegacyKeyIdSize { expected: BLAKE3_KEY_ID_SIZE });
+                }
+                Ok(Self(bytes.to_owned()))
+            }
+            Some(v) => Err(KeyvaultError::UnknownKeyIdVersion { version: *v }),
+            None => Err(KeyvaultError::EmptyKeyIdBytes),
+        }
+    }
+
+    /// Creates a key id from a public key using a hashing strategy.
+    ///
+    /// Usage: `EdKeyId::from_pk::<Blake3>(pk)`
+    pub fn from_pk<H: IdHasher>(pk: &EdPublicKey) -> Self {
+        let mut hash = H::hash(pk);
+        hash.insert(0, H::VERSION_BYTE);
+        EdKeyId(hash)
     }
 }
 
-type Blake2bMacVar = Blake2bMac<HashSize>;
-
 impl From<&EdPublicKey> for EdKeyId {
-    fn from(pk: &EdPublicKey) -> EdKeyId {
+    fn from(pk: &EdPublicKey) -> Self {
         let mut hasher = <Blake2bMacVar as KeyInit>::new_from_slice(KEY_ID_SALT)
             .expect("KEY_ID_SALT is shorter than 512 bits for Blake2b512; qed");
         hasher.update(&pk.to_bytes());
         let mut hash = [0u8; KEY_ID_SIZE];
         hash[0] = KEY_ID_VERSION1;
-        hash[VERSION_SIZE..].clone_from_slice(hasher.finalize().into_bytes().as_slice());
+        hash[VERSION_SIZE..].clone_from_slice(&hasher.finalize().into_bytes());
         EdKeyId(hash.into())
     }
 }
 
 impl fmt::Debug for EdKeyId {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         let id = MKeyId::from(self.clone());
         id.fmt(formatter)
     }

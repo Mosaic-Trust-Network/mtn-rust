@@ -1,17 +1,19 @@
-# Internet of People
+# Mosaic Trust Network — Rust Core
 
-Internet of People (IoP) is a software project creating a decentralized software stack that provides the building blocks and tools to support a decentralized society.
+Cryptography, DID, and chain-type crates for the Mosaic Trust Network: the
+keyvault suites, `did:mosaic` DID types, and the Substrate pallet they back.
+
+Provenance: derived from the IOP Morpheus SSI stack.
 
 This repository contains our Rust codebase that serves as common implementation and used with different bindings (WebAssembly, C FFI) in SDKs for other languages like Typescript or Dart as well.
 
 ## Usage
 
-After installing Rust using [rustup](https://rustup.rs/), use the `iop-sdk` crate with the latest version as a dependency with `cargo` in file `Cargo.toml` of your project.
+After installing Rust using [rustup](https://rustup.rs/), use the `mosaic-sdk` crate with the latest version as a dependency with `cargo` in file `Cargo.toml` of your project.
 
 ## Overview
 
-You can read a  overview and descriptions of different components on our
-[developer portal](https://developer.iop.technology). We especially suggest reading [glossary page](https://developer.iop.technology/glossary) for a detailed explanation of terms, concept and design principles of different software stack components.
+You can read a  overview and descriptions of different components on our [Mosaic DID Paper](https://sovereign-society.org/papers/mosaic-did/).
 
 ## Components
 
@@ -22,7 +24,7 @@ You can read a  overview and descriptions of different components on our
   it can deterministically derive an enormous number of private keys for any purpose
   like cryptocurrency addresses, DIDs, device keys, etc.
 - `vault` adds encryption support, pluggability with state handling and persistence to the pure calculator features of the `keyvault`
-- `morpheus` supports Self-Sovereign Identity (SSI) with Decentralized Identifiers (DIDs) and Verifiable Claims/Credentials (VCs). It defines a state machine for keeping a queriable history of DIDs, their keys and rights with atomic transactions to change the state.
-- `coeus` implements a generic decentralized naming system (DDNS). It defines a state machine for managing resolvable names with atomic transactions to change the state.
-- `hydra` supports using the Hydra blockchain by building transactions for cryptocurrency operations (transfer, delegate voting, etc), or custom transactions with SSI and DNS operations.
+- `mosaic-did-types` provides types used in protocols between blockchain code and application code
 - `sdk` exports features of libraries above for clients in a single crate
+- `pallet-mosaic-did` is a Polkadot SDK component that can be added to a blockchain runtime to keep and update DID state using a
+  consensus among multiple participants.

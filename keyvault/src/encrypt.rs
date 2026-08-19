@@ -3,18 +3,18 @@
 use orion::aead::SecretKey;
 
 use super::*;
-use anyhow::Context;
+use crate::error::KeyvaultError;
 
 fn password_to_key(pw: &str, salt: &[u8]) -> Result<SecretKey> {
     use orion::hazardous::stream::chacha20::CHACHA_KEYSIZE;
-    use orion::kdf::{derive_key, Password, Salt};
+    use orion::kdf::{Password, Salt, derive_key};
 
-    let pw = Password::from_slice(pw.as_bytes()).with_context(|| "Password is too short")?;
-    let salt = Salt::from_slice(salt).with_context(|| "Salt is too short")?;
+    let pw = Password::from_slice(pw.as_bytes()).map_err(|_| KeyvaultError::PasswordTooShort)?;
+    let salt = Salt::from_slice(salt).map_err(|_| KeyvaultError::SaltTooShort)?;
     let kdf_key = derive_key(&pw, &salt, 15, 1024, CHACHA_KEYSIZE as u32)
-        .with_context(|| "Could not derive key from password")?;
+        .map_err(|_| KeyvaultError::KeyDerivationFailed)?;
     let key = SecretKey::from_slice(kdf_key.unprotected_as_bytes())
-        .with_context(|| "Could not convert key")?;
+        .map_err(|_| KeyvaultError::KeyConversionFailed)?;
     Ok(key)
 }
 
@@ -25,7 +25,7 @@ fn password_to_key(pw: &str, salt: &[u8]) -> Result<SecretKey> {
 /// When the underlying platform is unable to provide enough random entropy.
 pub fn nonce() -> Result<[u8; 24]> {
     let mut result = [0u8; 24];
-    getrandom::getrandom(&mut result)?;
+    getrandom::fill(&mut result)?;
     Ok(result)
 }
 
@@ -36,7 +36,7 @@ pub fn encrypt(
     plaintext: impl AsRef<[u8]>, pw: impl AsRef<str>, nonce: impl AsRef<[u8]>,
 ) -> Result<Vec<u8>> {
     use orion::hazardous::{
-        aead::xchacha20poly1305::{seal, Nonce, SecretKey as XSecretKey},
+        aead::xchacha20poly1305::{Nonce, SecretKey as XSecretKey, seal},
         mac::poly1305::POLY1305_OUTSIZE,
         stream::xchacha20::XCHACHA_NONCESIZE,
     };
@@ -45,20 +45,20 @@ pub fn encrypt(
     let nonce = nonce.as_ref();
 
     let key = password_to_key(pw, nonce)?;
-    let key =
-        XSecretKey::from_slice(key.unprotected_as_bytes()).with_context(|| "Key is invalid")?;
+    let key = XSecretKey::from_slice(key.unprotected_as_bytes())
+        .map_err(|_| KeyvaultError::InvalidKey)?;
 
-    let nonce = Nonce::from_slice(nonce).with_context(|| "Nonce is too short")?;
+    let nonce = Nonce::from_slice(nonce).map_err(|_| KeyvaultError::NonceTooShort)?;
 
     let out_len = match plaintext.len().checked_add(XCHACHA_NONCESIZE + POLY1305_OUTSIZE) {
         Some(min_out_len) => min_out_len,
-        None => bail!("Plaintext is too long"),
+        None => return Err(KeyvaultError::PlaintextTooLong),
     };
     let mut output = vec![0u8; out_len];
     output[..XCHACHA_NONCESIZE].copy_from_slice(nonce.as_ref());
 
     seal(&key, &nonce, plaintext, None, &mut output[XCHACHA_NONCESIZE..])
-        .with_context(|| "Could not convert key")?;
+        .map_err(|_| KeyvaultError::KeyConversionFailed)?;
 
     Ok(output)
 }
@@ -72,10 +72,12 @@ pub fn decrypt(ciphertext: impl AsRef<[u8]>, pw: impl AsRef<str>) -> Result<Vec<
     let ciphertext = ciphertext.as_ref();
     let pw = pw.as_ref();
 
-    ensure!(ciphertext.len() > XCHACHA_NONCESIZE, "Ciphertext is too short");
+    if ciphertext.len() <= XCHACHA_NONCESIZE {
+        return Err(KeyvaultError::CiphertextTooShort);
+    }
 
     let key = password_to_key(pw, &ciphertext[..XCHACHA_NONCESIZE])?;
-    open(&key, ciphertext).with_context(|| "Ciphertext was tampered with")
+    open(&key, ciphertext).map_err(|_| KeyvaultError::CiphertextTampered)
 }
 
 #[cfg(test)]
@@ -90,7 +92,10 @@ mod test {
         let ciphertext = encrypt(plaintext, password, &nonce)?;
 
         assert_eq!(ciphertext.len(), plaintext.len() + 40);
-        assert_eq!(hex::encode(ciphertext), "55287edc4265bdd919532b93dc0d4854b36b5d5a3c979384f7e4e8cf7af1f0b5d0d2df2d08fb2d5039d4108f2d5c37643cb0d72c13d07c7b7c9485cfbae8923c594c2134f389ba19ae240e");
+        assert_eq!(
+            hex::encode(ciphertext),
+            "55287edc4265bdd919532b93dc0d4854b36b5d5a3c979384f7e4e8cf7af1f0b5d0d2df2d08fb2d5039d4108f2d5c37643cb0d72c13d07c7b7c9485cfbae8923c594c2134f389ba19ae240e"
+        );
 
         Ok(())
     }
@@ -102,7 +107,7 @@ mod test {
         let password = "password123";
         let message = "Be at the big tree at 5pm tomorrow!";
         let plaintext = message.as_bytes().to_owned();
-        let ciphertext = encrypt(&plaintext, password, &nonce)?;
+        let ciphertext = encrypt(&plaintext, password, nonce)?;
         let plaintext2 = decrypt(&ciphertext, password)?;
 
         assert_eq!(&plaintext2, &plaintext);

@@ -1,7 +1,7 @@
 use ::bip39::{Mnemonic, MnemonicType};
-use getrandom::getrandom;
 
 use super::*;
+use crate::error::KeyvaultError;
 
 /// Tool for generating, validating and parsing BIP39 phrases in different supported languages.
 #[derive(Clone, Copy, Debug, Default)]
@@ -16,7 +16,7 @@ impl Bip39 {
     /// Creates the right sized entropy using the CSPRNG available on the platform.
     pub fn generate_entropy() -> Result<[u8; 32]> {
         let mut entropy = [0u8; 256 / 8];
-        getrandom(&mut entropy)?;
+        getrandom::fill(&mut entropy)?;
         Ok(entropy)
     }
 
@@ -35,13 +35,13 @@ impl Bip39 {
     /// # Example
     ///
     /// ```
-    /// # use iop_keyvault::Bip39;
+    /// # use mosaic_keyvault::Bip39;
     /// let bip39 = Bip39::language_code("fr").unwrap();
     /// assert!(bip39.check_word("aménager"));
     /// ```
     pub fn language_code(code: impl AsRef<str>) -> Result<Self> {
         let lang = Bip39Language::from_language_code(code.as_ref())
-            .ok_or_else(|| anyhow!("Invalid BIP39 language code"))?;
+            .ok_or(KeyvaultError::InvalidBip39Language)?;
         Ok(Self { lang })
     }
 
@@ -49,7 +49,7 @@ impl Bip39 {
     ///
     /// # Example
     /// ```
-    /// # use iop_keyvault::{Bip39, Seed};
+    /// # use mosaic_keyvault::{Bip39, Seed};
     /// let phrase: &str = Bip39::language_code("fr").unwrap().generate().as_phrase();
     /// let seed: Seed = Bip39::new().generate().password("");
     pub fn generate(self) -> Bip39Phrase {
@@ -63,14 +63,14 @@ impl Bip39 {
     /// # Example
     ///
     /// ```
-    /// # use iop_keyvault::Bip39;
+    /// # use mosaic_keyvault::Bip39;
     /// let bip39 = Bip39::new();
     /// assert!(bip39.check_word("abandon"));
     /// assert!(!bip39.check_word("Abandon"));
     /// assert!(!bip39.check_word("avalon"));
     /// ```
     pub fn check_word(self, word: &str) -> bool {
-        self.lang.wordmap().get_bits(word).is_ok()
+        self.lang.wordmap().get_bits(word).is_some()
     }
 
     /// Lists all words in the BIP39 dictionary, which start with the given prefix.
@@ -83,7 +83,7 @@ impl Bip39 {
     /// # Example
     ///
     /// ```
-    /// # use iop_keyvault::{Bip39, Bip39Language};
+    /// # use mosaic_keyvault::{Bip39, Bip39Language};
     /// let bip39 = Bip39::language(Bip39Language::English);
     /// assert_eq!(bip39.list_words("").len(), 2048);
     /// assert_eq!(bip39.list_words("woo"), ["wood", "wool"]);
@@ -99,20 +99,21 @@ impl Bip39 {
     /// # Example
     ///
     /// ```
-    /// # use iop_keyvault::Bip39;
+    /// # use mosaic_keyvault::Bip39;
     /// let bip39 = Bip39::new();
     /// assert!(bip39.validate("type shield target dream feature surface search flee tenant cake taxi shrug").is_ok());
     /// assert!(bip39.validate("abandon abandon about").unwrap_err().to_string().contains("invalid number of words"));
     /// ```
     pub fn validate(self, phrase: impl AsRef<str>) -> Result<()> {
-        Mnemonic::validate(phrase.as_ref(), self.lang)
+        Mnemonic::validate(phrase.as_ref(), self.lang)?;
+        Ok(())
     }
 
     /// Validates a whole BIP39 mnemonic phrase and returns an intermediate object that can be
     /// later converted into a [`Seed`] with an optional password.
     pub fn phrase(self, phrase: impl AsRef<str>) -> Result<Bip39Phrase> {
         if phrase.as_ref().split(' ').count() != Bip39::MNEMONIC_WORDS {
-            bail!("Only {}-word mnemonics are supported", Bip39::MNEMONIC_WORDS)
+            return Err(KeyvaultError::MnemonicWordCount { word_count: Bip39::MNEMONIC_WORDS });
         }
         self.short_phrase(phrase)
     }
@@ -129,7 +130,7 @@ impl Bip39 {
     pub fn entropy(self, entropy: impl AsRef<[u8]>) -> Result<Bip39Phrase> {
         let size = MnemonicType::for_word_count(Self::MNEMONIC_WORDS).unwrap();
         if entropy.as_ref().len() * 8 != size.entropy_bits() {
-            bail!("Only {}-bit entropy is supported", size.entropy_bits())
+            return Err(KeyvaultError::InvalidEntropyBitCount { bit_count: size.entropy_bits() });
         }
         self.short_entropy(entropy)
     }

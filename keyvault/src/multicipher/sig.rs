@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::KeyvaultError;
 
 /// Multicipher [`Signature`]
 ///
@@ -6,6 +7,7 @@ use super::*;
 #[derive(Clone, Eq, PartialEq)]
 pub enum MSignature {
     /// The signature tagged with this variant belongs to the [`ed25519`] module
+    /// using the legacy Blake2b-MAC key ID derivation.
     ///
     /// [`ed25519`]: ../ed25519/index.html
     Ed25519(EdSignature),
@@ -13,6 +15,8 @@ pub enum MSignature {
     ///
     /// [`secp256k1`]: ../secp256k1/index.html
     Secp256k1(SecpSignature),
+    /// Ed25519 signature produced under the Blake3 cipher suite.
+    Ed25519Blake3(EdSignature),
 }
 
 impl MSignature {
@@ -24,19 +28,20 @@ impl MSignature {
         match self {
             Self::Ed25519(_) => CipherSuite::Ed25519,
             Self::Secp256k1(_) => CipherSuite::Secp256k1,
+            Self::Ed25519Blake3(_) => CipherSuite::Ed25519Blake3,
         }
     }
 
     /// Even the binary representation of a multicipher signature is readable with this.
     // TODO Should we really keep it like this?
     pub fn to_bytes(&self) -> Vec<u8> {
-        String::from(self).as_bytes().to_vec()
+        alloc::string::String::from(self).as_bytes().to_vec()
     }
 
     /// Even the binary representation of a multicipher signature is readable with this.
     // TODO Should we really keep it like this?
     pub fn from_bytes<B: AsRef<[u8]>>(bytes: B) -> Result<Self> {
-        let string = String::from_utf8(bytes.as_ref().to_owned())?;
+        let string = alloc::string::String::from_utf8(bytes.as_ref().to_owned())?;
         string.parse()
     }
 
@@ -44,6 +49,7 @@ impl MSignature {
         match self {
             Self::Ed25519(edsig) => edsig.to_bytes(),
             Self::Secp256k1(secpsig) => secpsig.to_bytes(),
+            Self::Ed25519Blake3(edsig) => edsig.to_bytes(),
         }
     }
 
@@ -51,12 +57,16 @@ impl MSignature {
         match CipherSuite::from_char(suite)? {
             CipherSuite::Ed25519 => Ok(Self::Ed25519(EdSignature::from_bytes(inner_bytes)?)),
             CipherSuite::Secp256k1 => Ok(Self::Secp256k1(SecpSignature::from_bytes(inner_bytes)?)),
+            CipherSuite::Ed25519Blake3 => {
+                Ok(Self::Ed25519Blake3(EdSignature::from_bytes(inner_bytes)?))
+            }
         }
     }
 }
 
-impl Serialize for MSignature {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+#[cfg(feature = "serde")]
+impl serde::Serialize for MSignature {
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -65,21 +75,24 @@ impl Serialize for MSignature {
     }
 }
 
+#[cfg(feature = "serde")]
 fn deser(erased: ErasedBytes) -> Result<MSignature> {
-    MSignature::from_inner_bytes(erased.suite as char, &erased.value)
+    MSignature::from_inner_bytes(erased.suite as char, erased.value)
 }
 
-impl<'de> Deserialize<'de> for MSignature {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for MSignature {
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
+        use alloc::string::ToString;
         ErasedBytes::deserialize(deserializer)
             .and_then(|b| deser(b).map_err(|e| serde::de::Error::custom(e.to_string())))
     }
 }
 
-impl From<&MSignature> for String {
+impl From<&MSignature> for alloc::string::String {
     fn from(src: &MSignature) -> Self {
         let mut output = multibase::encode(multibase::Base::Base58Btc, src.to_inner_bytes());
         output.insert(0, src.suite().as_char());
@@ -88,38 +101,36 @@ impl From<&MSignature> for String {
     }
 }
 
-impl From<MSignature> for String {
+impl From<MSignature> for alloc::string::String {
     fn from(src: MSignature) -> Self {
         (&src).into()
     }
 }
 
-impl fmt::Display for MSignature {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str(&String::from(self))
+impl core::fmt::Display for MSignature {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        f.write_str(&alloc::string::String::from(self))
     }
 }
 
-impl fmt::Debug for MSignature {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(self, f)
+impl core::fmt::Debug for MSignature {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        core::fmt::Display::fmt(self, f)
     }
 }
 
-impl std::str::FromStr for MSignature {
-    type Err = anyhow::Error;
+impl core::str::FromStr for MSignature {
+    type Err = KeyvaultError;
     fn from_str(src: &str) -> Result<Self> {
         let mut chars = src.chars();
-        ensure!(
-            chars.next() == Some(Self::PREFIX),
-            "Signatures must start with '{}'",
-            Self::PREFIX
-        );
+        if chars.next() != Some(Self::PREFIX) {
+            return Err(KeyvaultError::InvalidSignaturePrefix);
+        }
         if let Some(suite) = chars.next() {
-            let (_base, binary) = multibase::decode(chars.as_str())?;
+            let (_base, binary) = multibase::decode(chars.as_str()).map_err(map_multibase_err)?;
             Self::from_inner_bytes(suite, &binary)
         } else {
-            Err(anyhow!("No crypto suite found"))
+            Err(KeyvaultError::NoCryptoSuite)
         }
     }
 }
@@ -133,6 +144,55 @@ impl From<EdSignature> for MSignature {
 impl From<SecpSignature> for MSignature {
     fn from(src: SecpSignature) -> Self {
         Self::Secp256k1(src)
+    }
+}
+
+// ========== SCALE codec (Substrate) ==========
+
+#[cfg(feature = "substrate")]
+mod scale_impls {
+    use super::*;
+    use alloc::vec::Vec;
+    use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, EncodeLike};
+    use scale_info::TypeInfo;
+
+    impl EncodeLike for MSignature {}
+
+    impl Encode for MSignature {
+        fn encode_to<W: parity_scale_codec::Output + ?Sized>(&self, dest: &mut W) {
+            let bytes = self.to_bytes();
+            Encode::encode_to(&bytes, dest);
+        }
+    }
+
+    impl Decode for MSignature {
+        fn decode<I: parity_scale_codec::Input>(
+            input: &mut I,
+        ) -> core::result::Result<Self, parity_scale_codec::Error> {
+            let bytes = Vec::<u8>::decode(input).map_err(|_| {
+                parity_scale_codec::Error::from("failed to decode MSignature bytes")
+            })?;
+            MSignature::from_bytes(bytes)
+                .map_err(|_| parity_scale_codec::Error::from("invalid multicipher signature"))
+        }
+    }
+
+    impl DecodeWithMemTracking for MSignature {}
+
+    impl TypeInfo for MSignature {
+        type Identity = Self;
+        fn type_info() -> scale_info::Type {
+            scale_info::Type::builder()
+// WIRE-FORMAT FREEZE: this path string is embedded in live chain metadata
+                // (scale type registry). The crate was renamed to mosaic-keyvault, but this
+                // literal must stay "iop_keyvault::multicipher" — changing it forks the type
+                // registry of every deployed chain. See SPEC-012 Frozen Wire-Format Registry.
+                .path(scale_info::Path::new("MSignature", "iop_keyvault::multicipher"))
+                .composite(
+                    scale_info::build::Fields::unnamed()
+                        .field(|f| f.ty::<Vec<u8>>().type_name("MSignature")),
+                )
+        }
     }
 }
 
@@ -176,7 +236,7 @@ mod test {
             case(
                 "sez86ALkZRspsufndsFkaT3GS5m4FHxUTGhBPRpdqqgfdgCMPWzDvxHjVAZXQNVPH8vHohuRkLtEWtT9guyscG2WsZB",
                 "016291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac \
-                 18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a"
+                 18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a",
             );
         }
 
@@ -197,31 +257,32 @@ mod test {
         }
 
         #[test]
-        #[should_panic(expected = "Unknown crypto suite 'g'")]
+        #[should_panic(expected = "UnknownCryptoSuite { suite: 'g' }")]
         fn invalid_suite() {
             let _sig =
                 "sgzAhoNep8B9HTRCAYaJFPL1hNgqxfjM72UD4B75s258aF6pPCtDf5trXm7mppZVzT6ynpC3jyH6h3Li7r9Rw4yjeG2".parse::<MSignature>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "No crypto suite found")]
+        #[should_panic(expected = "NoCryptoSuite")]
         fn missing_suite() {
             let _sig = "s".parse::<MSignature>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "Signatures must start with 's'")]
+        #[should_panic(expected = "InvalidSignaturePrefix")]
         fn invalid_type() {
             let _sig = "FezAhoNep8B9HTRCAYaJFPL1hNgqxfjM72UD4B75s258aF6pPCtDf5trXm7mppZVzT6ynpC3jyH6h3Li7r9Rw4yjeG2".parse::<MSignature>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "Signatures must start with 's'")]
+        #[should_panic(expected = "InvalidSignaturePrefix")]
         fn empty() {
             let _sig = "".parse::<MSignature>().unwrap();
         }
     }
 
+    #[cfg(feature = "serde")]
     mod serde_public_key {
         use crate::multicipher::MSignature;
 
@@ -265,8 +326,8 @@ mod test {
 
     /// Test vectors based on https://tools.ietf.org/html/rfc8032#page-24
     mod sign_verify {
-        use crate::{ed25519::EdPrivateKey, multicipher::MPrivateKey};
         use crate::{PrivateKey, PublicKey};
+        use crate::{ed25519::EdPrivateKey, multicipher::MPrivateKey};
 
         fn test(sk_hex: &str, mpk_str: &str, msg_hex: &str, msig_str: &str) {
             let sk_bytes = hex::decode(sk_hex).unwrap();
@@ -311,6 +372,119 @@ mod test {
                 "af82",
                 "sez86ALkZRspsufndsFkaT3GS5m4FHxUTGhBPRpdqqgfdgCMPWzDvxHjVAZXQNVPH8vHohuRkLtEWtT9guyscG2WsZB",
             );
+        }
+    }
+
+    /// Pinned test vectors for `CipherSuite::Ed25519Blake3` (`'o'`).
+    /// Uses the same RFC 8032 secret keys as the legacy Ed25519 tests above.
+    /// Signatures are identical (same Ed25519 crypto), but key IDs differ
+    /// because Blake3-256 replaces the legacy salted Blake2b-MAC.
+    mod blake3_sign_verify {
+        use crate::ed25519::EdPrivateKey;
+        use crate::multicipher::MPrivateKey;
+        use crate::{PrivateKey, PublicKey};
+
+        fn test(sk_hex: &str, mpk_str: &str, mkid_str: &str, msg_hex: &str, msig_str: &str) {
+            let sk_bytes = hex::decode(sk_hex).unwrap();
+            let ed_sk = EdPrivateKey::from_bytes(sk_bytes.as_slice()).unwrap();
+            let msk = MPrivateKey::Ed25519Blake3(ed_sk);
+
+            let mpk = msk.public_key();
+            assert_eq!(mpk.to_string(), mpk_str);
+
+            let mkid = mpk.key_id();
+            assert_eq!(mkid.to_string(), mkid_str);
+            assert!(mpk.validate_id(&mkid));
+
+            let msg = hex::decode(msg_hex.replace(' ', "")).unwrap();
+            let msig = msk.sign(msg.as_slice());
+            assert_eq!(msig.to_string(), msig_str);
+
+            assert!(mpk.verify(msg, &msig));
+        }
+
+        #[test]
+        fn char_0() {
+            test(
+                "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+                "pozFVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z",
+                "iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb",
+                "",
+                "sozAhoNep8B9HTRCAYaJFPL1hNgqxfjM72UD4B75s258aF6pPCtDf5trXm7mppZVzT6ynpC3jyH6h3Li7r9Rw4yjeG2",
+            );
+        }
+
+        #[test]
+        fn char_1() {
+            test(
+                "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+                "poz586Z7H2vpX9qNhN2T4e9Utugie3ogjbxzGaMtM3E6HR5",
+                "ioz9vyZuggU6zUfTpssvhYTy9Sd8NrhJ8ftrBATa3GsS4cf6",
+                "72",
+                "soz93tR11WBTZjw25Ht3CgaiSaC5rb3GnkAcaAUznjomtVj6Ac4rzQ4df9Fvy1uitGe8ZSBiG4Q5ukaVo5sjMpAwkxX",
+            );
+        }
+
+        #[test]
+        fn char_2() {
+            test(
+                "c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7",
+                "pozHyx62wPQGyvXCoihZq1BrbUjBRh2LuNxWiiqMkfAuSZr",
+                "iozA4oFDGCmB6bFcdQcQ54pXDKL2VUBtBx5ny5dUpbQRFpwX",
+                "af82",
+                "soz86ALkZRspsufndsFkaT3GS5m4FHxUTGhBPRpdqqgfdgCMPWzDvxHjVAZXQNVPH8vHohuRkLtEWtT9guyscG2WsZB",
+            );
+        }
+
+        #[test]
+        fn cross_suite_verification_fails() {
+            let sk_hex = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+            let sk_bytes = hex::decode(sk_hex).unwrap();
+            let ed_sk = EdPrivateKey::from_bytes(sk_bytes.as_slice()).unwrap();
+
+            let legacy_sk = MPrivateKey::from(ed_sk.clone());
+            let blake3_sk = MPrivateKey::Ed25519Blake3(ed_sk);
+
+            let msg = b"cross suite test";
+            let legacy_sig = legacy_sk.sign(msg.as_ref());
+            let blake3_sig = blake3_sk.sign(msg.as_ref());
+
+            let legacy_pk = legacy_sk.public_key();
+            let blake3_pk = blake3_sk.public_key();
+
+            // Same suite verification works
+            assert!(legacy_pk.verify(msg.as_ref(), &legacy_sig));
+            assert!(blake3_pk.verify(msg.as_ref(), &blake3_sig));
+
+            // Cross-suite verification fails (type mismatch)
+            assert!(!legacy_pk.verify(msg.as_ref(), &blake3_sig));
+            assert!(!blake3_pk.verify(msg.as_ref(), &legacy_sig));
+        }
+    }
+
+    #[cfg(feature = "substrate")]
+    mod scale_roundtrip {
+        use crate::multicipher::MSignature;
+        use parity_scale_codec::{Decode, Encode};
+
+        #[test]
+        fn ed25519_signature_scale_roundtrip() {
+            let sig_str = "sezAhoNep8B9HTRCAYaJFPL1hNgqxfjM72UD4B75s258aF6pPCtDf5trXm7mppZVzT6ynpC3jyH6h3Li7r9Rw4yjeG2";
+            let sig = sig_str.parse::<MSignature>().unwrap();
+            let encoded = sig.encode();
+            let decoded = MSignature::decode(&mut &encoded[..]).unwrap();
+            assert_eq!(sig, decoded);
+            assert_eq!(decoded.to_string(), sig_str);
+        }
+
+        #[test]
+        fn secp256k1_signature_scale_roundtrip() {
+            let sig_str = "ssz8XFYUjuSro2dzq4mkMMCMJkPH2SEEc6CVJ9VCG9AUXVvRP9QHKY78BnSvpb9zyz5yZf8Pzcq82DzZwLC7xSeGNgq";
+            let sig = sig_str.parse::<MSignature>().unwrap();
+            let encoded = sig.encode();
+            let decoded = MSignature::decode(&mut &encoded[..]).unwrap();
+            assert_eq!(sig, decoded);
+            assert_eq!(decoded.to_string(), sig_str);
         }
     }
 }

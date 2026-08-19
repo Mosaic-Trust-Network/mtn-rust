@@ -6,23 +6,10 @@
 
 declare -a crates=(
 	"json-digest"
-	"iop-journal-proto"
-	"iop-keyvault"
-	"iop-keyvault-wasm"
-	"iop-morpheus-proto"
-	"iop-coeus-proto"
-	"iop-vault"
-	"iop-hydra-proto"
-	"iop-coeus-node"
-	"iop-morpheus-node"
-	"json-digest-wasm"
-	"iop-proto-wasm"
-	"iop-hydra-sdk"
-	"iop-morpheus-sdk"
-	"iop-sdk"
-	"iop-sdk-wasm"
-	"iop-node-wasm"
-	"iop-sdk-ffi"
+	"mosaic-keyvault"
+	"mosaic-vault"
+	"mosaic-did-types"
+	"mosaic-sdk"
 )
 
 for crate in "${crates[@]}"; do

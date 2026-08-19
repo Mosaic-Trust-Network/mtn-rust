@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::KeyvaultError;
 
 /// Multicipher [`PublicKey`]
 ///
@@ -6,6 +7,7 @@ use super::*;
 #[derive(Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum MPublicKey {
     /// The public key tagged with this variant belongs to the [`ed25519`] module
+    /// using the legacy Blake2b-MAC key ID derivation.
     ///
     /// [`ed25519`]: ../ed25519/index.html
     Ed25519(EdPublicKey),
@@ -13,6 +15,8 @@ pub enum MPublicKey {
     ///
     /// [`secp256k1`]: ../secp256k1/index.html
     Secp256k1(SecpPublicKey),
+    /// Ed25519 public key with Blake3 key ID derivation.
+    Ed25519Blake3(EdPublicKey),
 }
 
 impl MPublicKey {
@@ -24,6 +28,7 @@ impl MPublicKey {
         match self {
             Self::Ed25519(_) => CipherSuite::Ed25519,
             Self::Secp256k1(_) => CipherSuite::Secp256k1,
+            Self::Ed25519Blake3(_) => CipherSuite::Ed25519Blake3,
         }
     }
 
@@ -44,6 +49,7 @@ impl MPublicKey {
         match self {
             Self::Ed25519(edpk) => edpk.to_bytes(),
             Self::Secp256k1(secppk) => secppk.to_bytes(),
+            Self::Ed25519Blake3(edpk) => edpk.to_bytes(),
         }
     }
 
@@ -51,6 +57,9 @@ impl MPublicKey {
         match CipherSuite::from_char(suite)? {
             CipherSuite::Ed25519 => Ok(Self::Ed25519(EdPublicKey::from_bytes(inner_bytes)?)),
             CipherSuite::Secp256k1 => Ok(Self::Secp256k1(SecpPublicKey::from_bytes(inner_bytes)?)),
+            CipherSuite::Ed25519Blake3 => {
+                Ok(Self::Ed25519Blake3(EdPublicKey::from_bytes(inner_bytes)?))
+            }
         }
     }
 }
@@ -60,6 +69,10 @@ impl PublicKey<MultiCipher> for MPublicKey {
         match self {
             Self::Ed25519(edpk) => MKeyId::from(edpk.key_id()),
             Self::Secp256k1(secppk) => MKeyId::from(secppk.key_id()),
+            Self::Ed25519Blake3(edpk) => {
+                use crate::ed25519::Blake3;
+                MKeyId::Ed25519Blake3(EdKeyId::from_pk::<Blake3>(edpk))
+            }
         }
     }
 
@@ -73,6 +86,13 @@ impl PublicKey<MultiCipher> for MPublicKey {
             Self::Secp256k1(secppk) => {
                 if let MKeyId::Secp256k1(secpid) = key_id {
                     return secppk.validate_id(secpid);
+                }
+            }
+            Self::Ed25519Blake3(edpk) => {
+                if let MKeyId::Ed25519Blake3(edid) = key_id {
+                    use crate::ed25519::Blake3;
+                    let derived = EdKeyId::from_pk::<Blake3>(edpk);
+                    return &derived == edid;
                 }
             }
         };
@@ -92,14 +112,20 @@ impl PublicKey<MultiCipher> for MPublicKey {
                     return secppk.verify(data, secpsig);
                 }
             }
+            Self::Ed25519Blake3(edpk) => {
+                if let MSignature::Ed25519Blake3(edsig) = sig {
+                    return edpk.verify(data, edsig);
+                }
+            }
         };
 
         false
     }
 }
 
-impl Serialize for MPublicKey {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+#[cfg(feature = "serde")]
+impl serde::Serialize for MPublicKey {
+    fn serialize<S>(&self, serializer: S) -> core::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -108,21 +134,24 @@ impl Serialize for MPublicKey {
     }
 }
 
-fn deser(erased: ErasedBytes) -> Result<MPublicKey> {
-    MPublicKey::from_inner_bytes(erased.suite as char, &erased.value)
+#[cfg(feature = "serde")]
+fn deser(erased: crate::multicipher::ErasedBytes) -> Result<MPublicKey> {
+    MPublicKey::from_inner_bytes(erased.suite as char, erased.value)
 }
 
-impl<'de> Deserialize<'de> for MPublicKey {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for MPublicKey {
+    fn deserialize<D>(deserializer: D) -> core::result::Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
+        use alloc::string::ToString;
         ErasedBytes::deserialize(deserializer)
             .and_then(|b| deser(b).map_err(|e| serde::de::Error::custom(e.to_string())))
     }
 }
 
-impl From<&MPublicKey> for String {
+impl From<&MPublicKey> for alloc::string::String {
     fn from(src: &MPublicKey) -> Self {
         let mut output = multibase::encode(multibase::Base::Base58Btc, src.to_inner_bytes());
         output.insert(0, src.suite().as_char());
@@ -131,38 +160,36 @@ impl From<&MPublicKey> for String {
     }
 }
 
-impl From<MPublicKey> for String {
+impl From<MPublicKey> for alloc::string::String {
     fn from(src: MPublicKey) -> Self {
         (&src).into()
     }
 }
 
-impl std::fmt::Display for MPublicKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", String::from(self))
+impl core::fmt::Display for MPublicKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        write!(f, "{}", alloc::string::String::from(self))
     }
 }
 
-impl std::fmt::Debug for MPublicKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        (self as &dyn std::fmt::Display).fmt(f)
+impl core::fmt::Debug for MPublicKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        (self as &dyn core::fmt::Display).fmt(f)
     }
 }
 
-impl std::str::FromStr for MPublicKey {
-    type Err = anyhow::Error;
+impl core::str::FromStr for MPublicKey {
+    type Err = KeyvaultError;
     fn from_str(src: &str) -> Result<Self> {
         let mut chars = src.chars();
-        ensure!(
-            chars.next() == Some(Self::PREFIX),
-            "Public keys must start with '{}'",
-            Self::PREFIX
-        );
+        if chars.next() != Some(Self::PREFIX) {
+            return Err(KeyvaultError::InvalidPublicKeyPrefix);
+        }
         if let Some(suite) = chars.next() {
-            let (_base, binary) = multibase::decode(chars.as_str())?;
+            let (_base, binary) = multibase::decode(chars.as_str()).map_err(map_multibase_err)?;
             Self::from_inner_bytes(suite, &binary)
         } else {
-            Err(anyhow!("No crypto suite found"))
+            Err(KeyvaultError::NoCryptoSuite)
         }
     }
 }
@@ -176,6 +203,55 @@ impl From<EdPublicKey> for MPublicKey {
 impl From<SecpPublicKey> for MPublicKey {
     fn from(src: SecpPublicKey) -> Self {
         Self::Secp256k1(src)
+    }
+}
+
+// ========== SCALE codec (Substrate) ==========
+
+#[cfg(feature = "substrate")]
+mod scale_impls {
+    use super::*;
+    use alloc::vec::Vec;
+    use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, EncodeLike};
+    use scale_info::TypeInfo;
+
+    impl EncodeLike for MPublicKey {}
+
+    impl Encode for MPublicKey {
+        fn encode_to<W: parity_scale_codec::Output + ?Sized>(&self, dest: &mut W) {
+            let bytes = self.to_bytes();
+            Encode::encode_to(&bytes, dest);
+        }
+    }
+
+    impl Decode for MPublicKey {
+        fn decode<I: parity_scale_codec::Input>(
+            input: &mut I,
+        ) -> core::result::Result<Self, parity_scale_codec::Error> {
+            let bytes = Vec::<u8>::decode(input).map_err(|_| {
+                parity_scale_codec::Error::from("failed to decode MPublicKey bytes")
+            })?;
+            MPublicKey::from_bytes(bytes)
+                .map_err(|_| parity_scale_codec::Error::from("invalid multicipher public key"))
+        }
+    }
+
+    impl DecodeWithMemTracking for MPublicKey {}
+
+    impl TypeInfo for MPublicKey {
+        type Identity = Self;
+        fn type_info() -> scale_info::Type {
+            scale_info::Type::builder()
+// WIRE-FORMAT FREEZE: this path string is embedded in live chain metadata
+                // (scale type registry). The crate was renamed to mosaic-keyvault, but this
+                // literal must stay "iop_keyvault::multicipher" — changing it forks the type
+                // registry of every deployed chain. See SPEC-012 Frozen Wire-Format Registry.
+                .path(scale_info::Path::new("MPublicKey", "iop_keyvault::multicipher"))
+                .composite(
+                    scale_info::build::Fields::unnamed()
+                        .field(|f| f.ty::<Vec<u8>>().type_name("MPublicKey")),
+                )
+        }
     }
 }
 
@@ -254,31 +330,32 @@ mod test {
         }
 
         #[test]
-        #[should_panic(expected = "Unknown crypto suite 'g'")]
+        #[should_panic(expected = "UnknownCryptoSuite { suite: 'g' }")]
         fn invalid_suite() {
             let _pk =
                 "pgzAgmjPHe5Qs4VakvXHGnd6NsYjaxt4suMUtf39TayrSfb".parse::<MPublicKey>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "No crypto suite found")]
+        #[should_panic(expected = "NoCryptoSuite")]
         fn missing_suite() {
             let _pk = "p".parse::<MPublicKey>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "Public keys must start with 'p'")]
+        #[should_panic(expected = "InvalidPublicKeyPrefix")]
         fn invalid_type() {
             let _pk = "Fez21JXEtMzXjbCK6BAYFU9ewX".parse::<MPublicKey>().unwrap();
         }
 
         #[test]
-        #[should_panic(expected = "Public keys must start with 'p'")]
+        #[should_panic(expected = "InvalidPublicKeyPrefix")]
         fn empty() {
             let _pk = "".parse::<MPublicKey>().unwrap();
         }
     }
 
+    #[cfg(feature = "serde")]
     mod serde_key_id {
         use crate::multicipher::MPublicKey;
 
@@ -315,6 +392,32 @@ mod test {
             let pk_tostr = pk_deser.to_string();
             assert_eq!(pk, pk_deser);
             assert_eq!(pk_str, pk_tostr);
+        }
+    }
+
+    #[cfg(feature = "substrate")]
+    mod scale_roundtrip {
+        use crate::multicipher::MPublicKey;
+        use parity_scale_codec::{Decode, Encode};
+
+        #[test]
+        fn ed25519_public_key_scale_roundtrip() {
+            let pk_str = "pezAgmjPHe5Qs4VakvXHGnd6NsYjaxt4suMUtf39TayrSfb";
+            let pk = pk_str.parse::<MPublicKey>().unwrap();
+            let encoded = pk.encode();
+            let decoded = MPublicKey::decode(&mut &encoded[..]).unwrap();
+            assert_eq!(pk, decoded);
+            assert_eq!(decoded.to_string(), pk_str);
+        }
+
+        #[test]
+        fn secp256k1_public_key_scale_roundtrip() {
+            let pk_str = "pozHyx62wPQGyvXCoihZq1BrbUjBRh2LuNxWiiqMkfAuSZr";
+            let pk = pk_str.parse::<MPublicKey>().unwrap();
+            let encoded = pk.encode();
+            let decoded = MPublicKey::decode(&mut &encoded[..]).unwrap();
+            assert_eq!(pk, decoded);
+            assert_eq!(decoded.to_string(), pk_str);
         }
     }
 }

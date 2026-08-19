@@ -1,4 +1,5 @@
 #![warn(missing_docs)]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 //! This library provides some algorithms to calculate cryptographically secure digests of JSON documents.
 //! Since JSON is an ambiguous serialization format, we also had to define a canonical deterministic subset
@@ -40,14 +41,15 @@
 //! assert_eq!(digest, digest_from_partial);
 //! ```
 
+extern crate alloc;
+
 mod digest;
+pub mod error;
+mod hasher;
 pub mod json_path;
 mod nonce;
 
 pub use digest::*;
+pub use error::*;
+pub use hasher::*;
 pub use nonce::*;
-
-use std::collections::HashMap;
-
-use anyhow::{bail, ensure, Result};
-use serde::{Deserialize, Serialize};

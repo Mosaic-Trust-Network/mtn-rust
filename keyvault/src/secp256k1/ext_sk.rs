@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::KeyvaultError;
 
 pub const XPRV_DATA_SIZE: usize = 78;
 pub const SK_PREFIX: u8 = 0u8;
@@ -87,16 +88,19 @@ impl SecpExtPrivateKey {
     /// [`BIP32`]: https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#serialization-format
     pub fn from_xprv(xprv: &str, prefix: &[u8; BIP32_VERSION_PREFIX_SIZE]) -> Result<Self> {
         let data = from_base58check(xprv)?;
-        ensure!(data.len() == XPRV_DATA_SIZE, "Length of data must be {}", XPRV_DATA_SIZE);
+        if data.len() != XPRV_DATA_SIZE {
+            return Err(KeyvaultError::ExtKeyLength { expected: XPRV_DATA_SIZE });
+        }
 
         debug_assert_eq!(BIP32_VERSION_PREFIX_SIZE, 4);
 
         let actual_prefix = &data[0..BIP32_VERSION_PREFIX_SIZE];
-        ensure!(
-            actual_prefix == prefix,
-            "Invalid network prefix found: {}",
-            hex::encode(actual_prefix)
-        );
+        if actual_prefix != prefix {
+            return Err(KeyvaultError::ExtKeyVersion {
+                expected_ver: hex::encode(prefix),
+                found_ver: hex::encode(actual_prefix),
+            });
+        }
         let depth = data[4];
         let parent_fingerprint = data[5..9].to_vec();
         let idx = {
@@ -108,7 +112,9 @@ impl SecpExtPrivateKey {
             let chain_code_bytes = &data[13..45];
             ChainCode::from_bytes(chain_code_bytes)?
         };
-        ensure!(data[45] == SK_PREFIX, "xprv must have a private key prefixed with {}", SK_PREFIX);
+        if data[45] != SK_PREFIX {
+            return Err(KeyvaultError::XprvPrefix { expected: SK_PREFIX });
+        }
         let sk = {
             let sk_bytes = &data[46..78];
             SecpPrivateKey::from_bytes(sk_bytes)?
@@ -120,7 +126,9 @@ impl SecpExtPrivateKey {
 
 impl ExtendedPrivateKey<Secp256k1> for SecpExtPrivateKey {
     fn derive_normal_child(&self, idx: i32) -> Result<SecpExtPrivateKey> {
-        ensure!(idx >= 0, "Derivation index cannot be negative");
+        if idx < 0 {
+            return Err(KeyvaultError::NegativeDerivationIndex);
+        }
         let idx = idx as u32;
 
         let xprv = self.cook_new(idx, |hasher: &mut HmacSha512| {
@@ -131,7 +139,9 @@ impl ExtendedPrivateKey<Secp256k1> for SecpExtPrivateKey {
         Ok(xprv)
     }
     fn derive_hardened_child(&self, idx: i32) -> Result<SecpExtPrivateKey> {
-        ensure!(idx >= 0, "Derivation index cannot be negative");
+        if idx < 0 {
+            return Err(KeyvaultError::NegativeDerivationIndex);
+        }
         let idx = 0x8000_0000u32 + idx as u32;
 
         let xprv = self.cook_new(idx, |hasher: &mut HmacSha512| {

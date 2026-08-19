@@ -3,9 +3,8 @@
 //! [SLIP-0010](https://github.com/satoshilabs/slips/blob/master/slip-0010.md) compatible
 //! child-key derivation for building hierarchical deterministic wallets.
 
-use std::str::FromStr;
-
 use super::*;
+use crate::error::KeyvaultError;
 
 /// Entry point to generate extended private keys in a hierarchical deterministic wallet starting from a seed based
 /// on the BIP-0032 standard (and the SLIP-0010 for crypto suites other than Secp256k1).
@@ -33,7 +32,7 @@ pub struct Bip32Node<C: KeyDerivationCrypto + 'static> {
 }
 
 impl<C: KeyDerivationCrypto + 'static> fmt::Debug for Bip32Node<C> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> std::result::Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("Bip32Node")
             .field("path", &self.path)
@@ -153,7 +152,7 @@ impl<C: KeyDerivationCrypto + 'static> Bip32PublicNode<C> {
 }
 
 impl<C: KeyDerivationCrypto + 'static> fmt::Debug for Bip32PublicNode<C> {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> std::result::Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("Bip32PublicNode")
             .field("path", &self.path)
@@ -182,7 +181,7 @@ fn is_hardened_suffix_char(c: char) -> bool {
 }
 
 impl FromStr for ChildIndex {
-    type Err = anyhow::Error;
+    type Err = KeyvaultError;
     fn from_str(mut src: &str) -> Result<Self> {
         let hardened = src.ends_with(is_hardened_suffix_char);
         if hardened {
@@ -190,17 +189,17 @@ impl FromStr for ChildIndex {
         };
         let idx = src.parse::<i32>()?;
         if idx < 0 {
-            bail!("BIP32 derivation index cannot be negative");
+            return Err(KeyvaultError::NegativeBip32Index);
         }
         Ok(if hardened { ChildIndex::Hardened(idx) } else { ChildIndex::Normal(idx) })
     }
 }
 
 impl fmt::Display for ChildIndex {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            ChildIndex::Normal(idx) => formatter.write_fmt(format_args!("{}", idx)),
-            ChildIndex::Hardened(idx) => formatter.write_fmt(format_args!("{}'", idx)),
+            ChildIndex::Normal(idx) => formatter.write_fmt(format_args!("{idx}")),
+            ChildIndex::Hardened(idx) => formatter.write_fmt(format_args!("{idx}'")),
         }
     }
 }
@@ -225,24 +224,26 @@ impl Path {
 }
 
 impl FromStr for Path {
-    type Err = anyhow::Error;
+    type Err = KeyvaultError;
     fn from_str(src: &str) -> Result<Self> {
         let mut pieces = src.split('/');
 
         let first_opt = pieces.next();
         if let Some(first) = first_opt {
             if first != "m" && first != "M" {
-                bail!("BIP32 derivation path needs to start with 'm'");
+                return Err(KeyvaultError::Bip32PathNotStartingWithM);
             }
         } else {
-            bail!("BIP32 derivation path cannot be empty");
+            return Err(KeyvaultError::Bip32PathEmpty);
         }
 
         let (mut successes, errors): (Vec<_>, Vec<_>) =
             pieces.map(|p: &str| (p, p.parse::<ChildIndex>())).partition(|(_p, i)| i.is_ok());
 
         if !errors.is_empty() {
-            bail!("BIP32 derivation path contains invalid child indices: {:?}", errors);
+            let details: Vec<(String, core::result::Result<(), KeyvaultError>)> =
+                errors.into_iter().map(|(p, r)| (String::from(p), r.map(|_| ()))).collect();
+            return Err(KeyvaultError::InvalidChildIndices { details });
         }
 
         // because of the above partitioning, successes only contain parse results
@@ -259,11 +260,11 @@ impl From<Vec<ChildIndex>> for Path {
 }
 
 impl fmt::Display for Path {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> core::fmt::Result {
         use fmt::Write as _;
         formatter.write_char('m')?;
         for c in &self.path {
-            write!(formatter, "/{}", c)?;
+            write!(formatter, "/{c}")?;
         }
         Ok(())
     }
@@ -324,38 +325,6 @@ mod tests {
         assert!("m/522147483648".parse::<Path>().is_err());
     }
 
-    // macro_rules! assert_fmt {
-    //     ($actual:expr, $($arg:tt)+) => {
-    //         assert_eq!(format!("{:?}", $actual), format!($($arg)+));
-    //     }
-    // }
-
-    // fn test_path(path_str: &str) {
-    //     let seed = crate::Seed::generate_new();
-    //     let master = Bip32.master(&seed, &TestNetwork);
-    //     let path = path_str.parse::<Path>().unwrap();
-    //     assert_fmt!(
-    //         TestCrypto::bip32_ext_priv_key(&master, &path).unwrap(),
-    //         "xprv(sk({}))",
-    //         path_str
-    //     );
-    //     assert_fmt!(
-    //         TestCrypto::bip32_ext_pub_key(&master, &path).unwrap(),
-    //         "xpub(pk({}))",
-    //         path_str
-    //     );
-    //     assert_fmt!(TestCrypto::bip32_priv_key(&master, &path).unwrap(), "sk({})", path_str);
-    //     assert_fmt!(TestCrypto::bip32_pub_key(&master, &path).unwrap(), "pk({})", path_str);
-    //     assert_fmt!(TestCrypto::bip32_key_id(&master, &path).unwrap(), "id({})", path_str);
-    // }
-
-    // #[test]
-    // fn apply_path() {
-    //     test_path("m");
-    //     test_path("m/0'");
-    //     test_path("m/44'/0'/0'/0/0");
-    // }
-
     #[test]
     fn derivation() -> Result<()> {
         let phrase = "blast cargo razor option vote shoe stock cruel mansion boy spot never album crop reflect kangaroo blouse slam empty shoot cable vital crane manual";
@@ -368,23 +337,59 @@ mod tests {
         let receives = account.derive_normal(0)?;
         let key = receives.derive_normal(0)?;
 
-        assert_eq!(master.to_xprv(net), "HYDMVzMRRudwQ4sYtEeUUTuvgSjfFdA4eEEs9tnexVi7wzLh1biJ23KpwowPwpanAcppzuoUuQnDyPG41BV6Haecn1Zzy5fBnEqvqm3EfYsJHfm2");
-        assert_eq!(master.neuter().to_xpub(net), "hydmVzu5j2FCm7zqZBeSU9i6QAU5wQTJCFZyU5nP2w1m7fzrFG9gn3CQhgnchDCuEF5LTsdEgqZsnATTisx8sY5bvf2xqgDbkHtw4o3qxKvjxz5X");
+        assert_eq!(
+            master.to_xprv(net),
+            "HYDMVzMRRudwQ4sYtEeUUTuvgSjfFdA4eEEs9tnexVi7wzLh1biJ23KpwowPwpanAcppzuoUuQnDyPG41BV6Haecn1Zzy5fBnEqvqm3EfYsJHfm2"
+        );
+        assert_eq!(
+            master.neuter().to_xpub(net),
+            "hydmVzu5j2FCm7zqZBeSU9i6QAU5wQTJCFZyU5nP2w1m7fzrFG9gn3CQhgnchDCuEF5LTsdEgqZsnATTisx8sY5bvf2xqgDbkHtw4o3qxKvjxz5X"
+        );
         assert_eq!(master.path(), &"m".parse()?);
-        assert_eq!(bip44.to_xprv(net), "HYDMVzQELuRPBY1JTQZ1LQD3oJmX9X3atztB57mEaCQEWZMAstsvMp36KGHyPSDR5dfCY1Fc4DLcLk5WwSTwvmwHwioV5dRd6kvqnewQPBBCoWjD");
-        assert_eq!(bip44.neuter().to_xpub(net), "hydmVzwte22eYb8b8MYyL61DX2VwqJLpT2DHPJkxedhsgF1L7ZKK7oug599C8ppMqKWqznGdxp2q28s3TQykNkJE6YFWNjuRc686X6XT9Yojtm9E");
+        assert_eq!(
+            bip44.to_xprv(net),
+            "HYDMVzQELuRPBY1JTQZ1LQD3oJmX9X3atztB57mEaCQEWZMAstsvMp36KGHyPSDR5dfCY1Fc4DLcLk5WwSTwvmwHwioV5dRd6kvqnewQPBBCoWjD"
+        );
+        assert_eq!(
+            bip44.neuter().to_xpub(net),
+            "hydmVzwte22eYb8b8MYyL61DX2VwqJLpT2DHPJkxedhsgF1L7ZKK7oug599C8ppMqKWqznGdxp2q28s3TQykNkJE6YFWNjuRc686X6XT9Yojtm9E"
+        );
         assert_eq!(bip44.path(), &"m/44'".parse()?);
-        assert_eq!(hyd.to_xprv(net), "HYDMVzSE83q9tomV2q935JF5mRZXUB37urS6ZpAvi17d5tFNK7K45ddZmjMZJKYQ8yLjKrq4HFewhXuL5AjDzb9Ft5efNT8upEy1ftARyhmxRFZH");
-        assert_eq!(hyd.neuter().to_xpub(net), "hydmVzytRASRFrtmhn914z3FV9Hx9xLMTsmCt1AenSRGFZuXYmkSqdW9XcCn3iAWcCZgEap3diAfhYPXRa5mpHuuxvWehM4j2ZS3V1rZpRF8xTr5");
+        assert_eq!(
+            hyd.to_xprv(net),
+            "HYDMVzSE83q9tomV2q935JF5mRZXUB37urS6ZpAvi17d5tFNK7K45ddZmjMZJKYQ8yLjKrq4HFewhXuL5AjDzb9Ft5efNT8upEy1ftARyhmxRFZH"
+        );
+        assert_eq!(
+            hyd.neuter().to_xpub(net),
+            "hydmVzytRASRFrtmhn914z3FV9Hx9xLMTsmCt1AenSRGFZuXYmkSqdW9XcCn3iAWcCZgEap3diAfhYPXRa5mpHuuxvWehM4j2ZS3V1rZpRF8xTr5"
+        );
         assert_eq!(hyd.path(), &"m/44'/4741444'".parse()?);
-        assert_eq!(account.to_xprv(net), "HYDMVzUVgP7S8GNPrKWhvoFPivfS25QnhfKi1iydA7jbWRwVuMJTVZzBQvBV86zpNJg83rrtvj6SWsftT3nNg5PQ9kwEdzTSpEDH5KbZsjbKBbhs");
-        assert_eq!(account.neuter().to_xpub(net), "hydmW129yVihVKVgXGWfvV3ZSePrhri2FgepKuyMEZ3Eg7bf91jrFZrmAo2hsVcS49dTRP5wZM7A8vudxWk5n8J2Ci12CSNvLy76CsnRaMK4A2b5");
+        assert_eq!(
+            account.to_xprv(net),
+            "HYDMVzUVgP7S8GNPrKWhvoFPivfS25QnhfKi1iydA7jbWRwVuMJTVZzBQvBV86zpNJg83rrtvj6SWsftT3nNg5PQ9kwEdzTSpEDH5KbZsjbKBbhs"
+        );
+        assert_eq!(
+            account.neuter().to_xpub(net),
+            "hydmW129yVihVKVgXGWfvV3ZSePrhri2FgepKuyMEZ3Eg7bf91jrFZrmAo2hsVcS49dTRP5wZM7A8vudxWk5n8J2Ci12CSNvLy76CsnRaMK4A2b5"
+        );
         assert_eq!(account.path(), &"m/44'/4741444'/0'".parse()?);
-        assert_eq!(receives.to_xprv(net), "HYDMVzVXwQGdZsas8KUKcmTzXtR4Le1fioCn4r8aMFa1CLvCzXJJa28ogEUPdZD1BrSTuBLDGRv5SaPHStH7ZYABhdD6Tf6dCPLd5eaJ9aArC8po");
-        assert_eq!(receives.neuter().to_xpub(net), "hydmW13CEWstvvi9oGUHcTGAFc9V2RJuGpXtP38JRgseN2aNEBjhL21PS7KcNwqbz2jh787bMSPNkd7sYsdVm5rzdeyweau32iL6qzCgpn79R4o2");
+        assert_eq!(
+            receives.to_xprv(net),
+            "HYDMVzVXwQGdZsas8KUKcmTzXtR4Le1fioCn4r8aMFa1CLvCzXJJa28ogEUPdZD1BrSTuBLDGRv5SaPHStH7ZYABhdD6Tf6dCPLd5eaJ9aArC8po"
+        );
+        assert_eq!(
+            receives.neuter().to_xpub(net),
+            "hydmW13CEWstvvi9oGUHcTGAFc9V2RJuGpXtP38JRgseN2aNEBjhL21PS7KcNwqbz2jh787bMSPNkd7sYsdVm5rzdeyweau32iL6qzCgpn79R4o2"
+        );
         assert_eq!(receives.path(), &"m/44'/4741444'/0'/0".parse()?);
-        assert_eq!(key.to_xprv(net), "HYDMVzXDVKq5jELcWwpPea9GzS7R8sPmoVo6MjhvGYhenJFBrjzgLw5LPoLzEZY1GyKRqbpPBxZNEvP6TnAq9Qpdi9wo3Bhb9NJNMC79egmr486W");
-        assert_eq!(key.neuter().to_xpub(net), "hydmW14snSSM6HTuBtpMeFwSi9qqpeh1MX8CfvheLz1HwyuM6QS56vwv9gCCyx9GMfhYfMxnn89ynj3y3STp2UxpwT3kFfeGenAkzJRHsuYCLMJW");
+        assert_eq!(
+            key.to_xprv(net),
+            "HYDMVzXDVKq5jELcWwpPea9GzS7R8sPmoVo6MjhvGYhenJFBrjzgLw5LPoLzEZY1GyKRqbpPBxZNEvP6TnAq9Qpdi9wo3Bhb9NJNMC79egmr486W"
+        );
+        assert_eq!(
+            key.neuter().to_xpub(net),
+            "hydmW14snSSM6HTuBtpMeFwSi9qqpeh1MX8CfvheLz1HwyuM6QS56vwv9gCCyx9GMfhYfMxnn89ynj3y3STp2UxpwT3kFfeGenAkzJRHsuYCLMJW"
+        );
         assert_eq!(key.path(), &"m/44'/4741444'/0'/0/0".parse()?);
 
         Ok(())
@@ -404,9 +409,15 @@ mod tests {
         let receives = public.derive_normal(0)?;
         let key = receives.derive_normal(0)?;
 
-        assert_eq!(receives.to_xpub(net), "hydmW13CEWstvvi9oGUHcTGAFc9V2RJuGpXtP38JRgseN2aNEBjhL21PS7KcNwqbz2jh787bMSPNkd7sYsdVm5rzdeyweau32iL6qzCgpn79R4o2");
+        assert_eq!(
+            receives.to_xpub(net),
+            "hydmW13CEWstvvi9oGUHcTGAFc9V2RJuGpXtP38JRgseN2aNEBjhL21PS7KcNwqbz2jh787bMSPNkd7sYsdVm5rzdeyweau32iL6qzCgpn79R4o2"
+        );
         assert_eq!(receives.path(), &"m/44'/4741444'/0'/0".parse()?);
-        assert_eq!(key.to_xpub(net), "hydmW14snSSM6HTuBtpMeFwSi9qqpeh1MX8CfvheLz1HwyuM6QS56vwv9gCCyx9GMfhYfMxnn89ynj3y3STp2UxpwT3kFfeGenAkzJRHsuYCLMJW");
+        assert_eq!(
+            key.to_xpub(net),
+            "hydmW14snSSM6HTuBtpMeFwSi9qqpeh1MX8CfvheLz1HwyuM6QS56vwv9gCCyx9GMfhYfMxnn89ynj3y3STp2UxpwT3kFfeGenAkzJRHsuYCLMJW"
+        );
         assert_eq!(key.path(), &"m/44'/4741444'/0'/0/0".parse()?);
 
         Ok(())

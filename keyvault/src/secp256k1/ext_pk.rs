@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::KeyvaultError;
 
 pub const XPUB_DATA_SIZE: usize = 78;
 
@@ -62,16 +63,19 @@ impl SecpExtPublicKey {
     /// [`BIP32`]: https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki#serialization-format
     pub fn from_xpub(xprv: &str, prefix: &[u8; BIP32_VERSION_PREFIX_SIZE]) -> Result<Self> {
         let data = from_base58check(xprv)?;
-        ensure!(data.len() == XPUB_DATA_SIZE, "Length of data must be {}", XPUB_DATA_SIZE);
+        if data.len() != XPUB_DATA_SIZE {
+            return Err(KeyvaultError::ExtKeyLength { expected: XPUB_DATA_SIZE });
+        }
 
         debug_assert_eq!(BIP32_VERSION_PREFIX_SIZE, 4);
 
         let actual_prefix = &data[0..BIP32_VERSION_PREFIX_SIZE];
-        ensure!(
-            actual_prefix == prefix,
-            "Invalid network prefix found: {}",
-            hex::encode(actual_prefix)
-        );
+        if actual_prefix != prefix {
+            return Err(KeyvaultError::ExtKeyVersion {
+                expected_ver: hex::encode(prefix),
+                found_ver: hex::encode(actual_prefix),
+            });
+        }
         let depth = data[4];
         let parent_fingerprint = data[5..9].to_vec();
         let idx = {
@@ -94,7 +98,9 @@ impl SecpExtPublicKey {
 
 impl ExtendedPublicKey<Secp256k1> for SecpExtPublicKey {
     fn derive_normal_child(&self, idx: i32) -> Result<SecpExtPublicKey> {
-        ensure!(idx >= 0, "Derivation index cannot be negative");
+        if idx < 0 {
+            return Err(KeyvaultError::NegativeDerivationIndex);
+        }
         let idx = idx as u32;
 
         let xpub = self.cook_new(idx, |hasher: &mut HmacSha512| {

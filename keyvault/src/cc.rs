@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::KeyvaultError;
 
 /// Size of the chain code in bytes
 pub const CHAIN_CODE_SIZE: usize = 32;
@@ -27,10 +28,8 @@ impl ChainCode {
     /// [`CHAIN_CODE_SIZE`]: ../constant.CHAIN_CODE_SIZE
     pub fn from_bytes<D: AsRef<[u8]>>(bytes: D) -> Result<Self> {
         let bytes = bytes.as_ref();
-        ensure! {
-            bytes.len() == CHAIN_CODE_SIZE,
-            "Chain code length is not {}",
-            CHAIN_CODE_SIZE
+        if bytes.len() != CHAIN_CODE_SIZE {
+            return Err(KeyvaultError::ChainCodeLength { expected: CHAIN_CODE_SIZE });
         }
         let mut cc = [0u8; CHAIN_CODE_SIZE];
         cc.copy_from_slice(bytes);

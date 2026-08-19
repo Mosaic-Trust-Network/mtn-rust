@@ -1,0 +1,12 @@
+[package]
+name = "core2"
+version = "0.4.0"
+edition = "2018"
+publish = false
+description = "Placeholder for yanked core2 0.4.0 (needed only for lockfile resolution)"
+license = "Apache-2.0 OR MIT"
+
+[features]
+default = ["std"]
+alloc = []
+std = ["alloc"]

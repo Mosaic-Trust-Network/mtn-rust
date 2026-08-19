@@ -1,35 +1,55 @@
 [package]
-name = "iop-keyvault"
-version = "0.0.16"
-edition = "2021"
+name = "mosaic-keyvault"
 description = "A general-purpose hierarchical deterministic generator for asymmetric keys."
-authors = ["IOP Ventures LLC <dev@iop-ventures.com>", "wigy <wigy_opensource_developer@yahoo.com>", "Rache Bartmoss <bartmoss@tutanota.com>"]
-license = "LGPL-3.0-or-later"
-repository = "https://github.com/Internet-of-People/iop-rs"
-homepage = "https://developer.iop.technology/glossary?id=multicipher"
-keywords = ["crypto", "wallet", "iop", "vault", "ssi"]
+keywords = ["crypto", "wallet", "vault", "ssi", "mosaic"]
 categories = ["cryptography", "cryptography::cryptocurrencies"]
 
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
 [dependencies]
-anyhow = "1.0.57"
-blake2 = "0.10.4"
-digest = { version = "0.10.3", features = ["mac"] }
-ed25519-dalek = "1.0.1"
-rand = { version = "0.8.5", features = ["getrandom"] }
-getrandom = { version = "0.2.7", features = ["wasm-bindgen", "js"] }
-hex = "0.4.3"
-hmac = "0.12.1"
-# Unfortunately the crate name of the libsecp256k1 collides with the perfect module name
-# for the cipher, so we rename the dependency here:
-secp = { version = "0.7.0", package = "libsecp256k1" }
-multibase = "0.9.1"
-orion = "0.17.1"
-ripemd = "0.1.1"
-serde = { version = "1.0.137", features = ["derive"] }
-serde_bytes = "0.11.6"
-sha2 = "0.10.2"
-tiny-bip39 = { version = "1.0.0", features = [] }
+thiserror = { workspace = true }
+blake2 = { workspace = true }
+blake3 = { workspace = true }
+digest = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true }
+getrandom-2 = { workspace = true, optional = true }
+hex = { workspace = true }
+hmac = { workspace = true }
+k256 = { workspace = true }
+multibase = { workspace = true }
+orion = { workspace = true, optional = true }
+ripemd = { workspace = true }
+serde = { workspace = true, optional = true }
+serde_bytes = { workspace = true, optional = true }
+sha2 = { workspace = true }
+bip39 = { workspace = true, default-features = false, features = ["default-langs"], optional = true }
+parity-scale-codec = { workspace = true, optional = true }
+scale-info = { workspace = true, optional = true }
 
 [dev-dependencies]
-rmp-serde = "1.1.0"
-serde_json = { version = "1.0.81", features = ["preserve_order"] }
+rmp-serde = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+default = [ "std" ]
+std = [
+	"dep:bip39",
+	"dep:getrandom",
+	"dep:getrandom-2",
+	"dep:orion",
+	"getrandom/std",
+	"hex/std",
+	"parity-scale-codec?/std",
+	"rand",
+	"scale-info?/std",
+	"thiserror/std",
+]
+serde = [ "dep:serde", "dep:serde_bytes" ]
+substrate = [ "dep:parity-scale-codec", "dep:scale-info" ]
