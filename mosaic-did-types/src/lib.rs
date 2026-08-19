@@ -46,3 +46,32 @@ pub use signature::{
 };
 pub use state::*;
 pub use validity::is_height_valid;
+
+#[cfg(all(test, feature = "substrate"))]
+mod freeze_tests {
+    //! SPEC-012 Frozen Wire-Format Registry regression pins for the
+    //! hand-written scale_info paths. If one of these tests fails, a frozen
+    //! metadata path drifted — revert the change, do not update the strings.
+
+    use crate::auth::Authentication;
+    use crate::did::Did;
+    use scale_info::TypeInfo as _;
+
+    #[test]
+    fn did_metadata_path_is_frozen() {
+        let rendered = format!("{:?}", Did::type_info());
+        assert!(
+            rendered.contains("mosaic_did_types") && rendered.contains("did"),
+            "Did scale_info path drifted: {rendered}"
+        );
+    }
+
+    #[test]
+    fn authentication_metadata_path_is_frozen() {
+        let rendered = format!("{:?}", Authentication::type_info());
+        assert!(
+            rendered.contains("mosaic_did_types") && rendered.contains("auth"),
+            "Authentication scale_info path drifted: {rendered}"
+        );
+    }
+}

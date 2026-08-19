@@ -113,3 +113,46 @@ mod tests {
         let _cipher = MultiCipher {};
     }
 }
+
+#[cfg(all(test, feature = "substrate"))]
+mod freeze_tests {
+    //! SPEC-012 Frozen Wire-Format Registry regression pins.
+    //!
+    //! The crate is renamed to mosaic-keyvault, but these scale_info paths are
+    //! embedded in live chain metadata. If one of these tests fails, someone
+    //! changed a frozen path — that forks the type registry of every deployed
+    //! chain. Do not update the expected strings; revert the change instead.
+
+    use super::{MKeyId, MPublicKey, MSignature};
+    use scale_info::TypeInfo as _;
+
+    #[test]
+    fn m_key_id_metadata_path_is_frozen() {
+        let ty = MKeyId::type_info();
+        let rendered = format!("{ty:?}");
+        assert!(
+            rendered.contains("iop_keyvault") && rendered.contains("multicipher"),
+            "MKeyId scale_info path drifted from the frozen literal: {rendered}"
+        );
+    }
+
+    #[test]
+    fn m_public_key_metadata_path_is_frozen() {
+        let ty = MPublicKey::type_info();
+        let rendered = format!("{ty:?}");
+        assert!(
+            rendered.contains("iop_keyvault") && rendered.contains("multicipher"),
+            "MPublicKey scale_info path drifted from the frozen literal: {rendered}"
+        );
+    }
+
+    #[test]
+    fn m_signature_metadata_path_is_frozen() {
+        let ty = MSignature::type_info();
+        let rendered = format!("{ty:?}");
+        assert!(
+            rendered.contains("iop_keyvault") && rendered.contains("multicipher"),
+            "MSignature scale_info path drifted from the frozen literal: {rendered}"
+        );
+    }
+}
