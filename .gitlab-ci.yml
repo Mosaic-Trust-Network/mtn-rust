@@ -8,6 +8,8 @@ test:cargo:
     - export PATH=$CARGO_HOME/bin:$PATH
     - apt-get update && apt-get install -y clang
     - rustc --version && cargo --version
+    # wasm target for scripts/check.sh nostd (rust image ships host only)
+    - rustup target add wasm32-unknown-unknown
     - curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
     - cargo binstall --no-discover-github-token --disable-telemetry -y cargo-deny zepter
     - export RUST_BACKTRACE=1
