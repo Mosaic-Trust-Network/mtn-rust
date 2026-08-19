@@ -89,12 +89,12 @@ For core team agents only, follow the repo-local `.agents/AGENTS.md` entry point
 
 | Crate | Path | `no_std` | Purpose |
 |-------|------|----------|---------|
-| `iop-keyvault` | `keyvault/` | Yes | HD key derivation (BIP-32/39/43/44). Ed25519 + secp256k1. `multicipher` types (`MPublicKey`, `MPrivateKey`, `MSignature`, `MKeyId`) abstract over cipher suites. |
+| `mosaic-keyvault` | `keyvault/` | Yes | HD key derivation (BIP-32/39/43/44). Ed25519 + secp256k1. `multicipher` types (`MPublicKey`, `MPrivateKey`, `MSignature`, `MKeyId`) abstract over cipher suites. |
 | `json-digest` | `json-digest/` | No | Canonical JSON (sorted keys, NFKD normalization) with BLAKE3-256 Merkle-tree hashing and selective disclosure. Content IDs prefixed `cj`. |
-| `iop-vault` | `vault/` | No | Encrypted HD wallet with plugin system. Stores BIP-39 seed, `VaultPlugin` trait objects via `typetag`. `BoundPlugin<T, TPublic, TPriv>` for type-safe access. |
+| `mosaic-vault` | `vault/` | No | Encrypted HD wallet with plugin system. Stores BIP-39 seed, `VaultPlugin` trait objects via `typetag`. `BoundPlugin<T, TPublic, TPriv>` for type-safe access. |
 | `mosaic-did-types` | `mosaic-did-types/` | Yes | `did:mosaic` types: BLAKE3-256 DID derivation, SCALE codec, 6 rights (Update, Impersonate, Delegate, Issue, Revoke, Recovery), 5 W3C key purposes, `DidState`, `DidOperation`, `SsiOperation`. |
 | `pallet-mosaic-did` | `pallet-mosaic-did/` | No | Substrate pallet: materialized `StorageMap<Did, DidState>`, atomic `submit_did_operations`, anti-censorship (any account submits for any DID). Depends on `polkadot-sdk` (forked). |
-| `iop-sdk` | `sdk/` | No | Unified re-export of keyvault, vault, mosaic-did-types, and json-digest. Single dependency entry point. |
+| `mosaic-sdk` | `sdk/` | No | Unified re-export of keyvault, vault, mosaic-did-types, and json-digest. Single dependency entry point. |
 
 ### Dependency Graph
 
@@ -104,7 +104,7 @@ keyvault
 ├──► mosaic-did-types ──► pallet-mosaic-did
 └──► json-digest
 
-iop-sdk re-exports: keyvault, vault, mosaic-did-types, json-digest
+mosaic-sdk re-exports: keyvault, vault, mosaic-did-types, json-digest
 ```
 
 ## Conventions

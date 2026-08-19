@@ -35,7 +35,7 @@ impl Bip39 {
     /// # Example
     ///
     /// ```
-    /// # use iop_keyvault::Bip39;
+    /// # use mosaic_keyvault::Bip39;
     /// let bip39 = Bip39::language_code("fr").unwrap();
     /// assert!(bip39.check_word("aménager"));
     /// ```
@@ -49,7 +49,7 @@ impl Bip39 {
     ///
     /// # Example
     /// ```
-    /// # use iop_keyvault::{Bip39, Seed};
+    /// # use mosaic_keyvault::{Bip39, Seed};
     /// let phrase: &str = Bip39::language_code("fr").unwrap().generate().as_phrase();
     /// let seed: Seed = Bip39::new().generate().password("");
     pub fn generate(self) -> Bip39Phrase {
@@ -63,7 +63,7 @@ impl Bip39 {
     /// # Example
     ///
     /// ```
-    /// # use iop_keyvault::Bip39;
+    /// # use mosaic_keyvault::Bip39;
     /// let bip39 = Bip39::new();
     /// assert!(bip39.check_word("abandon"));
     /// assert!(!bip39.check_word("Abandon"));
@@ -83,7 +83,7 @@ impl Bip39 {
     /// # Example
     ///
     /// ```
-    /// # use iop_keyvault::{Bip39, Bip39Language};
+    /// # use mosaic_keyvault::{Bip39, Bip39Language};
     /// let bip39 = Bip39::language(Bip39Language::English);
     /// assert_eq!(bip39.list_words("").len(), 2048);
     /// assert_eq!(bip39.list_words("woo"), ["wood", "wool"]);
@@ -99,7 +99,7 @@ impl Bip39 {
     /// # Example
     ///
     /// ```
-    /// # use iop_keyvault::Bip39;
+    /// # use mosaic_keyvault::Bip39;
     /// let bip39 = Bip39::new();
     /// assert!(bip39.validate("type shield target dream feature surface search flee tenant cake taxi shrug").is_ok());
     /// assert!(bip39.validate("abandon abandon about").unwrap_err().to_string().contains("invalid number of words"));

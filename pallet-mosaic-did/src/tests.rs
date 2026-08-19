@@ -7,12 +7,12 @@ use polkadot_sdk::*;
 mod unit_tests {
     use super::*;
     use crate::state::BeforeProofRecord;
-    use iop_keyvault::multicipher::MSignature;
     use mosaic_did_types::*;
+    use mosaic_keyvault::multicipher::MSignature;
 
     // ===== Module-level secret keys (RFC 8032 test vectors) =====
     //
-    // Public keys, DIDs, and key IDs are ALL derived from these via iop_keyvault
+    // Public keys, DIDs, and key IDs are ALL derived from these via mosaic_keyvault
     // production code — never hardcoded separately.
 
     /// Alice's secret key — RFC 8032 test vector 1 (sk = 32 zero bytes).
@@ -29,12 +29,12 @@ mod unit_tests {
         0x58, 0xf7,
     ];
 
-    // ===== Derivation helpers (use iop_keyvault production code) =====
+    // ===== Derivation helpers (use mosaic_keyvault production code) =====
 
     /// Derive raw 32-byte Ed25519 public key bytes from a secret key.
     fn pk_bytes(sk: &[u8; 32]) -> [u8; 32] {
-        use iop_keyvault::PrivateKey;
-        use iop_keyvault::ed25519::EdPrivateKey;
+        use mosaic_keyvault::PrivateKey;
+        use mosaic_keyvault::ed25519::EdPrivateKey;
         let pk = EdPrivateKey::from_bytes(sk).expect("valid sk").public_key();
         pk.to_bytes().try_into().expect("ed25519 pk is 32 bytes")
     }
@@ -402,10 +402,10 @@ mod unit_tests {
         use parity_scale_codec::Encode;
         use sp_runtime::BoundedVec;
 
-        /// Sign a message with a given Ed25519 secret key via iop_keyvault.
+        /// Sign a message with a given Ed25519 secret key via mosaic_keyvault.
         fn sign_with_key(sk: &[u8; 32], message: &[u8]) -> MSignature {
-            use iop_keyvault::PrivateKey;
-            use iop_keyvault::ed25519::EdPrivateKey;
+            use mosaic_keyvault::PrivateKey;
+            use mosaic_keyvault::ed25519::EdPrivateKey;
             let sk = EdPrivateKey::from_bytes(sk).expect("valid sk");
             let sig = sk.sign(message);
             MSignature::Ed25519Blake3(sig)
@@ -1028,22 +1028,15 @@ mod unit_tests {
         let pubkey_armored = auth.to_string();
 
         // REQ-001 golden vector (defense-in-depth pin in Rust, not just TS).
-        assert_eq!(
-            did_str,
-            "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb"
-        );
+        assert_eq!(did_str, "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb");
 
         // Mirrors pallet-mosaic-did/src/validation.rs `signable_payload`:
         // the SCALE-encoded tuple (operation, signer_key_ref, nonce).
-        let payload = |op: &DidOperation, nonce: u64| -> Vec<u8> {
-            (op, &key_ref, &nonce).encode()
-        };
+        let payload =
+            |op: &DidOperation, nonce: u64| -> Vec<u8> { (op, &key_ref, &nonce).encode() };
 
-        let addkey = DidOperation::AddKey {
-            did: did.clone(),
-            auth: auth.clone(),
-            expires_at_height: None,
-        };
+        let addkey =
+            DidOperation::AddKey { did: did.clone(), auth: auth.clone(), expires_at_height: None };
         let addkey_expires = DidOperation::AddKey {
             did: did.clone(),
             auth: auth.clone(),
@@ -1074,8 +1067,8 @@ mod unit_tests {
         // Signed example: implicit-creation AddKey at nonce 0, signed by Alice.
         let creation_payload = payload(&addkey, 0);
         let signature_armored = {
-            use iop_keyvault::PrivateKey;
-            let ed_sig = iop_keyvault::ed25519::EdPrivateKey::from_bytes(&ALICE_SK)
+            use mosaic_keyvault::PrivateKey;
+            let ed_sig = mosaic_keyvault::ed25519::EdPrivateKey::from_bytes(ALICE_SK)
                 .expect("valid sk")
                 .sign(creation_payload.as_slice());
             let sig = MSignature::Ed25519Blake3(ed_sig);

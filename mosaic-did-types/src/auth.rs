@@ -16,8 +16,8 @@ use core::fmt;
 
 use alloc::string::ToString;
 
-use iop_keyvault::PublicKey;
-use iop_keyvault::multicipher::{MKeyId, MPublicKey};
+use mosaic_keyvault::PublicKey;
+use mosaic_keyvault::multicipher::{MKeyId, MPublicKey};
 
 /// Identifies a key for authentication – either by key ID or full public key.
 ///
@@ -243,7 +243,7 @@ mod serde_impls {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iop_keyvault::ed25519::{Blake3, EdKeyId, EdPublicKey};
+    use mosaic_keyvault::ed25519::{Blake3, EdKeyId, EdPublicKey};
 
     fn alice_pk() -> MPublicKey {
         let pk_bytes =

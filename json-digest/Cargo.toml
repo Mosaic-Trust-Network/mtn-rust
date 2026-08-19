@@ -1,7 +1,7 @@
 [package]
 name = "json-digest"
 description = "Allow selective masking of JSON subdocuments for privacy, preserving the digest of the whole document."
-keywords = ["crypto", "iop", "privacy", "json", "digest"]
+keywords = ["crypto", "privacy", "json", "digest", "mosaic"]
 categories = ["cryptography", "algorithms"]
 
 version.workspace = true

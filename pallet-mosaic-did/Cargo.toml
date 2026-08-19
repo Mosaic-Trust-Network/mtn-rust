@@ -9,7 +9,7 @@ repository.workspace = true
 
 [dependencies]
 mosaic-did-types = { workspace = true, features = ["substrate"] }
-iop-keyvault = { workspace = true }
+mosaic-keyvault = { workspace = true }
 
 polkadot-sdk = { workspace = true, default-features = false, features = ["sp-std", "sp-runtime", "frame-system", "frame-support"] }
 
@@ -23,7 +23,7 @@ serde_json = { workspace = true }
 [features]
 default = [ "std" ]
 std = [
-	"iop-keyvault/std",
+	"mosaic-keyvault/std",
 	"mosaic-did-types/std",
 	"parity-scale-codec/std",
 	"polkadot-sdk/std",

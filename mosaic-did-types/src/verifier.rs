@@ -559,7 +559,7 @@ mod tests {
     }
 
     fn make_rights_doc(seq: u64, previous_hash: Option<&str>, right: &str) -> RightsDocument {
-        let kid: iop_keyvault::multicipher::MKeyId =
+        let kid: mosaic_keyvault::multicipher::MKeyId =
             "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB".parse().unwrap();
         let raw = UnsafeRightsDocument {
             schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
@@ -687,14 +687,14 @@ mod tests {
 
     /// A lazily-parsed test authentication key.
     fn test_key() -> Authentication {
-        use iop_keyvault::multicipher::MKeyId;
+        use mosaic_keyvault::multicipher::MKeyId;
         let kid: MKeyId = "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB".parse().unwrap();
         Authentication::KeyId(kid)
     }
 
     /// A different valid key not present in test documents.
     fn test_other_key() -> Authentication {
-        use iop_keyvault::multicipher::MKeyId;
+        use mosaic_keyvault::multicipher::MKeyId;
         let kid: MKeyId = "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH".parse().unwrap();
         Authentication::KeyId(kid)
     }

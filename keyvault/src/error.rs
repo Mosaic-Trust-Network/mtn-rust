@@ -1,4 +1,4 @@
-//! Error types for the iop-keyvault crate.
+//! Error types for the mosaic-keyvault crate.
 
 use alloc::format;
 use alloc::string::String;

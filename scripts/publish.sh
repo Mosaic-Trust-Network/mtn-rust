@@ -6,10 +6,10 @@
 
 declare -a crates=(
 	"json-digest"
-	"iop-keyvault"
-	"iop-vault"
+	"mosaic-keyvault"
+	"mosaic-vault"
 	"mosaic-did-types"
-	"iop-sdk"
+	"mosaic-sdk"
 )
 
 for crate in "${crates[@]}"; do

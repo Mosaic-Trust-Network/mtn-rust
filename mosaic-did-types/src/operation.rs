@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::Authentication;
 use crate::did::{ContentId, Did, KeyRef};
-use iop_keyvault::multicipher::MSignature;
+use mosaic_keyvault::multicipher::MSignature;
 
 /// Maximum public key size in bytes.
 pub const MAX_PUBLIC_KEY_LEN: u32 = 64;

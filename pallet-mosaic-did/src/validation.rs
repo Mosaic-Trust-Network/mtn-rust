@@ -17,12 +17,12 @@ use parity_scale_codec::Encode;
 use scale_info::prelude::format;
 use sp_std::vec::Vec;
 
-use iop_keyvault::PublicKey;
-use iop_keyvault::multicipher::MPublicKey;
 use mosaic_did_types::{
     Did, DidOperation, DidState, GovernedOperation, KeyType, Right, SignedDidOperation,
     public_key_raw_bytes, public_key_to_key_type,
 };
+use mosaic_keyvault::PublicKey;
+use mosaic_keyvault::multicipher::MPublicKey;
 
 use crate::pallet::{Config, DidStates, Error, PendingGovernedOps};
 

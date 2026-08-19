@@ -894,7 +894,7 @@ For the BIP32-compatible variant, pin SLIP-10 test vectors using schnorrkel:
 ### `no_std` verification
 
 Both `schnorrkel` and `merlin` support `no_std` with `alloc`. The keyvault crate already
-handles this. Run `cargo check -p iop-keyvault --no-default-features` after adding the
+handles this. Run `cargo check -p mosaic-keyvault --no-default-features` after adding the
 dependencies to confirm nothing breaks.
 
 ### `From` impls for multicipher

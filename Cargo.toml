@@ -13,13 +13,13 @@ members = [
 version = "0.1.0"
 rust-version = "1.88"
 edition = "2024"
-repository = "https://github.com/Internet-of-People/iop-rs"
+repository = "https://mosaicchain.io"
 license = "LGPL-3.0-or-later"
-homepage = "https://developer.iop.technology/glossary?id=multicipher"
+homepage = "https://mosaic-trust.network"
 
 [workspace.dependencies]
-iop-keyvault = { version = "0.1.0", default-features = false }
-iop-vault = { version = "0.1.0" }
+mosaic-keyvault = { version = "0.1.0", default-features = false }
+mosaic-vault = { version = "0.1.0" }
 json-digest = { version = "0.1.0", default-features = false }
 mosaic-did-types = { version = "0.1.0", default-features = false }
 pallet-mosaic-did = { version = "0.1.0" }
@@ -64,8 +64,8 @@ opt-level = 's'
 
 [patch.crates-io]
 core2 = { path = "./vendor/core2-0.4.0" }
-iop-keyvault = { path = "./keyvault" }
-iop-vault = { path = "./vault" }
+mosaic-keyvault = { path = "./keyvault" }
+mosaic-vault = { path = "./vault" }
 json-digest = { path = "./json-digest" }
 mosaic-did-types = { path="./mosaic-did-types" }
 pallet-mosaic-did = { path="./pallet-mosaic-did" }

@@ -1,7 +1,7 @@
 [package]
-name = "iop-keyvault"
+name = "mosaic-keyvault"
 description = "A general-purpose hierarchical deterministic generator for asymmetric keys."
-keywords = ["crypto", "wallet", "iop", "vault", "ssi"]
+keywords = ["crypto", "wallet", "vault", "ssi", "mosaic"]
 categories = ["cryptography", "cryptography::cryptocurrencies"]
 
 version.workspace = true

@@ -243,8 +243,8 @@ impl DidState {
     ///   capabilityDelegation  ← Right::Delegate
     pub fn to_did_document_at(&self, height: u32) -> crate::document::DidDocument {
         use crate::document::{
-            DidDocument, DidDocumentVerificationMethod, DID_DOCUMENT_MOSAIC_CONTEXT,
-            DID_DOCUMENT_W3C_CONTEXT, key_type_to_w3c_string, multibase_encode_key,
+            DID_DOCUMENT_MOSAIC_CONTEXT, DID_DOCUMENT_W3C_CONTEXT, DidDocument,
+            DidDocumentVerificationMethod, key_type_to_w3c_string, multibase_encode_key,
         };
 
         // Active on-chain rights per key at `height`.
@@ -278,10 +278,8 @@ impl DidState {
             })
             .collect();
 
-        let authentication: Vec<alloc::string::String> = righted
-            .iter()
-            .map(|(k, _)| alloc::format!("{}#{}", did_string, k.key_ref))
-            .collect();
+        let authentication: Vec<alloc::string::String> =
+            righted.iter().map(|(k, _)| alloc::format!("{}#{}", did_string, k.key_ref)).collect();
         let assertion_method: Vec<alloc::string::String> = righted
             .iter()
             .filter(|(_, rs)| rs.iter().any(|r| matches!(r, Right::Issue | Right::Impersonate)))

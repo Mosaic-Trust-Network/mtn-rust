@@ -126,8 +126,11 @@ pub fn multibase_encode_key(key_bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "serde")]
     use crate::did::{Did, KeyRef};
+    #[cfg(feature = "serde")]
     use crate::operation::Right;
+    #[cfg(feature = "serde")]
     use crate::state::{DidState, RightGrant, VerificationMethod};
 
     #[test]
@@ -197,9 +200,6 @@ mod tests {
             .unwrap();
 
         let doc = state.to_did_document_at(10);
-        println!(
-            "CONFORMANCE_DOCUMENT_JSON={}",
-            serde_json::to_string(&doc).unwrap()
-        );
+        println!("CONFORMANCE_DOCUMENT_JSON={}", serde_json::to_string(&doc).unwrap());
     }
 }

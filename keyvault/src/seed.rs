@@ -33,7 +33,7 @@ impl Seed {
     /// # Example
     ///
     /// ```
-    /// # use iop_keyvault::{Bip39, Seed};
+    /// # use mosaic_keyvault::{Bip39, Seed};
     /// let phrase = "plastic attend shadow hill conduct whip staff shoe achieve repair museum improve below inform youth alpha above limb paddle derive spoil offer hospital advance";
     /// let seed_expected = "86f07ba8b38f3de2080912569a07b21ca4ae2275bc305a14ff928c7dc5407f32a1a3a26d4e2c4d9d5e434209c1db3578d94402cf313f3546344d0e4661c9f8d9";
     /// let seed = Bip39::new().phrase(phrase).unwrap().password("morpheus");
@@ -50,7 +50,7 @@ impl Seed {
     /// # Example
     ///
     /// ```
-    /// # use iop_keyvault::Seed;
+    /// # use mosaic_keyvault::Seed;
     /// let bytes = "86f07ba8b38f3de2080912569a07b21ca4ae2275bc305a14ff928c7dc5407f32a1a3a26d4e2c4d9d5e434209c1db3578d94402cf313f3546344d0e4661c9f8d9";
     /// let seed_res = Seed::from_bytes(hex::decode(bytes).unwrap().as_slice());
     /// assert!(seed_res.is_ok());

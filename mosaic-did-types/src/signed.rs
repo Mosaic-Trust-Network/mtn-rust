@@ -4,7 +4,7 @@
 //! providing a standard envelope format for Verifiable Presentations,
 //! AfterProofs, and other signed documents.
 
-use iop_keyvault::multicipher::MSignature;
+use mosaic_keyvault::multicipher::MSignature;
 
 use crate::did::ContentId;
 
@@ -191,8 +191,8 @@ mod tests {
         assert_eq!(digest, "cjuwowG6jmmPTiRFoayB76MQkytv1aFtDkRIO2q6eBirNs", "afterEnvelopeDigest");
 
         // Sign and verify
-        use iop_keyvault::ed25519::EdPrivateKey;
-        use iop_keyvault::{PrivateKey, PublicKey};
+        use mosaic_keyvault::ed25519::EdPrivateKey;
+        use mosaic_keyvault::{PrivateKey, PublicKey};
         let sk = EdPrivateKey::from_bytes(sk_bytes).expect("valid rfc8032 key");
         let pk = sk.public_key();
         let sig = sk.sign(digest.as_bytes());

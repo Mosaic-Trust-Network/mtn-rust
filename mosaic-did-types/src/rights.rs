@@ -529,7 +529,7 @@ mod tests {
 
     #[test]
     fn rights_document_grants_right_matches_key_and_right() {
-        use iop_keyvault::multicipher::MKeyId;
+        use mosaic_keyvault::multicipher::MKeyId;
 
         let kid: MKeyId = "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH".parse().unwrap();
         let holder = Authentication::KeyId(kid.clone());
@@ -551,7 +551,7 @@ mod tests {
 
     #[test]
     fn rights_document_grants_right_rejects_wrong_key() {
-        use iop_keyvault::multicipher::MKeyId;
+        use mosaic_keyvault::multicipher::MKeyId;
 
         let holder: MKeyId = "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH".parse().unwrap();
         let other: MKeyId = "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB".parse().unwrap();
@@ -571,7 +571,7 @@ mod tests {
 
     #[test]
     fn rights_document_compute_hash_is_deterministic() {
-        use iop_keyvault::multicipher::MKeyId;
+        use mosaic_keyvault::multicipher::MKeyId;
         let kid: MKeyId = "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH".parse().unwrap();
 
         let doc = RightsDocument::V1(RightsDocumentV1 {
@@ -592,7 +592,7 @@ mod tests {
 
     #[test]
     fn compute_hash_matches_json_digest_structured_blake3() {
-        use iop_keyvault::multicipher::MKeyId;
+        use mosaic_keyvault::multicipher::MKeyId;
         let kid: MKeyId = "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH".parse().unwrap();
 
         let doc = RightsDocument::V1(RightsDocumentV1 {
@@ -621,7 +621,7 @@ mod tests {
 
     #[test]
     fn wire_domain_roundtrip_preserves_hash() {
-        use iop_keyvault::multicipher::MKeyId;
+        use mosaic_keyvault::multicipher::MKeyId;
         let kid: MKeyId = "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH".parse().unwrap();
 
         let wire = UnsafeRightsDocument {

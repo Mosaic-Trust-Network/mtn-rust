@@ -1030,9 +1030,9 @@ mod tests {
     }
 
     fn test_key_ref(n: u8) -> KeyRef {
-        use iop_keyvault::PrivateKey;
-        use iop_keyvault::PublicKey;
-        use iop_keyvault::ed25519::EdPrivateKey;
+        use mosaic_keyvault::PrivateKey;
+        use mosaic_keyvault::PublicKey;
+        use mosaic_keyvault::ed25519::EdPrivateKey;
 
         // Deterministic seed from n
         let mut seed = [0u8; 32];

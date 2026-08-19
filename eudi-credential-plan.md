@@ -524,7 +524,7 @@ Files:
 | `verifier.rs` | `impl CredentialVerifier for SdJwtVerifier` — produces `NormalizedPresentation` | 100 |
 | Tests | RFC 9596 test vectors, EUDI interop vectors | 300 |
 
-**Dependencies:** JOSE/JWS crate (new or external), `sha2`, `serde_json`, `iop-keyvault` (for `MPublicKey` verification).
+**Dependencies:** JOSE/JWS crate (new or external), `sha2`, `serde_json`, `mosaic-keyvault` (for `MPublicKey` verification).
 
 ### 4.4 Phase 4 — mdoc Crate
 
@@ -540,7 +540,7 @@ New crate `iop-mdoc`:
 | `verifier.rs` | `impl CredentialVerifier for MdocVerifier` | 100 |
 | Tests | ISO 18013‑5 examples, cross‑format test vectors | 250 |
 
-**Dependencies:** CBOR crate, COSE implementation (or manual COSE‑Sign1), X.509 crate (e.g., `x509‑parser`), `iop-keyvault`.
+**Dependencies:** CBOR crate, COSE implementation (or manual COSE‑Sign1), X.509 crate (e.g., `x509‑parser`), `mosaic-keyvault`.
 
 ### 4.5 Phase 5 — Wallet Credential Plugin
 
@@ -593,14 +593,14 @@ infrastructure without duplicating it per format.
 | CBOR crate | `iop-mdoc` | CBOR decoding for mdoc structures |
 | COSE crate | `iop-mdoc` | COSE‑Sign1 verification (or manual implementation) |
 | X.509 parser | `iop-mdoc` | Issuer certificate chain validation for mDL |
-| `schnorrkel` + `merlin` | `iop-keyvault` | Already planned in `keyvault-plan.md` |
+| `schnorrkel` + `merlin` | `mosaic-keyvault` | Already planned in `keyvault-plan.md` |
 
 ### New workspace crates
 
 | Crate | Purpose | Depends on |
 |-------|---------|------------|
-| `iop-sd-jwt` | SD‑JWT (RFC 9596) encode/decode/verify | `iop-keyvault`, new JOSE dep |
-| `iop-mdoc` | ISO 18013‑5 mdoc/mDL parser + verifier | `iop-keyvault`, CBOR, COSE, X.509 deps |
+| `iop-sd-jwt` | SD‑JWT (RFC 9596) encode/decode/verify | `mosaic-keyvault`, new JOSE dep |
+| `iop-mdoc` | ISO 18013‑5 mdoc/mDL parser + verifier | `mosaic-keyvault`, CBOR, COSE, X.509 deps |
 
 ### Enhanced existing crates
 
@@ -610,7 +610,7 @@ infrastructure without duplicating it per format.
 | `vault` | `CredentialStore` trait, `SdJwtCredential`, `PresentationBuilder` |
 | `sdk` | Re‑export new crates; `AfterProofAttacher` utility |
 | `pallet-mosaic-did` | `UpdateCommitment` operation, `previous_version_id` on events, pruning (§4.2 of impersonation plan) |
-| `iop-keyvault` | sr25519 support per `keyvault-plan.md` (used for SD‑JWT KB‑JWT signing + mdoc DeviceKey) |
+| `mosaic-keyvault` | sr25519 support per `keyvault-plan.md` (used for SD‑JWT KB‑JWT signing + mdoc DeviceKey) |
 
 ---
 

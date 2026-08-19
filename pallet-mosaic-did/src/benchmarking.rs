@@ -31,9 +31,9 @@ const ALICE_PK: [u8; 32] = [
 ];
 
 /// Sign a message using Alice's private key.
-fn sign_with_alice(message: &[u8]) -> iop_keyvault::multicipher::MSignature {
-    use iop_keyvault::PrivateKey;
-    use iop_keyvault::ed25519::EdPrivateKey;
+fn sign_with_alice(message: &[u8]) -> mosaic_keyvault::multicipher::MSignature {
+    use mosaic_keyvault::PrivateKey;
+    use mosaic_keyvault::ed25519::EdPrivateKey;
 
     let sk = EdPrivateKey::from_bytes(ALICE_SK).expect("valid alice sk");
     let sig = sk.sign(message);

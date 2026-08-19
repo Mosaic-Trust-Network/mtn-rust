@@ -13,8 +13,8 @@ use core::fmt;
 use json_digest::JsonDigest;
 
 use bounded_collections::{BoundedVec, ConstU32};
-use iop_keyvault::ed25519::{Blake3, EdKeyId, EdPublicKey};
-use iop_keyvault::multicipher::MKeyId;
+use mosaic_keyvault::ed25519::{Blake3, EdKeyId, EdPublicKey};
+use mosaic_keyvault::multicipher::MKeyId;
 
 /// Maximum key ID size in bytes (for `KeyRef`).
 pub const MAX_KEY_REF_LEN: u32 = 64;
@@ -24,6 +24,7 @@ pub const MAX_KEY_REF_LEN: u32 = 64;
 /// MKeyId strings are at most ~49 UTF-8 bytes (for Ed25519Blake3).
 /// SCALE encodes as a length-prefixed `Vec<u8>`: compact(len) + bytes.
 /// We use 66 (2-byte compact prefix + 64 bytes) as a conservative bound.
+#[cfg(feature = "substrate")]
 const MAX_DID_ENCODED_LEN: usize = 66;
 
 /// A Mosaic DID identifier, wrapping the multicipher key ID of the initial public key.
@@ -239,7 +240,7 @@ impl fmt::Display for DidParseError {
 /// a bounded byte vector (`BoundedVec<u8, 64>`) that accepts any bytes. This
 /// flexibility is intentional:
 /// - It lets the indexer reconstruct `KeyRef` values from SCALE-encoded events
-///   without depending on `iop_keyvault`.
+///   without depending on `mosaic_keyvault`.
 /// - It keeps `mosaic-did-types` independent of specific cipher-suite formats.
 pub struct KeyRef(BoundedVec<u8, ConstU32<MAX_KEY_REF_LEN>>);
 

@@ -1,12 +1,15 @@
-# Internet of People
+# Mosaic Trust Network — Rust Core
 
-Internet of People (IoP) is a software project creating a decentralized software stack that provides the building blocks and tools to support a decentralized society.
+Cryptography, DID, and chain-type crates for the Mosaic Trust Network: the
+keyvault suites, `did:mosaic` DID types, and the Substrate pallet they back.
+
+Provenance: derived from the IOP Morpheus SSI stack.
 
 This repository contains our Rust codebase that serves as common implementation and used with different bindings (WebAssembly, C FFI) in SDKs for other languages like Typescript or Dart as well.
 
 ## Usage
 
-After installing Rust using [rustup](https://rustup.rs/), use the `iop-sdk` crate with the latest version as a dependency with `cargo` in file `Cargo.toml` of your project.
+After installing Rust using [rustup](https://rustup.rs/), use the `mosaic-sdk` crate with the latest version as a dependency with `cargo` in file `Cargo.toml` of your project.
 
 ## Overview
 

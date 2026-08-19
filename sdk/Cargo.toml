@@ -1,6 +1,6 @@
 [package]
-name = "iop-sdk"
-description = "Client SDK for the IOP Stack — re-exports the core crates in this workspace"
+name = "mosaic-sdk"
+description = "Client SDK for the Mosaic Trust Network — re-exports the core crates in this workspace"
 
 version.workspace = true
 rust-version.workspace = true
@@ -10,18 +10,18 @@ repository.workspace = true
 homepage.workspace = true
 
 [lib]
-name = "iop_sdk"
+name = "mosaic_sdk"
 
 [dependencies]
-iop-keyvault = { workspace = true }
-iop-vault = { workspace = true }
+mosaic-keyvault = { workspace = true }
+mosaic-vault = { workspace = true }
 mosaic-did-types = { workspace = true }
 json-digest = { workspace = true }
 
 [features]
 std = [
-	"iop-keyvault/std",
-	"iop-vault/std",
+	"mosaic-keyvault/std",
+	"mosaic-vault/std",
 	"json-digest/std",
 	"mosaic-did-types/std",
 ]

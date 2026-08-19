@@ -28,4 +28,4 @@ use serde::Serialize;
 
 // imports from own crates
 
-use iop_keyvault::{Bip39, Seed, encrypt::*};
+use mosaic_keyvault::{Bip39, Seed, encrypt::*};

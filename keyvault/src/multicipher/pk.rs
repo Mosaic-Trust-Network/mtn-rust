@@ -242,6 +242,10 @@ mod scale_impls {
         type Identity = Self;
         fn type_info() -> scale_info::Type {
             scale_info::Type::builder()
+// WIRE-FORMAT FREEZE: this path string is embedded in live chain metadata
+                // (scale type registry). The crate was renamed to mosaic-keyvault, but this
+                // literal must stay "iop_keyvault::multicipher" — changing it forks the type
+                // registry of every deployed chain. See SPEC-012 Frozen Wire-Format Registry.
                 .path(scale_info::Path::new("MPublicKey", "iop_keyvault::multicipher"))
                 .composite(
                     scale_info::build::Fields::unnamed()

@@ -39,7 +39,7 @@ jobs:
         with:
           name: ${{matrix.triple.name}}
           path: |
-            target/${{matrix.triple.target}}/release/libiop_sdk_ffi.so
+            target/${{matrix.triple.target}}/release/libmosaic_sdk_ffi.so
   wasm:
     name: Compile npm package ${{matrix.package}}
     runs-on: ubuntu-latest

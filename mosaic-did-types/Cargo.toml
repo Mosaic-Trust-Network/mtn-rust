@@ -23,7 +23,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 # IOP reuse (keyvault crypto is blockchain-agnostic)
-iop-keyvault = { workspace = true, features = ["serde"] }
+mosaic-keyvault = { workspace = true, features = ["serde"] }
 
 json-digest = { workspace = true }
 multibase = { workspace = true }
@@ -39,7 +39,7 @@ std = [
 	"bounded-collections/std",
 	"bs58/std",
 	"hex/std",
-	"iop-keyvault/std",
+	"mosaic-keyvault/std",
 	"json-digest/std",
 	"parity-scale-codec?/std",
 	"scale-info?/std",
@@ -48,7 +48,7 @@ std = [
 ]
 serde = []
 substrate = [
-	"iop-keyvault/substrate",
+	"mosaic-keyvault/substrate",
 	"json-digest/substrate",
 	"parity-scale-codec",
 	"scale-info",

@@ -1,4 +1,4 @@
-//! Error types for the iop-vault crate.
+//! Error types for the mosaic-vault crate.
 
 use thiserror::Error;
 
@@ -27,7 +27,7 @@ pub enum VaultError {
 
     /// Errors from the keyvault crate.
     #[error(transparent)]
-    Keyvault(#[from] iop_keyvault::KeyvaultError),
+    Keyvault(#[from] mosaic_keyvault::KeyvaultError),
 
     /// Multibase encoding/decoding errors.
     #[error(transparent)]

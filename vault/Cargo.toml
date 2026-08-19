@@ -1,6 +1,6 @@
 [package]
-name = "iop-vault"
-description = "A hierarchical deterministic wallet that allows plugin extensions for the IOP Stack™"
+name = "mosaic-vault"
+description = "A hierarchical deterministic wallet that allows plugin extensions"
 
 version.workspace = true
 rust-version.workspace = true
@@ -11,7 +11,7 @@ homepage.workspace = true
 
 [dependencies]
 thiserror = { workspace = true }
-iop-keyvault = { workspace = true }
+mosaic-keyvault = { workspace = true }
 multibase = { workspace = true, features = ["std"] }
 parking_lot = { workspace = true }
 serde = { workspace = true, features = ["rc"]}
@@ -27,4 +27,4 @@ jni = { workspace = true }
 android_logger = { workspace = true }
 
 [features]
-std = [ "iop-keyvault/std" ]
+std = [ "mosaic-keyvault/std" ]

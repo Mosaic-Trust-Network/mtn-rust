@@ -8,7 +8,7 @@
 //! No wrapper types — keyvault's [`MPublicKey`] and [`MSignature`] are used
 //! directly. SCALE codec and serde are provided by keyvault's own feature flags.
 
-use iop_keyvault::multicipher::{MPublicKey, MSignature};
+use mosaic_keyvault::multicipher::{MPublicKey, MSignature};
 
 use crate::operation::KeyType;
 
@@ -19,7 +19,7 @@ use crate::operation::KeyType;
 /// Always succeeds — `ed25519_dalek` accepts any 64-byte array as a
 /// `Signature` (mathematical validity is only checked during `verify()`).
 pub fn ed25519_blake3_signature(sig: [u8; 64]) -> MSignature {
-    use iop_keyvault::ed25519::EdSignature;
+    use mosaic_keyvault::ed25519::EdSignature;
     let mut versioned = [0u8; 65];
     versioned[0] = 0x01; // SIGNATURE_VERSION1
     versioned[1..].copy_from_slice(&sig);
@@ -32,7 +32,7 @@ pub fn ed25519_blake3_signature(sig: [u8; 64]) -> MSignature {
 ///
 /// Panics if `r` or `s` are zero or ≥ the secp256k1 curve order.
 pub fn secp256k1_signature(sig: [u8; 64]) -> MSignature {
-    use iop_keyvault::secp256k1::SecpSignature;
+    use mosaic_keyvault::secp256k1::SecpSignature;
     let mut versioned = [0u8; 65];
     versioned[0] = 0x01; // SIGNATURE_VERSION1
     versioned[1..].copy_from_slice(&sig);
@@ -52,12 +52,12 @@ pub fn secp256k1_signature(sig: [u8; 64]) -> MSignature {
 pub fn public_key_from_key_type(key_type: KeyType, bytes: &[u8]) -> Option<MPublicKey> {
     match key_type {
         KeyType::Ed25519 => {
-            use iop_keyvault::ed25519::EdPublicKey;
+            use mosaic_keyvault::ed25519::EdPublicKey;
             let pk = EdPublicKey::from_bytes(bytes).ok()?;
             Some(MPublicKey::Ed25519Blake3(pk))
         }
         KeyType::Secp256k1 => {
-            use iop_keyvault::secp256k1::SecpPublicKey;
+            use mosaic_keyvault::secp256k1::SecpPublicKey;
             let pk = SecpPublicKey::from_bytes(bytes).ok()?;
             Some(MPublicKey::Secp256k1(pk))
         }
@@ -131,8 +131,8 @@ mod tests {
 
     #[test]
     fn public_key_from_key_type_from_ed25519() {
-        use iop_keyvault::PrivateKey;
-        use iop_keyvault::ed25519::EdPrivateKey;
+        use mosaic_keyvault::PrivateKey;
+        use mosaic_keyvault::ed25519::EdPrivateKey;
         let sk = EdPrivateKey::from_bytes([
             0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec,
             0x2c, 0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03,
@@ -152,8 +152,8 @@ mod tests {
 
     #[test]
     fn public_key_to_key_type_mapping() {
-        use iop_keyvault::PrivateKey;
-        use iop_keyvault::ed25519::EdPrivateKey;
+        use mosaic_keyvault::PrivateKey;
+        use mosaic_keyvault::ed25519::EdPrivateKey;
         let sk = EdPrivateKey::from_bytes([
             0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec,
             0x2c, 0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03,
