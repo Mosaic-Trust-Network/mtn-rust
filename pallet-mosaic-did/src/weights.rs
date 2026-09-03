@@ -9,7 +9,6 @@ pub trait WeightInfo {
     fn revoke_key() -> Weight;
     fn add_right() -> Weight;
     fn revoke_right() -> Weight;
-    fn tombstone_did() -> Weight;
     fn update_commitment() -> Weight;
     fn announce_governed_op() -> Weight;
     fn cancel_governed_op() -> Weight;
@@ -65,19 +64,8 @@ impl WeightInfo for () {
     }
     /// Storage: `Did::DidStates` (r:1 w:1)
     /// Proof: `Did::DidStates` (`max_values`: None, `max_size`: Some(14717), added: 17192, mode: `MaxEncodedLen`)
-    fn tombstone_did() -> Weight {
-        // Proof Size summary in bytes:
-        //  Measured:  `3325`
-        //  Estimated: `18182`
-        // Minimum execution time: 358_223_000 picoseconds.
-        Weight::from_parts(368_094_000, 18182)
-            .saturating_add(RocksDbWeight::get().reads(1_u64))
-            .saturating_add(RocksDbWeight::get().writes(1_u64))
-    }
-    /// Storage: `Did::DidStates` (r:1 w:1)
-    /// Proof: `Did::DidStates` (`max_values`: None, `max_size`: Some(14717), added: 17192, mode: `MaxEncodedLen`)
     fn update_commitment() -> Weight {
-        // Same pattern as tombstone_did: one read + one write on DidStates.
+        // One read + one write on DidStates.
         Weight::from_parts(368_094_000, 18182)
             .saturating_add(RocksDbWeight::get().reads(1_u64))
             .saturating_add(RocksDbWeight::get().writes(1_u64))

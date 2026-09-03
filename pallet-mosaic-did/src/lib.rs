@@ -176,9 +176,6 @@ pub mod pallet {
             previous_version_id: Option<(u32, u32)>,
         },
 
-        /// DID permanently deactivated.
-        DidTombstoned { did: Did, previous_version_id: Option<(u32, u32)> },
-
         /// BeforeProof timestamp registered.
         BeforeProofRegistered { content_id: ContentId },
 
@@ -257,7 +254,6 @@ pub mod pallet {
                         DidOperation::RevokeKey { .. } => T::WeightInfo::revoke_key(),
                         DidOperation::AddRight { .. } => T::WeightInfo::add_right(),
                         DidOperation::RevokeRight { .. } => T::WeightInfo::revoke_right(),
-                        DidOperation::TombstoneDid { .. } => T::WeightInfo::tombstone_did(),
                         DidOperation::UpdateCommitment { .. } => T::WeightInfo::update_commitment(),
                         DidOperation::AnnounceGoverned { .. } => T::WeightInfo::announce_governed_op(),
                         DidOperation::CancelGoverned { .. } => T::WeightInfo::cancel_governed_op(),
@@ -430,7 +426,7 @@ pub mod pallet {
                                 .iter()
                                 .position(|k| k.key_ref == *key_ref)
                                 .ok_or(Error::<T>::KeyNotFound)?;
-                            let removed = state.keys.remove(pos);
+                            state.keys.remove(pos);
                             // The nonce entry deliberately survives removal:
                             // deleting it would reset the replay window to 0,
                             // letting pre-removal signed operations become
@@ -521,25 +517,6 @@ pub mod pallet {
                         right: *right,
                         previous_version_id,
                     });
-                }
-
-                DidOperation::TombstoneDid { did: _ } => {
-                    let previous_version_id = DidStates::<T>::try_mutate(
-                        &did,
-                        |maybe_state| -> Result<Option<(u32, u32)>, DispatchError> {
-                            let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                            let prev = state.last_modified_at;
-                            state.tombstoned_at_height = Some(height_u32);
-                            Self::record_mutation(
-                                state,
-                                &signed_op.signer_key_ref,
-                                signed_op.nonce,
-                            )?;
-                            Ok(Some(prev))
-                        },
-                    )?;
-
-                    Self::deposit_event(Event::DidTombstoned { did, previous_version_id });
                 }
 
                 DidOperation::UpdateCommitment { did: _, commitment, sequence } => {
@@ -757,7 +734,8 @@ pub mod pallet {
                 // advance the version pointer or every subsequent operation
                 // would record itself as its own previous version.
                 if removed_any {
-                    state.last_modified_at = (current_height, frame_system::Pallet::<T>::extrinsic_index().unwrap_or(0));
+                    state.last_modified_at =
+                        (current_height, frame_system::Pallet::<T>::extrinsic_index().unwrap_or(0));
                 }
 
                 Ok(())

@@ -217,14 +217,6 @@ pub enum DidOperation {
     /// Revoke a right from a key.
     RevokeRight { did: Did, key_ref: KeyRef, right: Right },
 
-    /// Permanently deactivate the DID. Irreversible.
-    ///
-    /// After tombstoning:
-    /// - Resolution returns `deactivated: true`
-    /// - No further operations are accepted
-    /// - Historical state remains queryable
-    TombstoneDid { did: Did },
-
     /// Publish a new rights-document commitment.
     ///
     /// Requires `Right::Update`. The `sequence` MUST equal `stored_sequence + 1`
@@ -257,7 +249,6 @@ impl DidOperation {
             DidOperation::RevokeKey { did, .. } => did,
             DidOperation::AddRight { did, .. } => did,
             DidOperation::RevokeRight { did, .. } => did,
-            DidOperation::TombstoneDid { did } => did,
             DidOperation::UpdateCommitment { did, .. } => did,
             DidOperation::AnnounceGoverned { did, .. } => did,
             DidOperation::CancelGoverned { did } => did,
@@ -272,7 +263,6 @@ impl DidOperation {
             DidOperation::RevokeKey { .. } => Right::Update,
             DidOperation::AddRight { .. } => Right::Delegate,
             DidOperation::RevokeRight { .. } => Right::Delegate,
-            DidOperation::TombstoneDid { .. } => Right::Update,
             DidOperation::UpdateCommitment { .. } => Right::Update,
             DidOperation::AnnounceGoverned { .. } => Right::Update,
             DidOperation::CancelGoverned { .. } => Right::Update,
@@ -347,7 +337,6 @@ pub enum DidOperationType {
     RevokeKey,
     AddRight,
     RevokeRight,
-    TombstoneDid,
     UpdateCommitment,
     AnnounceGoverned,
     CancelGoverned,
@@ -361,7 +350,6 @@ impl From<&DidOperation> for DidOperationType {
             DidOperation::RevokeKey { .. } => DidOperationType::RevokeKey,
             DidOperation::AddRight { .. } => DidOperationType::AddRight,
             DidOperation::RevokeRight { .. } => DidOperationType::RevokeRight,
-            DidOperation::TombstoneDid { .. } => DidOperationType::TombstoneDid,
             DidOperation::UpdateCommitment { .. } => DidOperationType::UpdateCommitment,
             DidOperation::AnnounceGoverned { .. } => DidOperationType::AnnounceGoverned,
             DidOperation::CancelGoverned { .. } => DidOperationType::CancelGoverned,
@@ -416,7 +404,6 @@ mod tests {
                 key_ref: key_ref.clone(),
                 right: Right::Update
             },
-            DidOperation::TombstoneDid { did },
         ];
 
         let types: Vec<DidOperationType> = ops.iter().map(DidOperationType::from).collect();
@@ -427,7 +414,6 @@ mod tests {
                 DidOperationType::RevokeKey,
                 DidOperationType::AddRight,
                 DidOperationType::RevokeRight,
-                DidOperationType::TombstoneDid,
             ]
         );
     }

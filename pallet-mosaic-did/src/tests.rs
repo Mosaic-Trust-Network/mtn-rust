@@ -131,13 +131,6 @@ mod unit_tests {
     }
 
     #[test]
-    fn tombstone_requires_update_right() {
-        let did = bob_did();
-        let tombstone = DidOperation::TombstoneDid { did };
-        assert_eq!(tombstone.required_right(), Right::Update);
-    }
-
-    #[test]
     fn before_proof_record_structure() {
         let record = BeforeProofRecord { block_height: 12345, extrinsic_index: 3 };
         assert_eq!(record.block_height, 12345);
@@ -552,10 +545,6 @@ mod unit_tests {
             DidOperation::UpdateCommitment { did: did.clone(), commitment, sequence }
         }
 
-        fn tombstone_did(did: &Did) -> DidOperation {
-            DidOperation::TombstoneDid { did: did.clone() }
-        }
-
         fn announce_tombstone(did: &Did) -> DidOperation {
             DidOperation::AnnounceGoverned {
                 did: did.clone(),
@@ -625,8 +614,13 @@ mod unit_tests {
         fn update_commitment_rejects_tombstoned_did() {
             new_test_ext().execute_with(|| {
                 let mut rt = TestDriver::new();
-                rt.submit(&tombstone_did(&rt.did));
-                rt.at_block(3);
+                // Tombstoning is only possible via the governed lifecycle:
+                // announce → delay → execute.
+                rt.submit(&announce_tombstone(&rt.did));
+                rt.at_block(201);
+                rt.submit(&execute_governed(&rt.did));
+
+                rt.at_block(202);
                 rt.submit_fails(
                     &update_commitment(&rt.did, cid("doc"), 1),
                     crate::Error::<Test>::DidTombstoned,
@@ -794,11 +788,7 @@ mod unit_tests {
                     did: rt.did.clone(),
                     key_ref: bob_kr.clone(),
                 });
-                assert_eq!(
-                    rt.state().nonce_for_key(&bob_kr),
-                    1,
-                    "nonce must survive key removal"
-                );
+                assert_eq!(rt.state().nonce_for_key(&bob_kr), 1, "nonce must survive key removal");
 
                 // Re-add the same key_ref and re-grant Delegate so the replay
                 // below is otherwise fully valid once the grant matures.
@@ -1029,8 +1019,11 @@ mod unit_tests {
         fn announce_rejects_tombstoned_did() {
             new_test_ext().execute_with(|| {
                 let mut rt = TestDriver::new();
-                rt.submit(&tombstone_did(&rt.did));
-                rt.at_block(2);
+                rt.submit(&announce_tombstone(&rt.did));
+                rt.at_block(201);
+                rt.submit(&execute_governed(&rt.did));
+
+                rt.at_block(202);
                 rt.submit_fails(&announce_tombstone(&rt.did), crate::Error::<Test>::DidTombstoned);
             });
         }
@@ -1222,7 +1215,6 @@ mod unit_tests {
             key_ref: key_ref.clone(),
             right: Right::Issue,
         };
-        let tombstone = DidOperation::TombstoneDid { did: did.clone() };
 
         let op_entry = |name: &str, op: &DidOperation| -> serde_json::Value {
             serde_json::json!({
@@ -1260,7 +1252,6 @@ mod unit_tests {
                 op_entry("revokeKey", &revokekey),
                 op_entry("addRight_issue", &addright),
                 op_entry("revokeRight_issue", &revokeright),
-                op_entry("tombstoneDid", &tombstone),
             ],
             "signed_example": {
                 "operation": "addKey",

@@ -137,23 +137,6 @@ fn create_revoke_right_op(
     SignedDidOperation { signature, ..signed_op }
 }
 
-/// Create a signed TombstoneDid operation.
-fn create_tombstone_op(did: &Did, nonce: u64) -> SignedDidOperation {
-    let operation = DidOperation::TombstoneDid { did: did.clone() };
-
-    let signed_op = SignedDidOperation {
-        operation,
-        signer_key_ref: alice_key_ref(),
-        signature: ed25519_blake3_signature([0u8; 64]),
-        nonce,
-    };
-
-    let message = (&signed_op.operation, &signed_op.signer_key_ref, &signed_op.nonce).encode();
-    let signature = sign_with_alice(&message);
-
-    SignedDidOperation { signature, ..signed_op }
-}
-
 /// Pre-populate DID state for operations that require an existing DID.
 fn setup_existing_did<T: Config>() {
     let did = alice_did();
@@ -287,22 +270,6 @@ mod benchmarks {
             .find(|r| r.right == Right::Issue && r.key_ref == key_ref)
             .expect("right exists");
         assert!(grant.revoked_at_height.is_some());
-    }
-
-    #[benchmark]
-    fn tombstone_did<T: Config>() {
-        setup_existing_did::<T>();
-
-        let caller: T::AccountId = whitelisted_caller();
-        let did = alice_did();
-        let signed_op = create_tombstone_op(&did, 1);
-        let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
-
-        #[extrinsic_call]
-        submit_did_operations(RawOrigin::Signed(caller), operations);
-
-        let state = DidStates::<T>::get(&did).expect("did exists");
-        assert!(state.tombstoned_at_height.is_some());
     }
 
     #[benchmark]
