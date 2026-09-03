@@ -710,6 +710,12 @@ pub mod pallet {
                     None => return Ok(()),
                 };
 
+                // The version pointer the sweep events must reference is the
+                // location of the last real mutation — captured before any
+                // removal, and never the sweep's own position.
+                let previous_version_id = state.last_modified_at;
+                let mut removed_any = false;
+
                 // Sweep expired keys.
                 let mut i = 0;
                 while i < state.keys.len() {
@@ -719,8 +725,9 @@ pub mod pallet {
                         Self::deposit_event(Event::KeyRevoked {
                             did: did.clone(),
                             key_ref: removed.key_ref.as_bytes().to_vec(),
-                            previous_version_id: Some(state.last_modified_at),
+                            previous_version_id: Some(previous_version_id),
                         });
+                        removed_any = true;
                     } else {
                         i += 1;
                     }
@@ -735,15 +742,20 @@ pub mod pallet {
                             did: did.clone(),
                             key_ref: removed.key_ref.as_bytes().to_vec(),
                             right: removed.right,
-                            previous_version_id: Some(state.last_modified_at),
+                            previous_version_id: Some(previous_version_id),
                         });
+                        removed_any = true;
                     } else {
                         i += 1;
                     }
                 }
 
-                state.last_modified_at =
-                    (current_height, frame_system::Pallet::<T>::extrinsic_index().unwrap_or(0));
+                // Only an actual removal is a mutation; an idle sweep must not
+                // advance the version pointer or every subsequent operation
+                // would record itself as its own previous version.
+                if removed_any {
+                    state.last_modified_at = (current_height, frame_system::Pallet::<T>::extrinsic_index().unwrap_or(0));
+                }
 
                 Ok(())
             })

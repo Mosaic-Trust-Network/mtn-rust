@@ -686,7 +686,70 @@ mod unit_tests {
                         None
                     }
                 });
-                assert!(second_pv.unwrap().is_some(), "second commitment has previous version");
+                // The second commitment must point back at the first commitment's
+                // location, not at its own (block, extrinsic) — a self-pointer
+                // here makes the §3.2 rewind algorithm unable to leave the
+                // latest location.
+                assert_eq!(second_pv, Some(Some((1, 0))), "second commitment points at the first");
+            });
+        }
+
+        #[test]
+        fn sweep_without_removal_does_not_advance_version() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit(&update_commitment(&rt.did, cid("v1"), 1));
+
+                // Several blocks pass with nothing expiring; the sweep runs
+                // before every operation but must leave last_modified_at alone.
+                rt.at_block(5);
+                rt.submit(&update_commitment(&rt.did, cid("v2"), 2));
+
+                let events: Vec<_> = System::read_events_no_consensus().collect();
+                let second_pv = events.iter().find_map(|e| {
+                    if let RuntimeEvent::MosaicDid(crate::Event::CommitmentUpdated {
+                        previous_version_id,
+                        sequence: 2,
+                        ..
+                    }) = &e.event
+                    {
+                        Some(*previous_version_id)
+                    } else {
+                        None
+                    }
+                });
+                assert_eq!(
+                    second_pv,
+                    Some(Some((1, 0))),
+                    "idle sweeps must not break the version chain"
+                );
+            });
+        }
+
+        #[test]
+        fn sweep_with_removal_points_at_true_previous_location() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.add_bob_key_expiring(Some(10));
+
+                rt.at_block(11);
+                rt.submit(&update_commitment(&rt.did, cid("v1"), 1));
+
+                let events: Vec<_> = System::read_events_no_consensus().collect();
+                let revoked_pv = events.iter().find_map(|e| {
+                    if let RuntimeEvent::MosaicDid(crate::Event::KeyRevoked {
+                        previous_version_id,
+                        ..
+                    }) = &e.event
+                    {
+                        Some(*previous_version_id)
+                    } else {
+                        None
+                    }
+                });
+                // The sweep event must reference the last real mutation
+                // (Bob's key added at (1, 0)), not the current location.
+                assert_eq!(revoked_pv, Some(Some((1, 0))));
             });
         }
 
