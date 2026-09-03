@@ -754,6 +754,111 @@ mod unit_tests {
         }
 
         #[test]
+        fn nonce_survives_key_removal_replay_rejected() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                let alice_kr = key_ref_from_sk(&ALICE_SK);
+                let bob_kr = rt.add_bob_key();
+
+                // Bob needs an active right to sign operations; AddRight grants
+                // mature MATURITY blocks after granting.
+                rt.submit(&DidOperation::AddRight {
+                    did: rt.did.clone(),
+                    key_ref: bob_kr.clone(),
+                    right: Right::Delegate,
+                    expires_at_height: None,
+                });
+
+                // Bob consumes his first nonce (stored 0 → strictly greater).
+                rt.at_block(102);
+                let consume = sign_op_with_key(
+                    &BOB_SK,
+                    bob_kr.clone(),
+                    DidOperation::AddRight {
+                        did: rt.did.clone(),
+                        key_ref: alice_kr.clone(),
+                        right: Right::Delegate,
+                        expires_at_height: None,
+                    },
+                    1,
+                );
+                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
+                    vec![SsiOperation::Did(consume)].try_into().unwrap();
+                assert_ok!(crate::Pallet::<Test>::submit_did_operations(
+                    RawOrigin::Signed(1u64).into(),
+                    batch,
+                ));
+
+                // Alice revokes Bob's key; the nonce lineage must survive.
+                rt.submit(&DidOperation::RevokeKey {
+                    did: rt.did.clone(),
+                    key_ref: bob_kr.clone(),
+                });
+                assert_eq!(
+                    rt.state().nonce_for_key(&bob_kr),
+                    1,
+                    "nonce must survive key removal"
+                );
+
+                // Re-add the same key_ref and re-grant Delegate so the replay
+                // below is otherwise fully valid once the grant matures.
+                rt.submit(&DidOperation::AddKey {
+                    did: rt.did.clone(),
+                    auth: auth_from_sk(&BOB_SK),
+                    expires_at_height: None,
+                });
+                rt.submit(&DidOperation::AddRight {
+                    did: rt.did.clone(),
+                    key_ref: bob_kr.clone(),
+                    right: Right::Delegate,
+                    expires_at_height: None,
+                });
+
+                // Replay the exact operation Bob signed before the removal.
+                rt.at_block(203);
+                let replay = sign_op_with_key(
+                    &BOB_SK,
+                    bob_kr.clone(),
+                    DidOperation::AddRight {
+                        did: rt.did.clone(),
+                        key_ref: alice_kr.clone(),
+                        right: Right::Delegate,
+                        expires_at_height: None,
+                    },
+                    1,
+                );
+                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
+                    vec![SsiOperation::Did(replay)].try_into().unwrap();
+                assert_noop!(
+                    crate::Pallet::<Test>::submit_did_operations(
+                        RawOrigin::Signed(1u64).into(),
+                        batch,
+                    ),
+                    crate::Error::<Test>::InvalidNonce
+                );
+
+                // A fresh nonce still works for the re-added key.
+                let fresh = sign_op_with_key(
+                    &BOB_SK,
+                    bob_kr.clone(),
+                    DidOperation::AddRight {
+                        did: rt.did.clone(),
+                        key_ref: alice_kr.clone(),
+                        right: Right::Issue,
+                        expires_at_height: None,
+                    },
+                    2,
+                );
+                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
+                    vec![SsiOperation::Did(fresh)].try_into().unwrap();
+                assert_ok!(crate::Pallet::<Test>::submit_did_operations(
+                    RawOrigin::Signed(1u64).into(),
+                    batch,
+                ));
+            });
+        }
+
+        #[test]
         fn update_commitment_rejects_key_without_update_right() {
             new_test_ext().execute_with(|| {
                 let mut rt = TestDriver::new();

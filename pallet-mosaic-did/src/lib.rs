@@ -431,7 +431,10 @@ pub mod pallet {
                                 .position(|k| k.key_ref == *key_ref)
                                 .ok_or(Error::<T>::KeyNotFound)?;
                             let removed = state.keys.remove(pos);
-                            state.nonces.remove(&removed.key_ref);
+                            // The nonce entry deliberately survives removal:
+                            // deleting it would reset the replay window to 0,
+                            // letting pre-removal signed operations become
+                            // valid again once the key_ref is re-registered.
                             Self::record_mutation(
                                 state,
                                 &signed_op.signer_key_ref,
@@ -721,7 +724,7 @@ pub mod pallet {
                 while i < state.keys.len() {
                     if state.keys[i].expires_at_height.is_some_and(|h| current_height >= h) {
                         let removed = state.keys.swap_remove(i);
-                        state.nonces.remove(&removed.key_ref);
+                        // Nonce entry survives (replay protection) — see RevokeKey.
                         Self::deposit_event(Event::KeyRevoked {
                             did: did.clone(),
                             key_ref: removed.key_ref.as_bytes().to_vec(),
