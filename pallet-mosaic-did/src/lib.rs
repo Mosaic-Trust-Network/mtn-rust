@@ -346,7 +346,9 @@ pub mod pallet {
             let height: u32 = Self::block_number_to_u32(<frame_system::Pallet<T>>::block_number());
             let idx: u32 = frame_system::Pallet::<T>::extrinsic_index().unwrap_or(0);
             state.last_modified_at = (height, idx);
-            state.update_nonce(key_ref, nonce).map_err(|_| Error::<T>::StorageBoundsExceeded.into())
+            state
+                .update_nonce(key_ref, nonce, height)
+                .map_err(|_| Error::<T>::StorageBoundsExceeded.into())
         }
 
         fn apply_did_operation(

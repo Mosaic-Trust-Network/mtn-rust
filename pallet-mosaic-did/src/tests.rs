@@ -849,6 +849,98 @@ mod unit_tests {
         }
 
         #[test]
+        fn nonce_map_evicts_invalid_key_history_instead_of_bricking() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+
+                // 31 update-right keys join the DID (plus Alice = 32 potential
+                // signers, the nonce-map bound). They sign commitment updates
+                // rather than grants so the rights vector stays far from its
+                // own bound — this test is about the nonce map.
+                for i in 1u8..=31 {
+                    let sk = [i; 32];
+                    let kr = key_ref_from_sk(&sk);
+                    rt.submit(&DidOperation::AddKey {
+                        did: rt.did.clone(),
+                        auth: auth_from_sk(&sk),
+                        expires_at_height: None,
+                    });
+                    rt.submit(&DidOperation::AddRight {
+                        did: rt.did.clone(),
+                        key_ref: kr,
+                        right: Right::Update,
+                        expires_at_height: None,
+                    });
+                }
+
+                // Each update key signs once so a nonce entry is recorded for
+                // it; the map is now at its bound of 32.
+                rt.at_block(102);
+                for i in 1u8..=31 {
+                    let sk = [i; 32];
+                    let op = sign_op_with_key(
+                        &sk,
+                        key_ref_from_sk(&sk),
+                        update_commitment(&rt.did, cid("v"), i as u64),
+                        1,
+                    );
+                    let batch: BoundedVec<SsiOperation, ConstU32<100>> =
+                        vec![SsiOperation::Did(op)].try_into().unwrap();
+                    assert_ok!(crate::Pallet::<Test>::submit_did_operations(
+                        RawOrigin::Signed(1u64).into(),
+                        batch,
+                    ));
+                }
+                assert_eq!(rt.state().nonces.len(), 32, "nonce map is at its bound");
+
+                // Five of those signers are revoked; their nonce entries
+                // survive by design (replay-window fix), keeping the map full.
+                for i in 1u8..=5 {
+                    rt.submit(&DidOperation::RevokeKey {
+                        did: rt.did.clone(),
+                        key_ref: key_ref_from_sk(&[i; 32]),
+                    });
+                }
+
+                // A brand-new signer must still be able to join and sign:
+                // the full map evicts history of keys that can no longer sign
+                // instead of failing every future operation with
+                // StorageBoundsExceeded.
+                let sk33 = [32u8; 32];
+                let kr33 = key_ref_from_sk(&sk33);
+                rt.submit(&DidOperation::AddKey {
+                    did: rt.did.clone(),
+                    auth: auth_from_sk(&sk33),
+                    expires_at_height: None,
+                });
+                rt.submit(&DidOperation::AddRight {
+                    did: rt.did.clone(),
+                    key_ref: kr33.clone(),
+                    right: Right::Update,
+                    expires_at_height: None,
+                });
+                rt.at_block(203);
+                let op33 = sign_op_with_key(
+                    &sk33,
+                    kr33.clone(),
+                    update_commitment(&rt.did, cid("v"), 32),
+                    1,
+                );
+                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
+                    vec![SsiOperation::Did(op33)].try_into().unwrap();
+                assert_ok!(crate::Pallet::<Test>::submit_did_operations(
+                    RawOrigin::Signed(1u64).into(),
+                    batch,
+                ));
+                assert_eq!(rt.state().nonce_for_key(&kr33), 1);
+
+                // And the DID remains fully operable for its controller.
+                rt.submit(&update_commitment(&rt.did, cid("alive"), 33));
+                assert_eq!(rt.state().commitment, Some((33, cid("alive"))));
+            });
+        }
+
+        #[test]
         fn update_commitment_rejects_key_without_update_right() {
             new_test_ext().execute_with(|| {
                 let mut rt = TestDriver::new();

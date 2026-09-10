@@ -218,16 +218,43 @@ impl DidState {
 
     /// Update the nonce for a key, inserting if not present.
     ///
-    /// Returns `Err` if the nonce map is full and the key is new.
-    pub fn update_nonce(&mut self, key_ref: &KeyRef, nonce: u64) -> Result<(), &'static str> {
+    /// Nonce entries of removed or invalidated keys persist so that
+    /// re-registering the same `key_ref` cannot reset the replay window.
+    /// That history is bounded by `MAX_NONCES_PER_DID`; when the map is
+    /// full, an entry whose key can no longer sign (absent, revoked, or
+    /// expired) is evicted instead of failing every future operation.
+    /// Only a map whose entries all belong to currently valid keys
+    /// returns `Err` — unreachable while `nonces.len() <= keys.len()`
+    /// bounds hold, since inserting a key beyond the keys bound fails
+    /// earlier.
+    pub fn update_nonce(
+        &mut self, key_ref: &KeyRef, nonce: u64, now: u32,
+    ) -> Result<(), &'static str> {
         if let Some(existing) = self.nonces.get_mut(key_ref) {
             *existing = nonce;
-        } else {
-            self.nonces
-                .try_insert(key_ref.clone(), nonce)
-                .map_err(|_| "nonce storage bounds exceeded")?;
+            return Ok(());
         }
-        Ok(())
+        if self.nonces.try_insert(key_ref.clone(), nonce).is_ok() {
+            return Ok(());
+        }
+        let victim = self
+            .nonces
+            .keys()
+            .find(|r| match self.find_key(r) {
+                None => true,
+                Some(k) => !k.is_valid_at(now),
+            })
+            .cloned();
+        match victim {
+            Some(v) => {
+                self.nonces.remove(&v);
+                self.nonces
+                    .try_insert(key_ref.clone(), nonce)
+                    .map(|_| ())
+                    .map_err(|_| "nonce storage bounds exceeded")
+            }
+            None => Err("nonce storage bounds exceeded"),
+        }
     }
 
     /// Render this state as a W3C DID Document evaluated at `height`.
