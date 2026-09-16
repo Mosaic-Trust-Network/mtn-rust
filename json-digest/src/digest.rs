@@ -147,8 +147,11 @@ fn canonicalize_number(n: &serde_json::Number) -> String {
     }
     let f = n.as_f64().expect("serde_json::Number: i64/u64 rejected, must be f64");
 
-    // Integer-valued floats within i64 range → format as integer (3.0 → 3, 100.0 → 100)
-    if f.is_finite() && f >= (i64::MIN as f64) && f <= (i64::MAX as f64) && (f as i64) as f64 == f {
+    // Integer-valued floats within i64 range → format as integer (3.0 → 3, 100.0 → 100).
+    // Upper bound is strict: `i64::MAX as f64` rounds up to 2^63, and casting
+    // 2^63 saturates to i64::MAX, which would collapse the distinct document
+    // 9223372036854775808.0 onto the integer 9223372036854775807.
+    if f.is_finite() && f >= (i64::MIN as f64) && f < (i64::MAX as f64) && (f as i64) as f64 == f {
         return (f as i64).to_string();
     }
 
@@ -400,6 +403,24 @@ mod tests {
         let result = digest_data_blake3(&obj)?;
         assert!(result.starts_with("cm"), "expected cm prefix, got: {result}");
         Ok(())
+    }
+
+    #[test]
+    fn float_i64_boundary_does_not_collapse_onto_i64_max() {
+        // 2^63 as f64 == `i64::MAX as f64` and saturating-casts to i64::MAX;
+        // it must take the float path, not the integer canonicalization.
+        let two_pow_63 = serde_json::json!(9223372036854775808.0);
+        let c = canonicalize_number(two_pow_63.as_number().unwrap());
+        assert_ne!(c, "9223372036854775807", "2^63.0 collapsed onto i64::MAX");
+        assert_eq!(c, "9223372036854776000");
+
+        // Largest integer-valued f64 below 2^63 still canonicalizes as integer.
+        let just_below = serde_json::json!(9223372036854774784.0);
+        assert_eq!(canonicalize_number(just_below.as_number().unwrap()), "9223372036854774784");
+
+        // The distinct integer 2^63-1 keeps its exact form.
+        let int_max = serde_json::json!(9223372036854775807i64);
+        assert_eq!(canonicalize_number(int_max.as_number().unwrap()), "9223372036854775807");
     }
 
     #[test]
