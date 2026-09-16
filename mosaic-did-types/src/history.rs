@@ -497,17 +497,33 @@ impl DidHistory {
     }
 
     /// Collect intervals from commitment documents where `key_ref` held `right`.
+    ///
+    /// Documents are **hash-bound** (iop-rs#1): a presenter-supplied document
+    /// contributes intervals only when its canonical BLAKE3 content ID equals
+    /// the on-chain commitment recorded for that sequence. Matching on the
+    /// sequence number alone would let a presenter graft arbitrary rights onto
+    /// someone else's commitment timeline — both sides of that comparison are
+    /// attacker-controlled.
     fn commitment_right_intervals(
         &self, key_ref: &KeyRef, right: Right, documents: &[(u64, &crate::rights::RightsDocument)],
     ) -> Intervals {
+        use core::str::FromStr;
+
         let right_str = right.to_string();
         let key_str = key_ref.as_str().unwrap_or("");
         let mut intervals = Intervals::new();
 
         for cv in &self.commitments {
-            if let Some((_, doc)) = documents.iter().find(|(s, _)| *s == cv.sequence)
-                && doc.grants_right_by_key_ref(key_str, &right_str)
-            {
+            let Some((_, doc)) = documents.iter().find(|(s, _)| *s == cv.sequence) else {
+                continue;
+            };
+            let presented_cid =
+                doc.compute_hash().ok().and_then(|hash| ContentId::from_str(&hash).ok());
+            if presented_cid.as_ref() != Some(&cv.commitment) {
+                continue;
+            }
+
+            if doc.grants_right_by_key_ref(key_str, &right_str) {
                 let next = self
                     .commitments
                     .iter()
@@ -1969,17 +1985,47 @@ mod tests {
         );
     }
 
+    /// iop-rs#1 pin: a presenter-supplied document that grants the right but
+    /// does NOT hash to the on-chain commitment contributes nothing. Before
+    /// the hash-binding fix this returned Confirmed on sequence match alone.
+    #[test]
+    fn verify_right_window_commitment_hash_mismatch_grants_nothing() {
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+        let doc = make_rights_doc(1, None, key_str, "impersonate");
+
+        // Commitment is the hash of DIFFERENT content, sequence matches.
+        let wrong_cid: ContentId =
+            make_rights_doc(1, None, key_str, "issue").compute_hash().unwrap().parse().unwrap();
+
+        let history = DidHistory {
+            commitments: alloc::vec![CommitmentVersion {
+                sequence: 1,
+                commitment: wrong_cid,
+                published_at_height: 100,
+                signer_key_ref: kr.clone(),
+            }],
+            ..DidHistory::new(test_did())
+        };
+
+        assert_eq!(
+            history.verify_right_window(&kr, Right::Impersonate, 100, Some(200), &[(1, &doc)]),
+            ValidityResult::Absent
+        );
+    }
+
     #[test]
     fn verify_right_window_commitment_full_window_confirmed() {
         // Commitment published at 100 grants Impersonate. Window [100, 200).
         let kr = test_key_ref(1);
         let key_str = kr.as_str().unwrap();
         let doc = make_rights_doc(1, None, key_str, "impersonate");
+        let cid: ContentId = doc.compute_hash().unwrap().parse().unwrap();
 
         let history = DidHistory {
             commitments: alloc::vec![CommitmentVersion {
                 sequence: 1,
-                commitment: test_commitment(1),
+                commitment: cid,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
             }],
@@ -2000,18 +2046,20 @@ mod tests {
         let key_str = kr.as_str().unwrap();
         let d1 = make_rights_doc(1, None, key_str, "impersonate");
         let d2 = make_rights_doc(2, None, key_str, "issue"); // grants issue, NOT impersonate
+        let cid1: ContentId = d1.compute_hash().unwrap().parse().unwrap();
+        let cid2: ContentId = d2.compute_hash().unwrap().parse().unwrap();
 
         let history = DidHistory {
             commitments: alloc::vec![
                 CommitmentVersion {
                     sequence: 1,
-                    commitment: test_commitment(1),
+                    commitment: cid1,
                     published_at_height: 100,
                     signer_key_ref: kr.clone(),
                 },
                 CommitmentVersion {
                     sequence: 2,
-                    commitment: test_commitment(2),
+                    commitment: cid2,
                     published_at_height: 150,
                     signer_key_ref: kr.clone(),
                 },

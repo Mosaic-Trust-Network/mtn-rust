@@ -84,6 +84,12 @@ pub enum VerificationError {
     /// the BeforeProof content ID, or the leaf hash does not match the
     /// signed-envelope fingerprint).
     SmtInclusionProofFailed,
+    /// The SMT envelope's signature is missing, unparseable, or
+    /// cryptographically invalid over the canonical envelope digest (iop-rs#2).
+    EnvelopeSignatureInvalid,
+    /// The SMT envelope was signed by a key other than the presenter's holder
+    /// key — a replayed third-party envelope (iop-rs#2).
+    EnvelopeKeyMismatch,
     /// The BeforeProof anchor could not be verified at the claimed block height.
     BeforeProofVerificationFailed,
     /// The time window is invalid: H_start >= H_end (BeforeProof block height
@@ -376,6 +382,39 @@ impl<'a> Documents<'a> {
         // If an SMT envelope proof is provided, verify the inclusion proof
         // locally and derive the AfterProof bound from the signed envelope.
         if let Some(smt) = &smt_envelope {
+            // --- Envelope signature (iop-rs#2) ---
+            // The envelope's AfterProof (and therefore H_start) is
+            // attacker-influenced input until the signature over its canonical
+            // digest is verified.
+            let envelope_pk: mosaic_keyvault::multicipher::MPublicKey = smt
+                .signed_envelope
+                .signature
+                .public_key
+                .parse()
+                .map_err(|_| VerificationError::EnvelopeSignatureInvalid)?;
+            let envelope_sig: mosaic_keyvault::multicipher::MSignature = smt
+                .signed_envelope
+                .signature
+                .bytes
+                .parse()
+                .map_err(|_| VerificationError::EnvelopeSignatureInvalid)?;
+            let content_digest = json_digest::digest_data(&smt.signed_envelope.content)
+                .map_err(|e| VerificationError::DigestError(e.to_string()))?;
+            use mosaic_keyvault::PublicKey as _;
+            if !envelope_pk.verify(content_digest.as_bytes(), &envelope_sig) {
+                return Err(VerificationError::EnvelopeSignatureInvalid);
+            }
+            steps.push(StepResult { step: "envelope_signature", passed: true, detail: None });
+
+            // --- Holder binding (iop-rs#2) ---
+            // The envelope must be signed by the presenter's own key; a
+            // validly-signed envelope from any other key is a replay, not a
+            // proof about this holder.
+            if envelope_pk.key_id() != holder_key.key_id() {
+                return Err(VerificationError::EnvelopeKeyMismatch);
+            }
+            steps.push(StepResult { step: "envelope_holder_binding", passed: true, detail: None });
+
             let fingerprint = json_digest::digest_data(&smt.signed_envelope)
                 .map_err(|e| VerificationError::DigestError(e.to_string()))?;
             if fingerprint != smt.inclusion_proof.leaf_hash.as_str() {
@@ -529,7 +568,7 @@ mod tests {
     use crate::smt;
 
     fn make_test_document() -> DidDocument {
-        let key_ref = "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB";
+        let key_ref = "iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb";
         let did = "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb";
         DidDocument {
             context: alloc::vec![
@@ -560,7 +599,7 @@ mod tests {
 
     fn make_rights_doc(seq: u64, previous_hash: Option<&str>, right: &str) -> RightsDocument {
         let kid: mosaic_keyvault::multicipher::MKeyId =
-            "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB".parse().unwrap();
+            "iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb".parse().unwrap();
         let raw = UnsafeRightsDocument {
             schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
             did: "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb".into(),
@@ -583,7 +622,7 @@ mod tests {
                     "sequence": seq,
                     "contentId": hash,
                     "publishedAtHeight": seq * 100,
-                    "publishedBy": "#iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB",
+                    "publishedBy": "#iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb",
                 })
             })
             .collect();
@@ -631,7 +670,10 @@ mod tests {
     fn verify_right_rejected_when_right_not_in_on_chain_relationships() {
         let mut doc = make_test_document();
         doc.assertion_method.clear();
-        let err = doc.verify_right(&test_key(), "impersonate", &[]).unwrap_err();
+        // "issue" is not among the default-key implicit rights
+        // (update/impersonate/delegate), so its rejection isolates the
+        // on-chain-relationship check.
+        let err = doc.verify_right(&test_key(), "issue", &[]).unwrap_err();
         assert_eq!(err, VerificationError::RightNotGranted);
     }
 
@@ -670,25 +712,27 @@ mod tests {
     fn did_document_off_chain_wrong_right_not_granted() {
         let mut doc = make_test_document();
         doc.assertion_method.clear();
-        let rights_doc = make_rights_doc(1, None, "issue"); // grants issue, not impersonate
+        // Grants "impersonate", queries "issue" — a right with no implicit
+        // default-key grant, so rejection isolates the commitment check.
+        let rights_doc = make_rights_doc(1, None, "impersonate");
         let hash = rights_doc.compute_hash().unwrap();
         set_timeline(&mut doc, &[(1, &hash)]);
 
-        let err = doc.verify_right(&test_key(), "impersonate", &[(1, &rights_doc)]).unwrap_err();
+        let err = doc.verify_right(&test_key(), "issue", &[(1, &rights_doc)]).unwrap_err();
         assert_eq!(err, VerificationError::RightNotGranted);
     }
 
     // ===== Windowed verification helpers =====
 
     /// A test key reference reused across windowed tests.
-    const TEST_KEY_REF: &str = "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB";
+    const TEST_KEY_REF: &str = "iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb";
     /// A test DID reused across windowed tests.
     const TEST_DID_STR: &str = "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb";
 
     /// A lazily-parsed test authentication key.
     fn test_key() -> Authentication {
         use mosaic_keyvault::multicipher::MKeyId;
-        let kid: MKeyId = "iozA69ACNfFj2h2vRpyN8r9rVGYVGXerUTjKQhaUgBU73XQB".parse().unwrap();
+        let kid: MKeyId = "iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb".parse().unwrap();
         Authentication::KeyId(kid)
     }
 
@@ -743,7 +787,7 @@ mod tests {
         // AfterProof at block 99 → H_start = 100, received_at = 200 → H_end = 200.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
-        let cid = ContentId::from_bytes(h1.as_bytes());
+        let cid: ContentId = h1.parse().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -766,7 +810,7 @@ mod tests {
         // Window [100, 200): key absent [100, 120), valid [120, 200) → Ambiguous.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
-        let cid = ContentId::from_bytes(h1.as_bytes());
+        let cid: ContentId = h1.parse().unwrap();
         let history = add_commitment(history_with_key(120, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -787,7 +831,7 @@ mod tests {
         // Key added at 10, revoked at 150. Window [100, 200): valid [100, 150), absent [150, 200).
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
-        let cid = ContentId::from_bytes(h1.as_bytes());
+        let cid: ContentId = h1.parse().unwrap();
         let history = add_commitment(history_with_key(10, Some(150), None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -808,7 +852,7 @@ mod tests {
         // DID tombstoned at 180. Window [100, 200). Still an error (tombstone ⇒ Absent).
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
-        let cid = ContentId::from_bytes(h1.as_bytes());
+        let cid: ContentId = h1.parse().unwrap();
         let mut history = add_commitment(history_with_key(10, None, None), 1, 100);
         history = replace_commitment_hash(history, 1, cid);
         history.tombstoned_at = Some(180);
@@ -830,10 +874,10 @@ mod tests {
         // Window [100, 180): right absent [150, 180) → Ambiguous.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
-        let cid1 = ContentId::from_bytes(h1.as_bytes());
+        let cid1: ContentId = h1.parse().unwrap();
         let d2 = make_rights_doc(2, Some(&h1), "issue");
         let h2 = d2.compute_hash().unwrap();
-        let cid2 = ContentId::from_bytes(h2.as_bytes());
+        let cid2: ContentId = h2.parse().unwrap();
 
         let history = history_with_key(10, None, None);
         let history = add_commitment(history, 1, 100);
@@ -858,7 +902,7 @@ mod tests {
         // Commitment at height 100, window [50, 80). No commitment active → Absent.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
-        let cid = ContentId::from_bytes(h1.as_bytes());
+        let cid: ContentId = h1.parse().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -898,7 +942,7 @@ mod tests {
     fn verify_right_policy_rejects_when_below_minimum() {
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
-        let cid = ContentId::from_bytes(h1.as_bytes());
+        let cid: ContentId = h1.parse().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
         let policy = VerifierPolicy::notarization(); // requires Finalized
@@ -917,7 +961,7 @@ mod tests {
     fn verify_right_policy_accepts_when_meets_minimum() {
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
-        let cid = ContentId::from_bytes(h1.as_bytes());
+        let cid: ContentId = h1.parse().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
         let policy = VerifierPolicy::chat(); // accepts Minimal
@@ -935,19 +979,41 @@ mod tests {
 
     // ===== FinalizedProof tests =====
 
-    /// Helper: build a `Signed<AfterEnvelope<SmtContent>>` with a dummy
-    /// signature and an AfterProof at `after_block_height`.
+    /// RFC 8032 §7.1 test vector 1 Ed25519 seed — the key behind
+    /// [`TEST_KEY_REF`] / [`TEST_DID_STR`]. A well-known test constant, not a
+    /// secret.
+    const ED25519_TV1_SK: [u8; 32] = [
+        0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c,
+        0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae,
+        0x7f, 0x60,
+    ];
+
+    /// Build a `Signed<AfterEnvelope<SmtContent>>` properly signed by the
+    /// holder's own key (required since the iop-rs#2 fix — signature over the
+    /// canonical envelope digest, holder key-id binding).
     fn make_signed_envelope(
         after_block_height: u32, smt_root: &str,
     ) -> Signed<AfterEnvelope<SmtContent>> {
+        use mosaic_keyvault::PrivateKey;
+        use mosaic_keyvault::ed25519::EdPrivateKey;
+        use mosaic_keyvault::multicipher::MSignature;
+
         let content = SmtContent { root: smt_root.into(), height: 10 };
         let proof = AfterProof {
             block_height: after_block_height,
             block_hash: "0x0400000000000000000000000000000000000000000000000000000000000000".into(),
         };
         let envelope = AfterEnvelope { content, proof };
-        let sig = ed25519_blake3_signature([0u8; 64]);
-        Signed::new(envelope, "test-key".into(), &sig)
+
+        let sk = EdPrivateKey::from_bytes(ED25519_TV1_SK).unwrap();
+        let mpk = crate::signature::public_key_from_key_type(
+            crate::operation::KeyType::Ed25519,
+            &sk.public_key().to_bytes(),
+        )
+        .unwrap();
+        let digest = json_digest::digest_data(&envelope).unwrap();
+        let sig = sk.sign(digest.as_bytes());
+        Signed::new(envelope, alloc::format!("{mpk}"), &MSignature::Ed25519Blake3(sig))
     }
 
     #[test]
@@ -956,7 +1022,7 @@ mod tests {
         // AfterProof in envelope at 120 → H_start=121, validated BeforeProof at 200 → H_end=200.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
-        let cid = ContentId::from_bytes(h1.as_bytes());
+        let cid: ContentId = h1.parse().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 50);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -984,16 +1050,118 @@ mod tests {
             .unwrap();
         assert!(result.valid);
         assert_eq!(result.strength, ProofStrength::Finalized);
+        assert!(result.steps.iter().any(|s| s.step == "envelope_signature" && s.passed));
+        assert!(result.steps.iter().any(|s| s.step == "envelope_holder_binding" && s.passed));
         assert!(result.steps.iter().any(|s| s.step == "smt_leaf_hash_match" && s.passed));
         assert!(result.steps.iter().any(|s| s.step == "smt_root_match" && s.passed));
         assert!(result.steps.iter().any(|s| s.step == "window_bounds" && s.passed));
+    }
+
+    /// iop-rs#2 pin: an all-zero (forged) envelope signature must be rejected
+    /// before any timeline fact is trusted. This exact input used to pass as
+    /// Finalized.
+    #[test]
+    fn finalized_proof_rejects_forged_envelope_signature() {
+        let d1 = make_rights_doc(1, None, "impersonate");
+        let h1 = d1.compute_hash().unwrap();
+        let cid: ContentId = h1.parse().unwrap();
+        let history = add_commitment(history_with_key(10, None, None), 1, 50);
+        let history = replace_commitment_hash(history, 1, cid);
+
+        // Well-formed envelope, attacker-controlled signature material.
+        let mut signed = make_signed_envelope(120, "unused-root");
+        signed.signature.public_key = "pezFVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z".into();
+        signed.signature.bytes = alloc::format!("{}", ed25519_blake3_signature([0u8; 64]));
+
+        let fingerprint = json_digest::digest_data(&signed).unwrap();
+        let leaf_hash = smt::Hash::from_digest(fingerprint);
+        let mut trie = smt::SparseMerkleTrie::new();
+        trie.insert(0, leaf_hash);
+        let inclusion_proof = trie.inclusion_proof(0).unwrap();
+        let root = trie.root().clone();
+        let smt = SmtEnvelopeProof {
+            signed_envelope: signed,
+            inclusion_proof,
+            before_proof_content_id: root.as_str().to_string(),
+        };
+
+        let err = history
+            .check_right(&test_key(), "impersonate")
+            .with_documents(&[(1, &d1)])
+            .with_after_proof(ValidatedAfterProof { block_height: 120 })
+            .with_before_proof(ValidatedBeforeProof { block_height: 200 })
+            .with_smt_envelope(smt)
+            .verify()
+            .unwrap_err();
+        assert_eq!(err, VerificationError::EnvelopeSignatureInvalid);
+    }
+
+    /// iop-rs#2 pin: a validly-signed envelope from a key other than the
+    /// holder's is a replay, not a proof about this holder.
+    #[test]
+    fn finalized_proof_rejects_envelope_signed_by_other_key() {
+        use mosaic_keyvault::PrivateKey;
+        use mosaic_keyvault::ed25519::EdPrivateKey;
+        use mosaic_keyvault::multicipher::MSignature;
+
+        let d1 = make_rights_doc(1, None, "impersonate");
+        let h1 = d1.compute_hash().unwrap();
+        let cid: ContentId = h1.parse().unwrap();
+        let history = add_commitment(history_with_key(10, None, None), 1, 50);
+        let history = replace_commitment_hash(history, 1, cid);
+
+        // RFC 8032 §7.1 test vector 2 — a different, valid key.
+        const ED25519_TV2_SK: [u8; 32] = [
+            0x4c, 0xcd, 0x08, 0x9b, 0x28, 0xff, 0x96, 0xda, 0x9d, 0xb6, 0xc3, 0x46, 0xec, 0x11,
+            0x4e, 0x0f, 0x5b, 0x8a, 0x31, 0x9f, 0x35, 0xab, 0xa6, 0x24, 0xda, 0x8c, 0xf6, 0xed,
+            0x4f, 0xb8, 0xa6, 0xfb,
+        ];
+        let bob_sk = EdPrivateKey::from_bytes(ED25519_TV2_SK).unwrap();
+
+        let content = SmtContent { root: "unused-root".into(), height: 10 };
+        let proof = AfterProof {
+            block_height: 120,
+            block_hash: "0x0400000000000000000000000000000000000000000000000000000000000000".into(),
+        };
+        let envelope = AfterEnvelope { content, proof };
+        let digest = json_digest::digest_data(&envelope).unwrap();
+        let sig = bob_sk.sign(digest.as_bytes());
+        let bob_mpk = crate::signature::public_key_from_key_type(
+            crate::operation::KeyType::Ed25519,
+            &bob_sk.public_key().to_bytes(),
+        )
+        .unwrap();
+        let signed =
+            Signed::new(envelope, alloc::format!("{bob_mpk}"), &MSignature::Ed25519Blake3(sig));
+
+        let fingerprint = json_digest::digest_data(&signed).unwrap();
+        let leaf_hash = smt::Hash::from_digest(fingerprint);
+        let mut trie = smt::SparseMerkleTrie::new();
+        trie.insert(0, leaf_hash);
+        let inclusion_proof = trie.inclusion_proof(0).unwrap();
+        let root = trie.root().clone();
+        let smt = SmtEnvelopeProof {
+            signed_envelope: signed,
+            inclusion_proof,
+            before_proof_content_id: root.as_str().to_string(),
+        };
+
+        let err = history
+            .check_right(&test_key(), "impersonate")
+            .with_documents(&[(1, &d1)])
+            .with_after_proof(ValidatedAfterProof { block_height: 120 })
+            .with_before_proof(ValidatedBeforeProof { block_height: 200 })
+            .with_smt_envelope(smt)
+            .verify()
+            .unwrap_err();
+        assert_eq!(err, VerificationError::EnvelopeKeyMismatch);
     }
 
     #[test]
     fn finalized_proof_fails_when_smt_leaf_hash_mismatch() {
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
-        let cid = ContentId::from_bytes(h1.as_bytes());
+        let cid: ContentId = h1.parse().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -1026,7 +1194,7 @@ mod tests {
     fn finalized_proof_fails_when_smt_root_mismatch() {
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
-        let cid = ContentId::from_bytes(h1.as_bytes());
+        let cid: ContentId = h1.parse().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -1061,7 +1229,7 @@ mod tests {
         // H_start > H_end → rejected.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
-        let cid = ContentId::from_bytes(h1.as_bytes());
+        let cid: ContentId = h1.parse().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -1096,10 +1264,10 @@ mod tests {
         // Window [91, 200): absent [150, 200) → Ambiguous.
         let d1 = make_rights_doc(1, None, "impersonate");
         let h1 = d1.compute_hash().unwrap();
-        let cid1 = ContentId::from_bytes(h1.as_bytes());
+        let cid1: ContentId = h1.parse().unwrap();
         let d2 = make_rights_doc(2, Some(&h1), "issue");
         let h2 = d2.compute_hash().unwrap();
-        let cid2 = ContentId::from_bytes(h2.as_bytes());
+        let cid2: ContentId = h2.parse().unwrap();
 
         let history = history_with_key(10, None, None);
         let history = add_commitment(history, 1, 100);
