@@ -28,6 +28,10 @@ pub const MAX_RIGHTS_PER_DID: u32 = 64;
 /// Maximum number of nonce entries per DID document.
 pub const MAX_NONCES_PER_DID: u32 = 32;
 
+// The nonce-eviction fallback in `update_nonce` relies on every live
+// signer always fitting into the nonce map.
+const _: () = assert!(MAX_KEYS_PER_DID <= MAX_NONCES_PER_DID);
+
 // ========== CORE STATE TYPES ==========
 
 /// A verification method (key) stored in `DidState`.
@@ -224,9 +228,9 @@ impl DidState {
     /// full, an entry whose key can no longer sign (absent, revoked, or
     /// expired) is evicted instead of failing every future operation.
     /// Only a map whose entries all belong to currently valid keys
-    /// returns `Err` — unreachable while `nonces.len() <= keys.len()`
-    /// bounds hold, since inserting a key beyond the keys bound fails
-    /// earlier.
+    /// returns `Err` — while `MAX_KEYS_PER_DID <= MAX_NONCES_PER_DID`
+    /// (enforced below) every live signer always fits, so the map is
+    /// never full of valid signers when a new one inserts.
     pub fn update_nonce(
         &mut self, key_ref: &KeyRef, nonce: u64, now: u32,
     ) -> Result<(), &'static str> {
