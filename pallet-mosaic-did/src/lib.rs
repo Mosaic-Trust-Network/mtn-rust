@@ -715,9 +715,12 @@ pub mod pallet {
         }
 
         fn apply_before_proof(content_id: ContentId, height_u32: u32) -> DispatchResult {
+            // Anchored proofs must reference the extrinsic that registered
+            // them; outside an extrinsic (tests) the index falls back to 0.
+            let idx: u32 = frame_system::Pallet::<T>::extrinsic_index().unwrap_or(0);
             BeforeProofs::<T>::insert(
                 content_id,
-                BeforeProofRecord { block_height: height_u32, extrinsic_index: 0 },
+                BeforeProofRecord { block_height: height_u32, extrinsic_index: idx },
             );
 
             Self::deposit_event(Event::BeforeProofRegistered { content_id });

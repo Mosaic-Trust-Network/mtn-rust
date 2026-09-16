@@ -757,6 +757,28 @@ mod unit_tests {
         }
 
         #[test]
+        fn before_proof_records_actual_extrinsic_index() {
+            new_test_ext().execute_with(|| {
+                System::set_block_number(1);
+                // Reproduce what Executive::apply_extrinsic does for the
+                // third extrinsic of the block.
+                System::set_extrinsic_index(3);
+
+                let content = ContentId::from_bytes(b"anchored document");
+                crate::Pallet::<Test>::register_before_proof(
+                    RawOrigin::Signed(1u64).into(),
+                    content,
+                )
+                .unwrap();
+
+                let record =
+                    crate::BeforeProofs::<Test>::get(content).expect("before proof must be stored");
+                assert_eq!(record.block_height, 1);
+                assert_eq!(record.extrinsic_index, 3, "must reference the registering extrinsic");
+            });
+        }
+
+        #[test]
         fn update_commitment_event_previous_version_id() {
             new_test_ext().execute_with(|| {
                 let mut rt = TestDriver::new();
