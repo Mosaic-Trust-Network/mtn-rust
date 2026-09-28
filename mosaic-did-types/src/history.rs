@@ -857,6 +857,9 @@ impl DidHistory {
     ///
     /// - Keys are assumed valid since `doc.created_at_height` (or height 0).
     /// - Rights are assumed granted since `doc.created_at_height` (or height 0).
+    ///   `assertionMethod` yields `Impersonate` **only** — the W3C relationship
+    ///   is the union of `Issue` and `Impersonate`, so inferring `Issue` would
+    ///   over-grant; there is no marker in the snapshot that carries it.
     /// - Commitment versions have real `publishedAtHeight` from the service endpoint.
     ///
     /// The resulting `DidHistory` is suitable for `Minimal`-strength
@@ -914,7 +917,13 @@ impl DidHistory {
 
         let update_keys = key_ids_in(&doc.capability_invocation);
         let delegate_keys = key_ids_in(&doc.capability_delegation);
-        let issue_impersonate_keys = key_ids_in(&doc.assertion_method);
+        // `assertionMethod` is the union of `Issue` and `Impersonate` (see
+        // `to_did_document_at`), so membership alone cannot distinguish them.
+        // Only `Impersonate` is inferred: minting `Issue` here would upgrade an
+        // impersonation-only snapshot into an issuer-authorized history at
+        // Minimal strength. `Issue` needs an explicit marker the snapshot does
+        // not carry.
+        let assertion_keys = key_ids_in(&doc.assertion_method);
 
         // A key may appear in multiple lists → one right per appearance.
         for kr in &update_keys {
@@ -943,20 +952,12 @@ impl DidHistory {
                 });
             }
         }
-        for kr in &issue_impersonate_keys {
+        for kr in &assertion_keys {
             let key_ref = KeyRef::new(kr.as_bytes().to_vec()).ok();
             if let Some(kr) = key_ref {
                 rights.push(RightLifecycle {
-                    key_ref: kr.clone(),
-                    right: Right::Impersonate,
-                    granted_at_height: created,
-                    expires_at_height: None,
-                    revoked_at_height: None,
-                    matures_at_height: None,
-                });
-                rights.push(RightLifecycle {
                     key_ref: kr,
-                    right: Right::Issue,
+                    right: Right::Impersonate,
                     granted_at_height: created,
                     expires_at_height: None,
                     revoked_at_height: None,
@@ -1833,6 +1834,50 @@ mod tests {
         assert_eq!(
             original_cid, roundtripped_cid,
             "ContentId must round-trip through DidDocument; from_did_document_at must parse the ContentId string, not BLAKE3-hash it"
+        );
+    }
+
+    /// A snapshot cannot distinguish `Issue` from `Impersonate`: both map to
+    /// `assertionMethod`. Reconstruction must not upgrade an impersonation-only
+    /// key into an issuer-authorized history. `Issue` requires an explicit
+    /// marker the snapshot does not carry, so it stays absent.
+    #[test]
+    fn from_did_document_at_does_not_mint_issue_from_assertion_method() {
+        let mut history = DidHistory::new(test_did());
+        let kr = test_key_ref(1);
+
+        history.apply(DidHistoryEvent::KeyAdded {
+            key_ref: kr.clone(),
+            key_type: KeyType::Ed25519,
+            controller: test_did(),
+            public_key: alloc::vec![1u8; 32],
+            at_height: 10,
+            expires_at_height: None,
+        });
+        history.apply(DidHistoryEvent::RightAdded {
+            key_ref: kr.clone(),
+            right: Right::Impersonate,
+            at_height: 10,
+            matures_at_height: None,
+            expires_at_height: None,
+        });
+
+        let doc = history.to_did_document_at(150, None);
+        assert_eq!(doc.assertion_method.len(), 1, "impersonate maps to assertionMethod");
+
+        let reconstructed =
+            DidHistory::from_did_document_at(&doc, 150).expect("reconstruction must succeed");
+
+        assert!(
+            reconstructed
+                .rights
+                .iter()
+                .any(|rl| rl.key_ref == kr && rl.right == Right::Impersonate),
+            "Impersonate must be derived from assertionMethod membership"
+        );
+        assert!(
+            !reconstructed.rights.iter().any(|rl| rl.key_ref == kr && rl.right == Right::Issue),
+            "assertionMethod membership alone must not mint Issue"
         );
     }
 
