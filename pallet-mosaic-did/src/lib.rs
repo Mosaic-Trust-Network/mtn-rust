@@ -46,6 +46,7 @@ pub mod pallet {
         fungible::hold::Mutate as HoldMutate,
     };
     use frame_system::pallet_prelude::*;
+    use sp_std::collections::btree_map::BTreeMap;
     use sp_std::vec::Vec;
 
     use mosaic_did_types::{
@@ -302,12 +303,33 @@ pub mod pallet {
             // (e.g. AddKey creates a DID, then AddRight on the same DID).
             // Substrate extrinsics are transactional — if any op fails, all
             // storage mutations in this call are rolled back.
+            //
+            // Plan §3.2: every event for a DID in this call carries the state
+            // version from *before the call* as its `previous_version_id`, not
+            // the previous operation's version. A backward walker reads all
+            // events at this `(height, extrinsic)` location together and
+            // follows that one pointer, so a per-operation capture would make
+            // the second event point at the batch itself and strand the walker.
+            // Captured lazily per DID: applying an operation mutates
+            // `last_modified_at` in place, so later operations on the same DID
+            // must reuse the first capture.
+            let mut batch_previous: BTreeMap<Did, Option<(u32, u32)>> = BTreeMap::new();
             for op in &operations {
                 match op {
                     SsiOperation::Did(signed_op) => {
-                        Self::sweep_expired(&signed_op.operation.did().clone(), height_u32)?;
+                        let did = signed_op.operation.did();
+                        let previous_version_id =
+                            *batch_previous.entry(did.clone()).or_insert_with(|| {
+                                DidStates::<T>::get(did).map(|s| s.last_modified_at)
+                            });
+                        Self::sweep_expired(did, height_u32, previous_version_id)?;
                         validation::validate_did_operation::<T>(signed_op, height_u32)?;
-                        Self::apply_did_operation(signed_op, height_u32, &submitter)?;
+                        Self::apply_did_operation(
+                            signed_op,
+                            height_u32,
+                            &submitter,
+                            previous_version_id,
+                        )?;
                     }
                     SsiOperation::BeforeProof(content_id) => {
                         ensure!(
@@ -379,6 +401,7 @@ pub mod pallet {
 
         fn apply_did_operation(
             signed_op: &SignedDidOperation, height_u32: u32, submitter: &T::AccountId,
+            previous_version_id: Option<(u32, u32)>,
         ) -> DispatchResult {
             let did = signed_op.operation.did().clone();
 
@@ -403,35 +426,26 @@ pub mod pallet {
                         revoked_at_height: None,
                     };
 
-                    let previous_version_id = DidStates::<T>::try_mutate(
-                        &did,
-                        |maybe_state| -> Result<Option<(u32, u32)>, DispatchError> {
-                            let prev = maybe_state.as_ref().map_or((0, 0), |s| s.last_modified_at);
-                            match maybe_state {
-                                None => {
-                                    *maybe_state =
-                                        Some(Self::bootstrap_did_state(&did, vm, height_u32)?);
-                                }
-                                Some(state) => {
-                                    ensure!(
-                                        state.find_key(&key_ref).is_none(),
-                                        Error::<T>::KeyAlreadyExists
-                                    );
-                                    state
-                                        .keys
-                                        .try_push(vm)
-                                        .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
-                                }
+                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
+                        match maybe_state {
+                            None => {
+                                *maybe_state =
+                                    Some(Self::bootstrap_did_state(&did, vm, height_u32)?);
                             }
-                            let state = maybe_state.as_mut().unwrap();
-                            Self::record_mutation(
-                                state,
-                                &signed_op.signer_key_ref,
-                                signed_op.nonce,
-                            )?;
-                            Ok(Some(prev))
-                        },
-                    )?;
+                            Some(state) => {
+                                ensure!(
+                                    state.find_key(&key_ref).is_none(),
+                                    Error::<T>::KeyAlreadyExists
+                                );
+                                state
+                                    .keys
+                                    .try_push(vm)
+                                    .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
+                            }
+                        }
+                        let state = maybe_state.as_mut().unwrap();
+                        Self::record_mutation(state, &signed_op.signer_key_ref, signed_op.nonce)
+                    })?;
 
                     Self::deposit_event(Event::KeyAdded {
                         did,
@@ -444,29 +458,20 @@ pub mod pallet {
                 }
 
                 DidOperation::RevokeKey { did: _, key_ref } => {
-                    let previous_version_id = DidStates::<T>::try_mutate(
-                        &did,
-                        |maybe_state| -> Result<Option<(u32, u32)>, DispatchError> {
-                            let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                            let prev = state.last_modified_at;
-                            let pos = state
-                                .keys
-                                .iter()
-                                .position(|k| k.key_ref == *key_ref)
-                                .ok_or(Error::<T>::KeyNotFound)?;
-                            state.keys.remove(pos);
-                            // The nonce entry deliberately survives removal:
-                            // deleting it would reset the replay window to 0,
-                            // letting pre-removal signed operations become
-                            // valid again once the key_ref is re-registered.
-                            Self::record_mutation(
-                                state,
-                                &signed_op.signer_key_ref,
-                                signed_op.nonce,
-                            )?;
-                            Ok(Some(prev))
-                        },
-                    )?;
+                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
+                        let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
+                        let pos = state
+                            .keys
+                            .iter()
+                            .position(|k| k.key_ref == *key_ref)
+                            .ok_or(Error::<T>::KeyNotFound)?;
+                        state.keys.remove(pos);
+                        // The nonce entry deliberately survives removal:
+                        // deleting it would reset the replay window to 0,
+                        // letting pre-removal signed operations become
+                        // valid again once the key_ref is re-registered.
+                        Self::record_mutation(state, &signed_op.signer_key_ref, signed_op.nonce)
+                    })?;
 
                     Self::deposit_event(Event::KeyRevoked {
                         did: did.clone(),
@@ -490,23 +495,14 @@ pub mod pallet {
                         matures_at_height,
                     };
 
-                    let previous_version_id = DidStates::<T>::try_mutate(
-                        &did,
-                        |maybe_state| -> Result<Option<(u32, u32)>, DispatchError> {
-                            let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                            let prev = state.last_modified_at;
-                            state
-                                .rights
-                                .try_push(grant)
-                                .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
-                            Self::record_mutation(
-                                state,
-                                &signed_op.signer_key_ref,
-                                signed_op.nonce,
-                            )?;
-                            Ok(Some(prev))
-                        },
-                    )?;
+                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
+                        let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
+                        state
+                            .rights
+                            .try_push(grant)
+                            .map_err(|_| Error::<T>::StorageBoundsExceeded)?;
+                        Self::record_mutation(state, &signed_op.signer_key_ref, signed_op.nonce)
+                    })?;
 
                     Self::deposit_event(Event::RightAdded {
                         did: did.clone(),
@@ -519,25 +515,16 @@ pub mod pallet {
                 }
 
                 DidOperation::RevokeRight { did: _, key_ref, right } => {
-                    let previous_version_id = DidStates::<T>::try_mutate(
-                        &did,
-                        |maybe_state| -> Result<Option<(u32, u32)>, DispatchError> {
-                            let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                            let prev = state.last_modified_at;
-                            let pos = state
-                                .rights
-                                .iter()
-                                .rposition(|rg| rg.key_ref == *key_ref && rg.right == *right)
-                                .ok_or(Error::<T>::RightNotFound)?;
-                            state.rights.remove(pos);
-                            Self::record_mutation(
-                                state,
-                                &signed_op.signer_key_ref,
-                                signed_op.nonce,
-                            )?;
-                            Ok(Some(prev))
-                        },
-                    )?;
+                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
+                        let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
+                        let pos = state
+                            .rights
+                            .iter()
+                            .rposition(|rg| rg.key_ref == *key_ref && rg.right == *right)
+                            .ok_or(Error::<T>::RightNotFound)?;
+                        state.rights.remove(pos);
+                        Self::record_mutation(state, &signed_op.signer_key_ref, signed_op.nonce)
+                    })?;
 
                     Self::deposit_event(Event::RightRevoked {
                         did: did.clone(),
@@ -548,20 +535,11 @@ pub mod pallet {
                 }
 
                 DidOperation::UpdateCommitment { did: _, commitment, sequence } => {
-                    let previous_version_id = DidStates::<T>::try_mutate(
-                        &did,
-                        |maybe_state| -> Result<Option<(u32, u32)>, DispatchError> {
-                            let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                            let prev = state.last_modified_at;
-                            state.commitment = Some((*sequence, *commitment));
-                            Self::record_mutation(
-                                state,
-                                &signed_op.signer_key_ref,
-                                signed_op.nonce,
-                            )?;
-                            Ok(Some(prev))
-                        },
-                    )?;
+                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
+                        let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
+                        state.commitment = Some((*sequence, *commitment));
+                        Self::record_mutation(state, &signed_op.signer_key_ref, signed_op.nonce)
+                    })?;
 
                     Self::deposit_event(Event::CommitmentUpdated {
                         did,
@@ -573,20 +551,10 @@ pub mod pallet {
                 }
 
                 DidOperation::AnnounceGoverned { did: _, operation } => {
-                    let previous_version_id = DidStates::<T>::try_mutate(
-                        &did,
-                        |maybe_state| -> Result<Option<(u32, u32)>, DispatchError> {
-                            let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                            let prev = state.last_modified_at;
-
-                            Self::record_mutation(
-                                state,
-                                &signed_op.signer_key_ref,
-                                signed_op.nonce,
-                            )?;
-                            Ok(Some(prev))
-                        },
-                    )?;
+                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
+                        let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
+                        Self::record_mutation(state, &signed_op.signer_key_ref, signed_op.nonce)
+                    })?;
 
                     // Hold the deposit from the submitter's balance.
                     let deposit = T::GovernedOpDeposit::get();
@@ -611,19 +579,10 @@ pub mod pallet {
                 }
 
                 DidOperation::CancelGoverned { did: _ } => {
-                    let previous_version_id = DidStates::<T>::try_mutate(
-                        &did,
-                        |maybe_state| -> Result<Option<(u32, u32)>, DispatchError> {
-                            let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                            let prev = state.last_modified_at;
-                            Self::record_mutation(
-                                state,
-                                &signed_op.signer_key_ref,
-                                signed_op.nonce,
-                            )?;
-                            Ok(Some(prev))
-                        },
-                    )?;
+                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
+                        let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
+                        Self::record_mutation(state, &signed_op.signer_key_ref, signed_op.nonce)
+                    })?;
 
                     let pending = PendingGovernedOps::<T>::take(&did)
                         .ok_or(Error::<T>::NoPendingGovernedOp)?;
@@ -657,31 +616,22 @@ pub mod pallet {
                     )
                     .map_err(|_| Error::<T>::DepositLockFailed)?;
 
-                    let previous_version_id = DidStates::<T>::try_mutate(
-                        &did,
-                        |maybe_state| -> Result<Option<(u32, u32)>, DispatchError> {
-                            let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
-                            let prev = state.last_modified_at;
-                            match &op {
-                                GovernedOperation::CommitmentReset {
-                                    reason: _,
-                                    commitment,
-                                    sequence,
-                                } => {
-                                    state.commitment = Some((*sequence, *commitment));
-                                }
-                                GovernedOperation::Tombstone => {
-                                    state.tombstoned_at_height = Some(height_u32);
-                                }
+                    DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
+                        let state = maybe_state.as_mut().ok_or(Error::<T>::DidNotFound)?;
+                        match &op {
+                            GovernedOperation::CommitmentReset {
+                                reason: _,
+                                commitment,
+                                sequence,
+                            } => {
+                                state.commitment = Some((*sequence, *commitment));
                             }
-                            Self::record_mutation(
-                                state,
-                                &signed_op.signer_key_ref,
-                                signed_op.nonce,
-                            )?;
-                            Ok(Some(prev))
-                        },
-                    )?;
+                            GovernedOperation::Tombstone => {
+                                state.tombstoned_at_height = Some(height_u32);
+                            }
+                        }
+                        Self::record_mutation(state, &signed_op.signer_key_ref, signed_op.nonce)
+                    })?;
 
                     // A reset publishes a new commitment and restarts the
                     // document chain. It is emitted as its own event rather
@@ -733,17 +683,18 @@ pub mod pallet {
             block_number.saturated_into()
         }
 
-        fn sweep_expired(did: &Did, current_height: u32) -> Result<(), sp_runtime::DispatchError> {
+        fn sweep_expired(
+            did: &Did, current_height: u32, previous_version_id: Option<(u32, u32)>,
+        ) -> Result<(), sp_runtime::DispatchError> {
             DidStates::<T>::try_mutate(did, |maybe_state| -> DispatchResult {
                 let state = match maybe_state.as_mut() {
                     Some(s) => s,
                     None => return Ok(()),
                 };
 
-                // The version pointer the sweep events must reference is the
-                // location of the last real mutation — captured before any
-                // removal, and never the sweep's own position.
-                let previous_version_id = state.last_modified_at;
+                // The sweep events reference the batch-start version captured
+                // by `submit_did_operations` — the location of the last real
+                // mutation before this call, never the sweep's own position.
                 let mut removed_any = false;
 
                 // Sweep expired keys.
@@ -755,7 +706,7 @@ pub mod pallet {
                         Self::deposit_event(Event::KeyRevoked {
                             did: did.clone(),
                             key_ref: removed.key_ref.as_bytes().to_vec(),
-                            previous_version_id: Some(previous_version_id),
+                            previous_version_id,
                         });
                         removed_any = true;
                     } else {
@@ -772,7 +723,7 @@ pub mod pallet {
                             did: did.clone(),
                             key_ref: removed.key_ref.as_bytes().to_vec(),
                             right: removed.right,
-                            previous_version_id: Some(previous_version_id),
+                            previous_version_id,
                         });
                         removed_any = true;
                     } else {

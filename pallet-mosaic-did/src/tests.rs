@@ -825,6 +825,58 @@ mod unit_tests {
             });
         }
 
+        /// Plan §3.2 (same transaction, same DID): `previous_version_id` is
+        /// captured once at the start of the call and shared by **all** DID
+        /// events in the batch. A per-operation capture makes the second event
+        /// point at the batch's own `(height, extrinsic)` location — a
+        /// self-pointer the backward walker cannot follow past, so the first
+        /// change is skipped.
+        #[test]
+        fn same_did_batch_events_share_the_pre_batch_version_pointer() {
+            new_test_ext().execute_with(|| {
+                let rt = TestDriver::new(); // DID created at (1, 0), nonce 1 consumed
+
+                // One extrinsic at block 2, index 3, containing two operations
+                // on the same DID.
+                rt.at_block(2);
+                System::set_extrinsic_index(3);
+
+                let batch: BoundedVec<SsiOperation, ConstU32<100>> = vec![
+                    SsiOperation::Did(sign_op(update_commitment(&rt.did, cid("batch v1"), 1), 2)),
+                    SsiOperation::Did(sign_op(update_commitment(&rt.did, cid("batch v2"), 2), 3)),
+                ]
+                .try_into()
+                .unwrap();
+
+                assert_ok!(crate::Pallet::<Test>::submit_did_operations(
+                    RawOrigin::Signed(1u64).into(),
+                    batch,
+                ));
+
+                let prevs: Vec<_> = System::read_events_no_consensus()
+                    .filter_map(|e| match &e.event {
+                        RuntimeEvent::MosaicDid(crate::Event::CommitmentUpdated {
+                            sequence,
+                            previous_version_id,
+                            ..
+                        }) => Some((*sequence, *previous_version_id)),
+                        _ => None,
+                    })
+                    .collect();
+
+                assert_eq!(
+                    prevs,
+                    vec![(1, Some((1, 0))), (2, Some((1, 0)))],
+                    "both events in a same-DID batch must reference the pre-batch pointer"
+                );
+                assert_eq!(
+                    rt.state().last_modified_at,
+                    (2, 3),
+                    "the batch's own location is the new version, not a previous one"
+                );
+            });
+        }
+
         #[test]
         fn sweep_without_removal_does_not_advance_version() {
             new_test_ext().execute_with(|| {
