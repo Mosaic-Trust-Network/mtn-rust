@@ -394,12 +394,13 @@ impl DidHistory {
             return true;
         }
 
-        // Check 2: commitment document (off-chain path)
+        // Check 2: commitment document (off-chain path). `grants_right`
+        // parses both sides into `Authentication`, so it matches a
+        // full-public-key entry against the bare key id exactly like the
+        // validated path (`grants_right_by_key_ref`) does.
         if let Some(cv) = self.commitment_at(height)
             && let Some(doc) = commitment_resolver.resolve(&cv.commitment)
-            && doc.rights.iter().any(|entry| {
-                entry.key == key_ref.to_string() && entry.rights.contains(&right.to_string())
-            })
+            && doc.grants_right(key_ref.as_str().unwrap_or(""), &right.to_string())
         {
             return true;
         }
@@ -1394,6 +1395,62 @@ mod tests {
 
         // Commitment active at height 100+
         assert!(history.has_right_at(&kr, Right::Impersonate, 100, &resolver));
+    }
+
+    /// The resolver path must use the same cross-variant key matching as the
+    /// validated path: an entry revealing the **full public key** must match
+    /// the bare key id the chain stores.
+    #[test]
+    fn has_right_at_matches_a_full_public_key_entry() {
+        use mosaic_keyvault::PrivateKey as _;
+        use mosaic_keyvault::PublicKey as _;
+        use mosaic_keyvault::ed25519::EdPrivateKey;
+        use mosaic_keyvault::multicipher::MPublicKey;
+
+        let mut seed = [0u8; 32];
+        seed[0] = 9;
+        let pk = MPublicKey::Ed25519(EdPrivateKey::from_bytes(seed).unwrap().public_key());
+        // On-chain key refs are the derived key id (`ioz...`), never the
+        // public key (`poz...`).
+        let kr = KeyRef::new(pk.key_id().to_string().into_bytes()).unwrap();
+
+        let commitment = test_commitment(2);
+        let history = DidHistory {
+            commitments: alloc::vec![CommitmentVersion {
+                sequence: 1,
+                commitment,
+                published_at_height: 100,
+                signer_key_ref: kr.clone(),
+                chain_start: true,
+            }],
+            ..DidHistory::new(test_did())
+        };
+
+        let mut resolver = TestResolver::new();
+        resolver.insert(
+            commitment,
+            UnsafeRightsDocument {
+                schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
+                did: test_did().to_did_string(),
+                sequence: 1,
+                previous_commitment: None,
+                hash_algorithm: crate::rights::ContentHashAlgorithm::Blake3CanonicalJson,
+                rights: alloc::vec![crate::rights::UnsafeRightEntry {
+                    // The revealing form: a full public key, not a key id.
+                    key: pk.to_string(),
+                    rights: alloc::vec!["impersonate".into()],
+                }],
+            },
+        );
+
+        assert!(
+            history.has_right_at(&kr, Right::Impersonate, 100, &resolver),
+            "a public-key entry must match the key ref derived from that same key"
+        );
+        assert!(
+            !history.has_right_at(&kr, Right::Issue, 100, &resolver),
+            "the right name must still be honoured"
+        );
     }
 
     #[test]

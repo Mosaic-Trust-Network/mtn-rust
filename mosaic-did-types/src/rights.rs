@@ -174,8 +174,21 @@ impl UnsafeRightsDocument {
     }
 
     /// Check whether this document grants `right` to `holder_key_ref`.
+    ///
+    /// The holder reference and every entry key are parsed into
+    /// [`Authentication`], whose cross-variant `PartialEq` makes a `KeyId`
+    /// equal to the `PublicKey` it was derived from. A raw string comparison
+    /// would let an entry that reveals the full public key silently stop
+    /// matching the bare key id the chain stores. A string that is not a key
+    /// reference at all matches nothing.
     pub fn grants_right(&self, holder_key_ref: &str, right: &str) -> bool {
-        self.rights.iter().any(|e| e.key == holder_key_ref && e.rights.iter().any(|r| r == right))
+        let Ok(target) = holder_key_ref.parse::<Authentication>() else {
+            return false;
+        };
+        self.rights.iter().any(|e| {
+            e.key.parse::<Authentication>().is_ok_and(|key| key == target)
+                && e.rights.iter().any(|r| r == right)
+        })
     }
 }
 
