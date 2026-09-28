@@ -154,9 +154,18 @@ impl Did {
     }
 
     /// Parse a `did:mosaic:<MKeyId>` string back into a Did.
+    ///
+    /// Only the Ed25519Blake3 suite (`ioz`) is accepted: that is the only
+    /// suite [`Did::from_public_key`] can produce, and `did:mosaic` is defined
+    /// as Ed25519Blake3-derived. A syntactically valid legacy Ed25519 (`iez`)
+    /// or secp256k1 (`isz`) key ID is rejected as
+    /// [`DidParseError::InvalidKeyId`] rather than admitted as a DID.
     pub fn from_did_string(s: &str) -> Result<Self, DidParseError> {
         let rest = s.strip_prefix(Self::METHOD_PREFIX).ok_or(DidParseError::InvalidPrefix)?;
         let key_id: MKeyId = rest.parse().map_err(|_| DidParseError::InvalidKeyId)?;
+        if !matches!(key_id, MKeyId::Ed25519Blake3(_)) {
+            return Err(DidParseError::InvalidKeyId);
+        }
         Ok(Did { default_key_id: key_id })
     }
 }
@@ -561,6 +570,27 @@ mod tests {
     fn did_parse_invalid_key_id() {
         let err = Did::from_did_string("did:mosaic:garbage").unwrap_err();
         assert_eq!(err, DidParseError::InvalidKeyId);
+    }
+
+    /// `did:mosaic` identifiers are always Ed25519Blake3-derived (`ioz`).
+    /// Legacy Ed25519 (`iez`) and secp256k1 (`isz`) key IDs are syntactically
+    /// valid `MKeyId`s, but `from_public_key` can never produce them, so
+    /// accepting them would let foreign-suite identifiers flow into key-id
+    /// comparisons and history reconstruction.
+    #[test]
+    fn did_parse_rejects_foreign_cipher_suites() {
+        for foreign in [
+            // Legacy Ed25519 key id (from `keyvault` multicipher tests).
+            "did:mosaic:iez21JXEtMzXjbCK6BAYFU9ewX",
+            // secp256k1 key id.
+            "did:mosaic:isz7un9h2Ddua9rfHefJMKiPLxSy2pX",
+        ] {
+            assert_eq!(
+                Did::from_did_string(foreign).unwrap_err(),
+                DidParseError::InvalidKeyId,
+                "{foreign} must be rejected: did:mosaic only carries Ed25519Blake3 ids"
+            );
+        }
     }
 
     #[test]
