@@ -539,12 +539,10 @@ mod unit_tests {
 
         /// A protocol-valid commitment: the content ID of a real rights document.
         ///
-        /// The runtime pins commitments to structured BLAKE3 (`cm`), so a flat
-        /// BLAKE3 hash is rejected by the algorithm gate. Deriving the fixture
-        /// from an actual document also keeps these tests honest about the
-        /// value production publishes — the previous helper returned a `cb` flat
-        /// hash that no document could ever match, so the suite was exercising a
-        /// commitment shape the protocol forbids.
+        /// The runtime pins commitments to structured canonical-JSON digests
+        /// (`cm` or `cj`), so a flat hash is rejected by the algorithm gate.
+        /// Deriving the fixture from an actual document keeps these tests
+        /// honest about the value production publishes.
         fn cid(label: &str) -> ContentId {
             use mosaic_did_types::rights::{
                 ContentHashAlgorithm, RIGHTS_DOCUMENT_V1_SCHEMA, UnsafeRightEntry,
@@ -610,9 +608,9 @@ mod unit_tests {
 
         /// A commitment must use a structured algorithm the verifier can
         /// reproduce. A flat hash has no canonical-JSON preimage, so no
-        /// document could ever match it; without this gate the verifier would
-        /// report that as an ordinary "right not granted" — a DID silently
-        /// holding fewer rights than it should.
+        /// document could ever match it, and the gate rejects it at the
+        /// consensus boundary rather than leaving an unverifiable commitment
+        /// in storage.
         #[test]
         fn update_commitment_rejects_flat_hash_algorithm() {
             new_test_ext().execute_with(|| {
@@ -1377,11 +1375,10 @@ mod unit_tests {
         /// Executing a reset emits `CommitmentReset`, not only
         /// `GovernedOpExecuted`.
         ///
-        /// The verifier rebuilds its timeline from the commitment events. A
-        /// reset previously published state with no event at all, so a history
-        /// rebuilt from the chain could not see the post-reset commitment; the
-        /// distinct event kind is what marks the document chain restart that
-        /// makes the `previous_commitment` check sound.
+        /// The verifier rebuilds its timeline from the commitment events. The
+        /// distinct event kind marks the document chain restart that makes the
+        /// `previous_commitment` check sound, so the post-reset commitment is
+        /// visible with the right semantics.
         #[test]
         fn execute_commitment_reset_emits_commitment_reset() {
             new_test_ext().execute_with(|| {

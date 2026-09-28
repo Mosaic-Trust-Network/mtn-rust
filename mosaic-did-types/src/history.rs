@@ -66,11 +66,10 @@ pub struct CommitmentVersion {
     /// must carry **no** `previous_commitment`; every other document must carry
     /// its predecessor's content ID exactly.
     ///
-    /// Defaults to `false` when absent from a serialized history, so an older
-    /// history that predates this field loads. The consequence is deliberate:
-    /// a reset buried mid-history is reported as [`CommitmentDocumentError::ChainBroken`]
-    /// rather than silently accepted, because the alternative is a document
-    /// whose chain link is never checked.
+    /// Defaults to `false` when absent from a serialized history. A reset
+    /// buried in a history without this field is then reported as
+    /// [`CommitmentDocumentError::ChainBroken`], so a chain link is never left
+    /// unchecked.
     #[serde(default)]
     pub chain_start: bool,
 }
@@ -225,10 +224,9 @@ pub enum HistoryFromDocumentError {
 ///
 /// These are **not** "the right was not granted". Every variant describes a
 /// document the presenter actually submitted and got wrong, so each is
-/// reported rather than skipped. The previous implementation folded them into a
-/// silent `continue`, which made a malformed document, a document for the
-/// wrong DID, and a broken chain link indistinguishable from a document that
-/// simply did not grant the right.
+/// reported rather than skipped: a malformed document, a document for the
+/// wrong DID, and a broken chain link stay distinguishable from a document
+/// that simply did not grant the right.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum CommitmentDocumentError {
     /// The document's content ID could not be computed.
@@ -611,9 +609,9 @@ impl DidHistory {
     /// 2. **DID binding.** The document's own `did` must equal the history's.
     ///    The digest already implies this, so the check is redundant by
     ///    construction — it is made explicit because a claim about a DID is a
-    ///    security statement, and deriving it silently from a hash means a
-    ///    future narrowing of the preimage would remove the binding with no
-    ///    other signal. See the `preimage_covers_*` tests in `rights.rs`.
+    ///    security statement, and deriving it from a hash alone means a future
+    ///    narrowing of the preimage would remove the binding with no other
+    ///    signal. See the `preimage_covers_*` tests in `rights.rs`.
     /// 3. **Hash binding.** The document's content ID must equal the on-chain
     ///    commitment. This is the core of the check: both sides of the
     ///    comparison are attacker-influenced, so a sequence number alone would
@@ -982,20 +980,17 @@ impl DidHistory {
                     (seq, cid_str, pub_at, signer)
                 {
                     // Strict parse. A `contentId` this build cannot read is
-                    // reported, not replaced: the previous fallback hashed the
-                    // *text* of the string with BLAKE3 and stored the result as
-                    // a `cb` flat content ID. That value is a digest of nothing,
-                    // is indistinguishable from a publisher-supplied hash, and
-                    // can never match a document — so an unparseable commitment
-                    // surfaced downstream as a DID that quietly had fewer rights.
+                    // reported, not replaced: a substitute value would be
+                    // indistinguishable from a publisher-supplied hash and
+                    // could never match a document.
                     let commitment = cid_str
                         .parse::<ContentId>()
                         .map_err(HistoryFromDocumentError::InvalidContentId)?;
 
                     // Height filtering. The endpoint is untrusted, so a version
-                    // claiming a future publication height would otherwise
-                    // widen the window a commitment-derived right is asserted
-                    // over. The parameter previously went unused.
+                    // claiming a future publication height must be rejected:
+                    // the height bounds the window a commitment-derived right
+                    // is asserted over.
                     if pub_at as u32 > at_height {
                         return Err(HistoryFromDocumentError::CommitmentAfterHeight {
                             sequence: seq,
@@ -1784,13 +1779,9 @@ mod tests {
         );
     }
 
-    /// An unparseable `contentId` must be reported, not replaced.
-    ///
-    /// The previous fallback hashed the *text* of the string with BLAKE3 and
-    /// stored it as a `cb` flat content ID — a digest of nothing, which can
-    /// never match a document, and is indistinguishable from a genuine
-    /// publisher-supplied hash. The symptom was a DID that silently had fewer
-    /// rights than it should.
+    /// An unparseable `contentId` is reported, not replaced. A substitute
+    /// value could never match a document and would be indistinguishable from
+    /// a genuine publisher-supplied hash.
     #[test]
     fn from_did_document_at_rejects_unparseable_content_id() {
         let mut history = DidHistory::new(test_did());
@@ -2408,8 +2399,8 @@ mod tests {
     }
 
     /// A commitment published under an algorithm this build cannot verify makes
-    /// the timeline unverifiable — no document can ever match it — so it must
-    /// be reported rather than silently read as "right not granted".
+    /// the timeline unverifiable — no document can ever match it — so it is
+    /// reported rather than read as "right not granted".
     #[test]
     fn verify_right_window_rejects_commitment_with_unsupported_algorithm() {
         let kr = test_key_ref(1);
@@ -2645,8 +2636,8 @@ mod tests {
     }
 
     /// iop-rs#1 pin: a presenter-supplied document that grants the right but
-    /// does NOT hash to the on-chain commitment contributes nothing. Before
-    /// the hash-binding fix this returned Confirmed on sequence match alone.
+    /// does not hash to the on-chain commitment contributes nothing, even when
+    /// its sequence matches.
     #[test]
     fn verify_right_window_commitment_hash_mismatch_grants_nothing() {
         let kr = test_key_ref(1);

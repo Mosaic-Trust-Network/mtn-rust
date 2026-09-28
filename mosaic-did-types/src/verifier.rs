@@ -147,9 +147,9 @@ fn map_commitment_document_error(err: CommitmentDocumentError) -> VerificationEr
 /// Map a snapshot-to-history rejection onto a verification error.
 ///
 /// The commitment service endpoint inside a DID document is untrusted input,
-/// so a malformed field is reported as itself. Collapsing these into
-/// [`VerificationError::KeyNotFound`] told the caller the holder key was absent
-/// when the real problem was the endpoint.
+/// so each malformed field is reported as itself. Collapsing them into
+/// [`VerificationError::KeyNotFound`] would report a missing holder key when
+/// the real problem is the endpoint.
 fn map_history_from_document_error(err: HistoryFromDocumentError) -> VerificationError {
     match err {
         HistoryFromDocumentError::InvalidDid(e) => VerificationError::InvalidDid(e.to_string()),
@@ -738,9 +738,8 @@ mod tests {
     //
     // `verify_right` builds the history from the DID document snapshot, and the
     // commitment service endpoint inside it is untrusted input. Each way the
-    // snapshot can be wrong must be reported as itself — collapsing them into
-    // `KeyNotFound` told the caller the holder key was missing when the real
-    // problem was a malformed endpoint.
+    // snapshot can be wrong is reported as itself, so a malformed endpoint is
+    // never reported as a missing holder key.
 
     #[test]
     fn verify_right_reports_unparseable_content_id() {
@@ -1208,9 +1207,8 @@ mod tests {
         assert!(result.steps.iter().any(|s| s.step == "window_bounds" && s.passed));
     }
 
-    /// iop-rs#2 pin: an all-zero (forged) envelope signature must be rejected
-    /// before any timeline fact is trusted. This exact input used to pass as
-    /// Finalized.
+    /// iop-rs#2 pin: an all-zero (forged) envelope signature is rejected
+    /// before any timeline fact is trusted.
     #[test]
     fn finalized_proof_rejects_forged_envelope_signature() {
         let d1 = make_rights_doc(1, None, "impersonate");

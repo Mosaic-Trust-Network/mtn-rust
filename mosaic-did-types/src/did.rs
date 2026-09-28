@@ -389,10 +389,9 @@ impl ContentId {
     /// member requires a runtime upgrade, because `pallet-mosaic-did` rejects
     /// any `UpdateCommitment` whose `ContentId` is not accepted here.
     ///
-    /// A commitment therefore never holds an algorithm this build cannot
-    /// verify. An *old* build reading a *new* chain reports
-    /// `UnsupportedAlgorithm` rather than silently failing to match — see
-    /// [`CommitmentDocumentError::UnsupportedAlgorithm`].
+    /// A build that meets a commitment whose algorithm it does not know reports
+    /// [`CommitmentDocumentError::UnsupportedAlgorithm`] rather than treating
+    /// it as a mismatch.
     ///
     /// Membership is decided by the algorithm tag alone. A commitment is
     /// self-describing, and the document declares the same algorithm, so the

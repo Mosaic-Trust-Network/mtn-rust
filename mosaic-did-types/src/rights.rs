@@ -103,9 +103,9 @@ pub struct UnsafeRightEntry {
 /// # Unknown fields
 ///
 /// Unknown fields are **rejected**, not ignored. This document is a digest
-/// preimage: an implementation that silently drops a field it does not
-/// recognise produces a different digest than one that honours it, so the two
-/// disagree about the same bytes.
+/// preimage: an implementation that drops a field it does not recognise would
+/// hash different bytes than one that honours it. Rejecting keeps every
+/// implementation hashing the same bytes.
 ///
 /// The `$schema` discriminator is checked before any field is interpreted, so a
 /// document naming a schema this build does not know is rejected with
@@ -128,8 +128,7 @@ pub struct UnsafeRightsDocument {
     ///
     /// Always serialized, including the `null`, because the field is part of
     /// the preimage: the explicit `null` is the canonical spelling of "no
-    /// predecessor", and it cannot be confused with an implementation that
-    /// silently drops the field.
+    /// predecessor", so a chain-start document has exactly one preimage.
     #[serde(rename = "previousCommitment")]
     pub previous_commitment: Option<ContentId>,
     /// The hashing algorithm used to produce this document's content ID.
@@ -167,9 +166,9 @@ impl UnsafeRightsDocument {
 
     /// String rendering of [`Self::compute_content_id`].
     ///
-    /// Retained for wire serialization and display. Prefer
-    /// [`Self::compute_content_id`] wherever the value is compared — it avoids
-    /// a lossy `String` round-trip whose failures were previously swallowed.
+    /// For wire output and display. Prefer [`Self::compute_content_id`]
+    /// wherever the value is compared, so a digest failure stays an error
+    /// rather than becoming a string that failed to parse.
     pub fn compute_hash(&self) -> Result<String, String> {
         self.compute_content_id().map(|cid| cid.to_string()).map_err(|e| e.to_string())
     }
@@ -274,11 +273,9 @@ pub enum RightsDocumentError {
 
 /// Failure to compute a rights document's content ID.
 ///
-/// This type exists so digest failures are **distinguishable** from content
-/// mismatches. The original implementation chained two `.ok()` calls — one on
-/// the digest, one on the string-to-`ContentId` parse — which collapsed
-/// "canonicalization failed", "digest was malformed" and "document does not
-/// match the commitment" into one indistinguishable outcome.
+/// The variants separate a canonicalization failure from a malformed digest,
+/// so a digest problem is never mistaken for a document that merely does not
+/// match the commitment.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ContentIdError {
     /// Canonicalization or digest computation failed.
@@ -311,29 +308,16 @@ pub enum RightsDocumentSetError {
 
 /// The rights documents a presenter supplied, indexed by sequence.
 ///
-/// # Why this type exists
+/// Construction rejects duplicate and out-of-order sequences, so two
+/// properties hold for every instance:
 ///
-/// The presentation used to be a `&[(u64, &RightsDocument)]` — a parallel
-/// array of caller-asserted sequence numbers and documents. That made two
-/// things ambiguous at runtime, and both were resolved silently by whichever
-/// entry happened to come first:
+/// - **A sequence resolves to one document.** No two documents can claim the
+///   same sequence, so lookup never depends on presentation order.
+/// - **The index cannot disagree with the document.** The sequence used for
+///   lookup is the one the document declares, never a caller-supplied value.
 ///
-/// - **Two documents for one sequence.** The verifier took the first, so the
-///   result depended on presentation order. This is the same defect as an HTTP
-///   header defined twice, where the reading order silently decides the value.
-///   Here it could hide a correct document behind a stale one, losing a right
-///   the holder genuinely has.
-/// - **A key that disagrees with the document.** The tuple element and
-///   [`RightsDocument::sequence`] were independent, so they could disagree and
-///   nothing detected it.
-///
-/// This type removes both: the sequence comes from the document itself, so it
-/// cannot disagree with it, and duplicates are rejected during construction, so
-/// "which document is presented for sequence N" is always well defined. An
-/// invalid set cannot be represented.
-///
-/// Ordering is required to be strictly increasing rather than merely unique so
-/// that a presentation has one canonical byte order across implementations.
+/// Ordering is strictly increasing rather than merely unique, so a
+/// presentation has one canonical order across implementations.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RightsDocumentSet<'a> {
     documents: Vec<&'a RightsDocument>,
@@ -404,13 +388,8 @@ impl RightsDocument {
     ///
     /// The `key_ref` is parsed into an [`Authentication`] and compared with the
     /// cross-variant `PartialEq`, so an entry that reveals the **full public
-    /// key** matches the bare key id the chain stores. Comparing
-    /// `entry.key.to_string() == key_ref` instead would make a `PublicKey`
-    /// entry stringify to its `p`-prefixed form and never match the
-    /// `i`-prefixed key ref — silently stripping the right from any holder who
-    /// chose the more revealing form.
-    ///
-    /// A `key_ref` that is not a key reference at all matches nothing.
+    /// key** matches the bare key id the chain stores. A `key_ref` that is not
+    /// a key reference at all matches nothing.
     pub fn grants_right_by_key_ref(&self, key_ref: &str, right: &str) -> bool {
         let Ok(target) = key_ref.parse::<Authentication>() else {
             return false;
@@ -1015,8 +994,8 @@ mod tests {
     // to a DID and a chain position only because those fields are inside the
     // hashed preimage. Nothing in the type system enforces that, and every
     // caller builds documents through `compute_content_id`, so a change that
-    // narrowed the preimage would silently disable the binding while leaving
-    // every other test green.
+    // narrowed the preimage would disable the binding while leaving every
+    // other test green.
     //
     // These tests are the executable form of that invariant.
 
@@ -1262,7 +1241,7 @@ mod tests {
     #[test]
     fn unknown_hash_algorithm_is_rejected() {
         let err = serde_json::from_str::<UnsafeRightsDocument>(&doc_json("rot13"))
-            .expect_err("an unknown algorithm must not be silently dropped");
+            .expect_err("an unknown algorithm must not be dropped");
         assert!(
             err.to_string().contains("unknown variant"),
             "expected an unknown-variant error, got: {err}"
@@ -1271,12 +1250,10 @@ mod tests {
 
     // ===== JSON field naming =====
 
-    /// Every multi-word field on the wire is camelCase.
-    ///
-    /// The commitment service inside a DID document already uses
-    /// `contentId` / `publishedAtHeight` / `publishedBy`, so a snake_case
-    /// `previous_commitment` in the document this digest covers made the
-    /// protocol speak two conventions for the same concept.
+    /// Every multi-word field on the wire is camelCase, matching the
+    /// `contentId` / `publishedAtHeight` / `publishedBy` spelling of the
+    /// commitment service inside a DID document. One convention across the
+    /// protocol means one preimage for a document.
     #[test]
     fn rights_document_wire_uses_camel_case_field_names() {
         let doc = UnsafeRightsDocument {
@@ -1304,12 +1281,11 @@ mod tests {
         assert_eq!(parsed, doc);
     }
 
-    /// The entry's key field is `keyRef`, not `key`.
+    /// The entry's key field is `keyRef`.
     ///
-    /// The value is a reference to a key the on-chain state knows — most
-    /// clients use an `MKeyId` — so the name must not suggest that the key
-    /// material itself is carried here. `key` was the old spelling and is now
-    /// an unknown field.
+    /// The value is a reference to a key the on-chain state knows — normally
+    /// an `MKeyId` — so the name states that the key material itself is not
+    /// carried here. A `key` field is unknown and rejected.
     #[test]
     fn rights_entry_wire_uses_key_ref_field_name() {
         let doc = UnsafeRightsDocument {
@@ -1329,15 +1305,15 @@ mod tests {
         assert!(!json.contains("\"key\""), "the wire field must be `keyRef`, got: {json}");
 
         let parsed: UnsafeRightsDocument = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, doc, "the renamed field must round-trip");
+        assert_eq!(parsed, doc, "the field must round-trip");
 
-        // The old spelling is not silently accepted: `deny_unknown_fields`
-        // makes it a hard parse error, so the two spellings cannot be hashed
-        // to different digests by different implementations.
-        let old = r#"{"key":"ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH","rights":["impersonate"]}"#;
+        // `deny_unknown_fields` makes `key` a hard parse error, so the two
+        // spellings cannot be hashed to different digests by different
+        // implementations.
+        let key_field = r#"{"key":"ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH","rights":["impersonate"]}"#;
         assert!(
-            serde_json::from_str::<UnsafeRightEntry>(old).is_err(),
-            "the old `key` spelling must be rejected"
+            serde_json::from_str::<UnsafeRightEntry>(key_field).is_err(),
+            "a `key` field must be rejected"
         );
     }
 
@@ -1388,15 +1364,9 @@ mod tests {
 
     // ===== Cross-variant key matching =====
 
-    /// A document entry that reveals the **full public key** must still match
-    /// an on-chain `KeyRef`, which is a bare key id.
-    ///
-    /// The comparison used to be `entry.key.to_string() == key_ref`, so a
-    /// `PublicKey` entry stringified to its `p`-prefixed form and never matched
-    /// the `i`-prefixed key ref the chain stores. A holder who chose the more
-    /// revealing form therefore lost every right, even though
-    /// [`RightsDocument::grants_right`] is documented as cross-variant
-    /// transparent.
+    /// A document entry that reveals the **full public key** matches an
+    /// on-chain `KeyRef`, which is a bare key id, because the lookup compares
+    /// parsed [`Authentication`] values rather than their string forms.
     #[test]
     fn grants_right_by_key_ref_matches_a_full_public_key_entry() {
         use core::str::FromStr as _;
