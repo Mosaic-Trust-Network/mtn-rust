@@ -70,6 +70,12 @@ pub struct CommitmentVersion {
     /// buried in a history without this field is then reported as
     /// [`CommitmentDocumentError::ChainBroken`], so a chain link is never left
     /// unchecked.
+    ///
+    /// The one exception is the first *visible* entry of a truncated snapshot
+    /// (a `from_height` window that dropped its predecessors). It is flagged
+    /// `false` because it genuinely is not a chain start, yet its predecessor
+    /// is outside the window: its linkage is unknown, and verification skips
+    /// only that one link rather than rejecting the timeline.
     #[serde(default)]
     pub chain_start: bool,
 }
@@ -332,12 +338,15 @@ impl DidHistory {
                 signer_key_ref,
                 at_height,
             } => {
+                // A plain update starts a chain only when it is the first
+                // commitment ever seen; later ones link to their predecessor.
+                let chain_start = self.commitments.is_empty();
                 let cv = CommitmentVersion {
                     sequence,
                     commitment,
                     published_at_height: at_height,
                     signer_key_ref,
-                    chain_start: false,
+                    chain_start,
                 };
                 self.commitments.push(cv);
             }
@@ -655,15 +664,21 @@ impl DidHistory {
                 continue;
             }
 
-            // The timeline is gapless on-chain, but a governed reset restarts
-            // the document chain. A predecessor is expected unless *this*
-            // entry starts a chain — which is the first entry, or any entry
-            // published via `CommitmentReset`. Note the condition reads this
-            // entry's flag, not the previous entry's: after a reset at index N,
-            // index N+1 must link back to the reset document.
-            let is_chain_start = cv.chain_start || index == 0;
-            let linked = if is_chain_start {
+            // The flag is authoritative: a chain starts at the genuine first
+            // commitment (marked in `apply`) or at a governed reset. Note the
+            // condition reads *this* entry's flag, not the previous entry's:
+            // after a reset at index N, index N+1 must link back to the reset
+            // document.
+            //
+            // An unflagged first entry means the timeline is truncated before
+            // the visible window (`to_did_document_at(_, Some(from_height))`):
+            // its true predecessor is outside the snapshot, so the link cannot
+            // be checked and is not required. Every later entry must link
+            // exactly to its visible predecessor.
+            let linked = if cv.chain_start {
                 doc.previous_commitment().is_none()
+            } else if index == 0 {
+                true
             } else {
                 doc.previous_commitment() == Some(&self.commitments[index - 1].commitment)
             };
@@ -1009,8 +1024,10 @@ impl DidHistory {
                         published_at_height: pub_at as u32,
                         signer_key_ref: key_ref,
                         // Absent means "not a chain start" (see the field's
-                        // documentation); the first entry is treated as a chain
-                        // start regardless, so an older snapshot still loads.
+                        // documentation). When it lands on the first visible
+                        // entry, verification reads the timeline as truncated
+                        // before the window and skips that one link, so an
+                        // older snapshot still loads.
                         chain_start: v.get("chainStart").and_then(|c| c.as_bool()).unwrap_or(false),
                     });
                 }
@@ -1600,14 +1617,24 @@ mod tests {
             signer_key_ref: kr.clone(),
             at_height: 100,
         });
+        history.apply(DidHistoryEvent::CommitmentUpdated {
+            sequence: 2,
+            commitment: test_commitment(2),
+            signer_key_ref: kr.clone(),
+            at_height: 200,
+        });
 
-        assert_eq!(history.commitments.len(), 1);
+        assert_eq!(history.commitments.len(), 2);
         let cv = &history.commitments[0];
         assert_eq!(cv.sequence, 1);
         assert_eq!(cv.commitment, cid);
         assert_eq!(cv.published_at_height, 100);
         assert_eq!(cv.signer_key_ref, kr);
-        assert!(!cv.chain_start, "a plain update does not restart the chain");
+        assert!(cv.chain_start, "the first commitment starts the chain");
+        assert!(
+            !history.commitments[1].chain_start,
+            "a later plain update links to its predecessor instead of restarting the chain"
+        );
     }
 
     /// A reset event marks its commitment as a chain start, even though the
@@ -1632,7 +1659,10 @@ mod tests {
         });
 
         assert_eq!(history.commitments.len(), 2);
-        assert!(!history.commitments[0].chain_start);
+        assert!(
+            history.commitments[0].chain_start,
+            "the first commitment starts the initial chain"
+        );
         assert!(
             history.commitments[1].chain_start,
             "a reset starts a new document chain at a continuing sequence"
@@ -2634,6 +2664,53 @@ mod tests {
             .verify_right_window(&kr, Right::Impersonate, 100, Some(200), &set1(&[&doc]))
             .expect_err("a chain start must not claim a predecessor");
         assert_eq!(err, CommitmentDocumentError::ChainBroken { sequence: 1 });
+    }
+
+    /// A `from_height` snapshot drops the commitments before the window, so
+    /// its first visible entry is mid-chain and its real document legitimately
+    /// carries a `previousCommitment` that is simply outside the snapshot.
+    /// Demanding `None` there would break every genuinely truncated timeline.
+    #[test]
+    fn verify_right_window_accepts_a_truncated_snapshot_window() {
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+
+        // Three commitments, each linking to the previous one.
+        let (_d1, cid1) = make_rights_doc_cid(1, None, key_str, "impersonate");
+        let (d2, cid2) = make_rights_doc_cid(2, Some(cid1), key_str, "impersonate");
+        let (_d3, cid3) = make_rights_doc_cid(3, Some(cid2), key_str, "impersonate");
+
+        let mut full = DidHistory::new(test_did());
+        for (seq, cid, at) in [(1u64, cid1, 100u32), (2, cid2, 200), (3, cid3, 300)] {
+            full.apply(DidHistoryEvent::CommitmentUpdated {
+                sequence: seq,
+                commitment: cid,
+                signer_key_ref: kr.clone(),
+                at_height: at,
+            });
+        }
+
+        // Window from 250 drops sequence 1; sequence 2 becomes the visible
+        // start while its true predecessor is out of scope.
+        let snapshot = full.to_did_document_at(350, Some(250));
+        let reconstructed = DidHistory::from_did_document_at(&snapshot, 350)
+            .expect("a truncated snapshot must reconstruct");
+
+        assert_eq!(reconstructed.commitments.len(), 2);
+        assert_eq!(reconstructed.commitments[0].sequence, 2);
+        assert!(
+            !reconstructed.commitments[0].chain_start,
+            "a mid-chain window start is not a chain start"
+        );
+
+        assert_eq!(
+            reconstructed
+                .verify_right_window(&kr, Right::Impersonate, 200, Some(300), &set1(&[&d2]))
+                .unwrap(),
+            ValidityResult::Confirmed,
+            "the real document at the visible start must verify despite its \
+             predecessor being outside the window"
+        );
     }
 
     /// After a governed reset the chain restarts, and the *next* document must
