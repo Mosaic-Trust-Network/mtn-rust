@@ -28,6 +28,7 @@ mosaic-keyvault = { workspace = true, features = ["serde"] }
 json-digest = { workspace = true }
 multibase = { workspace = true }
 strum = { version = "0.26", default-features = false, features = ["derive"] }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
@@ -45,6 +46,7 @@ std = [
 	"scale-info?/std",
 	"serde/std",
 	"serde_json/std",
+	"thiserror/std",
 ]
 serde = []
 substrate = [

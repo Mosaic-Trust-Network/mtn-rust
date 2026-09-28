@@ -168,36 +168,22 @@ impl fmt::Display for Did {
 }
 
 /// Errors that can occur when creating a DID from a public key.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum DidCreationError {
     /// The public key bytes are not a valid Ed25519 curve point.
+    #[error("invalid Ed25519 public key")]
     InvalidPublicKey,
 }
 
-impl fmt::Display for DidCreationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidPublicKey => write!(f, "invalid Ed25519 public key"),
-        }
-    }
-}
-
 /// Errors that can occur when parsing a DID string.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum DidParseError {
     /// The string doesn't start with `did:mosaic:`.
+    #[error("DID must start with '{}'", Did::METHOD_PREFIX)]
     InvalidPrefix,
     /// The MKeyId portion could not be parsed.
+    #[error("invalid multicipher key ID")]
     InvalidKeyId,
-}
-
-impl fmt::Display for DidParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidPrefix => write!(f, "DID must start with '{}'", Did::METHOD_PREFIX),
-            Self::InvalidKeyId => write!(f, "invalid multicipher key ID"),
-        }
-    }
 }
 
 /// Key identifier within a DID document.
@@ -310,7 +296,7 @@ impl fmt::Display for KeyRef {
 /// # Variants
 ///
 /// | Prefix | Variant | Algorithm | Structure | Hash size |
-/// |--------|---------|-----------|-----------|-----------|
+///|--------|---------|-----------|-----------|-----------|
 /// | `cb` | `Blake3Flat` | BLAKE3-256 | flat bytes | 32 |
 /// | `cB` | `Blake2bFlat` | BLAKE2b-512 | flat bytes | 64 |
 /// | `cj` | `Structured` | SHA3-256 | json-digest | 32 |
@@ -318,6 +304,12 @@ impl fmt::Display for KeyRef {
 ///
 /// Flat hashes use **Base58Btc** encoding. Structured hashes use the standard
 /// `json_digest::JsonDigest` format (multibase Base64Url).
+///
+/// All four variants are *representable*, but only the structured ones are
+/// *permitted* as a rights-document commitment — see
+/// [`ContentId::is_supported_commitment_algorithm`]. Representability and
+/// permissibility are deliberately separate: a build must be able to parse and
+/// report a content ID it cannot verify, rather than failing to decode it.
 ///
 /// # Size note
 ///
@@ -351,7 +343,8 @@ impl ContentId {
         ContentId::Blake3Flat(*blake3::hash(content).as_bytes())
     }
 
-    /// Create a `Structured` content ID from a pre-computed json-digest (SHA3-256, legacy).
+    /// Create a structured SHA3-256 content ID (`cj`) from a pre-computed
+    /// json-digest.
     pub fn from_json_digest_hash(hash: [u8; 32]) -> Self {
         ContentId::Structured(JsonDigest::Sha3(hash))
     }
@@ -359,6 +352,17 @@ impl ContentId {
     /// Create a `Structured` content ID from a typed [`JsonDigest`].
     pub fn from_json_digest(digest: JsonDigest) -> Self {
         ContentId::Structured(digest)
+    }
+
+    /// A structured BLAKE3-256 content ID (`cm`), the pinned commitment
+    /// algorithm.
+    ///
+    /// Provided so callers building a commitment do not need a direct
+    /// `json_digest` dependency. One of the values
+    /// [`Self::is_supported_commitment_algorithm`] accepts; a structured SHA3
+    /// content ID (`cj`, via [`Self::from_json_digest_hash`]) is also permitted.
+    pub fn structured_blake3(hash: [u8; 32]) -> Self {
+        ContentId::Structured(JsonDigest::Blake3(hash))
     }
 
     /// Return the raw hash bytes as a slice, regardless of variant.
@@ -373,6 +377,36 @@ impl ContentId {
     /// Returns `true` if this content ID is a structured JSON digest.
     pub fn is_json_digest(&self) -> bool {
         matches!(self, ContentId::Structured(_))
+    }
+
+    /// Whether a rights-document commitment may use this hashing algorithm.
+    ///
+    /// Both **structured** algorithms are permitted: BLAKE3 (`cm`) and SHA3
+    /// (`cj`) hash the canonical JSON Merkle tree, which is the preimage a
+    /// rights document reproduces. The flat variants (`cb`, `cB`) are not
+    /// commitment algorithms: a flat hash has no canonical-JSON preimage, so no
+    /// document could ever match it. The set is deliberately closed — adding a
+    /// member requires a runtime upgrade, because `pallet-mosaic-did` rejects
+    /// any `UpdateCommitment` whose `ContentId` is not accepted here.
+    ///
+    /// A commitment therefore never holds an algorithm this build cannot
+    /// verify. An *old* build reading a *new* chain reports
+    /// `UnsupportedAlgorithm` rather than silently failing to match — see
+    /// [`CommitmentDocumentError::UnsupportedAlgorithm`].
+    ///
+    /// Membership is decided by the algorithm tag alone. A commitment is
+    /// self-describing, and the document declares the same algorithm, so the
+    /// verifier dispatches on the declaration instead of guessing.
+    pub fn is_supported_commitment_algorithm(&self) -> bool {
+        match self {
+            // Structured BLAKE3 (`cm`) and structured SHA3 (`cj`) both hash
+            // the canonical JSON Merkle tree a rights document reproduces.
+            ContentId::Structured(JsonDigest::Blake3(_))
+            | ContentId::Structured(JsonDigest::Sha3(_)) => true,
+            // Flat hashes (`cb`, `cB`) are representable in storage but have
+            // no canonical-JSON preimage to match.
+            ContentId::Blake3Flat(_) | ContentId::Blake2bFlat(_) => false,
+        }
     }
 }
 
@@ -445,29 +479,20 @@ impl core::str::FromStr for ContentId {
 }
 
 /// Errors that can occur when parsing a displayed [`ContentId`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ContentIdParseError {
     /// The string does not start with `c` followed by a known variant letter.
+    #[error("ContentId must start with 'c' followed by b/B/j/m")]
     InvalidPrefix,
     /// The Base58Btc payload could not be decoded.
+    #[error("ContentId payload is not valid Base58Btc")]
     InvalidBase58,
     /// The decoded hash bytes had the wrong length for the variant.
+    #[error("ContentId hash has wrong length for its variant")]
     InvalidLength,
     /// The structured JSON digest string could not be parsed.
+    #[error("ContentId structured digest could not be parsed")]
     InvalidJsonDigest,
-}
-
-impl fmt::Display for ContentIdParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidPrefix => {
-                write!(f, "ContentId must start with 'c' followed by b/B/j/m")
-            }
-            Self::InvalidBase58 => write!(f, "ContentId payload is not valid Base58Btc"),
-            Self::InvalidLength => write!(f, "ContentId hash has wrong length for its variant"),
-            Self::InvalidJsonDigest => write!(f, "ContentId structured digest could not be parsed"),
-        }
-    }
 }
 
 impl serde::Serialize for ContentId {
@@ -637,5 +662,72 @@ mod tests {
 
         let ok = vec![b'a'; 64];
         assert!(KeyRef::new(ok).is_ok());
+    }
+
+    // ===== SCALE storage: where the algorithm tag actually lives =====
+
+    /// The algorithm tag **is** persisted, as the inner SCALE enum discriminant.
+    ///
+    /// `ContentId` wraps a `JsonDigest`, so derived encoding produces
+    /// `structure_tag ++ algorithm_tag ++ payload`: byte 0 distinguishes flat
+    /// from structured, byte 1 distinguishes the algorithm. A `cm` commitment
+    /// and a `cj` commitment therefore occupy different storage, and a reader
+    /// that never parses the payload still cannot confuse them.
+    #[cfg(feature = "substrate")]
+    #[test]
+    fn content_id_scale_encoding_carries_the_algorithm_variant() {
+        use parity_scale_codec::{Decode, Encode};
+
+        let blake3 = ContentId::structured_blake3([1u8; 32]);
+        let sha3 = ContentId::from_json_digest_hash([1u8; 32]);
+        let flat = ContentId::from_bytes(b"x");
+
+        let a = blake3.encode();
+        let b = sha3.encode();
+        let c = flat.encode();
+
+        // Layout is `structure_tag ++ algorithm_tag ++ payload`. The outer tag
+        // selects flat-vs-structured; the inner tag selects the algorithm, so
+        // two structured values agree on byte 0 and differ on byte 1.
+        assert_eq!(a[0], b[0], "both are structured, so the outer tag must match");
+        assert_ne!(a[0], c[0], "flat and structured must have different outer tags");
+        assert_ne!(
+            a[1], b[1],
+            "the algorithm tag must be persisted and must differ between \
+             structured BLAKE3 and structured SHA3"
+        );
+        assert_eq!(
+            ContentId::decode(&mut &a[..]).unwrap(),
+            blake3,
+            "the tag survives a storage round-trip"
+        );
+    }
+
+    /// The tag is a **closed** discriminant, not an open algorithm code.
+    ///
+    /// A derived `Decode` rejects an unknown index outright, so a value written
+    /// by a newer runtime under a new variant cannot even be read by an older
+    /// node — the read fails rather than yielding an "unrecognised algorithm I
+    /// should report". This is the concrete cost of modelling the algorithm set
+    /// as a Rust enum rather than as `{ code, length, bytes }` with an
+    /// `Unknown` catch-all, and it is why widening the pinned set is a runtime
+    /// upgrade with a storage implication rather than a pure code change.
+    #[cfg(feature = "substrate")]
+    #[test]
+    fn content_id_scale_decoding_rejects_an_unknown_algorithm_variant() {
+        use parity_scale_codec::{Decode, Encode};
+
+        let known = ContentId::structured_blake3([1u8; 32]);
+        let mut bytes = known.encode();
+
+        // Claim a variant index no released build defines.
+        bytes[0] = 0x7f;
+
+        let err = ContentId::decode(&mut &bytes[..]);
+        assert!(
+            err.is_err(),
+            "an unknown algorithm variant must fail to decode rather than decode as \
+             some other algorithm"
+        );
     }
 }

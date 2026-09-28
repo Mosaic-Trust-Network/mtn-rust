@@ -114,7 +114,7 @@ pub fn validate_did_operation<T: Config>(
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
         }
 
-        DidOperation::UpdateCommitment { did: _, commitment: _, sequence } => {
+        DidOperation::UpdateCommitment { did: _, commitment, sequence } => {
             let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
@@ -123,13 +123,22 @@ pub fn validate_did_operation<T: Config>(
                 Error::<T>::InsufficientRight
             );
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
+
+            // The commitment must be verifiable. Accepted here means every
+            // commitment this runtime stores has a matching document
+            // algorithm, so the verifier never has to report a commitment it
+            // cannot check.
+            ensure!(
+                commitment.is_supported_commitment_algorithm(),
+                Error::<T>::UnsupportedCommitmentAlgorithm
+            );
 
             // Sequence must equal stored_sequence + 1 (gapless).
             let stored_sequence = state.commitment.map(|(seq, _)| seq).unwrap_or(0);
             ensure!(*sequence == stored_sequence + 1, Error::<T>::InvalidCommitmentSequence);
         }
 
-        DidOperation::AnnounceGoverned { did: _, operation: _ } => {
+        DidOperation::AnnounceGoverned { did: _, operation } => {
             let state = maybe_state.as_ref().ok_or(Error::<T>::DidNotFound)?;
             ensure!(!state.is_tombstoned_at(height_u32), Error::<T>::DidTombstoned);
             validate_nonce::<T>(state, signed_op)?;
@@ -138,6 +147,18 @@ pub fn validate_did_operation<T: Config>(
                 Error::<T>::InsufficientRight
             );
             validate_signature_from_state::<T>(signed_op, state, height_u32)?;
+
+            // A reset must install a verifiable commitment. Checked here at
+            // announce time rather than at execute time, so an operation that
+            // can never succeed does not lock a deposit. The check is repeated
+            // in the execute path, where it also guards stored pending ops
+            // written before this gate existed.
+            if let GovernedOperation::CommitmentReset { commitment, .. } = operation {
+                ensure!(
+                    commitment.is_supported_commitment_algorithm(),
+                    Error::<T>::UnsupportedCommitmentAlgorithm
+                );
+            }
 
             // Only one pending governed operation per DID
             ensure!(
@@ -182,8 +203,16 @@ pub fn validate_did_operation<T: Config>(
             let max_exec_height = pending.announced_at_height + crate::GOVERNED_OP_EXPIRY_BLOCKS;
             ensure!(height_u32 <= max_exec_height, Error::<T>::GovernedOpExpired);
 
-            // For CommitmentReset, enforce gapless sequence (same as direct UpdateCommitment).
-            if let GovernedOperation::CommitmentReset { sequence, .. } = &pending.operation {
+            // For CommitmentReset, enforce gapless sequence (same as direct UpdateCommitment)
+            // and pin the hashing algorithm, so a reset cannot install a
+            // commitment the verifier is unable to check.
+            if let GovernedOperation::CommitmentReset { sequence, commitment, .. } =
+                &pending.operation
+            {
+                ensure!(
+                    commitment.is_supported_commitment_algorithm(),
+                    Error::<T>::UnsupportedCommitmentAlgorithm
+                );
                 let stored_sequence = state.commitment.map(|(seq, _)| seq).unwrap_or(0);
                 ensure!(*sequence == stored_sequence + 1, Error::<T>::InvalidCommitmentSequence);
             }

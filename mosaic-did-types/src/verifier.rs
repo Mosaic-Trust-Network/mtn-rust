@@ -13,9 +13,11 @@ use crate::auth::Authentication;
 #[allow(unused_imports)]
 use crate::did::{ContentId, KeyRef};
 use crate::document::DidDocument;
-use crate::history::{DidHistory, ValidityResult};
+use crate::history::{
+    CommitmentDocumentError, DidHistory, HistoryFromDocumentError, ValidityResult,
+};
 use crate::operation::Right;
-use crate::rights::RightsDocument;
+use crate::rights::RightsDocumentSet;
 use crate::signed::{AfterEnvelope, Signed, SmtContent};
 use crate::smt;
 
@@ -68,6 +70,25 @@ pub enum VerificationError {
     KeyNotFound,
     /// The rights-document hash does not match any version in the commitment timeline.
     CommitmentHashMismatch,
+    /// A presented rights document's content ID could not be computed.
+    CommitmentDocumentDigestFailed(String),
+    /// A presented rights document belongs to a different DID.
+    DocumentForForeignDid { document_did: String, history_did: String },
+    /// The DID document's `id` is not a valid `did:mosaic` DID.
+    InvalidDid(String),
+    /// A commitment service `contentId` could not be parsed.
+    InvalidContentId(String),
+    /// A commitment service entry claims a publication height after the
+    /// requested resolution height.
+    CommitmentAfterHeight { sequence: u64, published_at_height: u32, at_height: u32 },
+    /// A commitment service `publishedBy` fragment is not a valid key reference.
+    InvalidSignerKeyRef { sequence: u64 },
+    /// An on-chain commitment uses a hashing algorithm this build cannot verify.
+    ///
+    /// No document can match such a commitment, so the timeline is
+    /// unverifiable rather than merely unproven. A supported runtime never
+    /// publishes one, so this means the build is older than the chain.
+    UnsupportedCommitmentAlgorithm { sequence: u64, content_id: String },
     /// The rights document does not grant the required right to this key.
     RightNotGranted,
     /// The DID document has no commitment service endpoint.
@@ -95,6 +116,55 @@ pub enum VerificationError {
     /// The time window is invalid: H_start >= H_end (BeforeProof block height
     /// must be strictly greater than AfterProof block height + 1).
     WindowBoundsInvalid,
+}
+
+/// Map a commitment-document rejection onto a verification error.
+///
+/// Each source variant keeps its own identity rather than collapsing into a
+/// generic failure: a caller must be able to tell a document for the wrong DID
+/// from a broken chain link from an algorithm this build predates.
+fn map_commitment_document_error(err: CommitmentDocumentError) -> VerificationError {
+    match err {
+        CommitmentDocumentError::Digest(e) => {
+            VerificationError::CommitmentDocumentDigestFailed(e.to_string())
+        }
+        CommitmentDocumentError::ForeignDid { document_did, history_did } => {
+            VerificationError::DocumentForForeignDid {
+                document_did: document_did.to_did_string(),
+                history_did: history_did.to_did_string(),
+            }
+        }
+        CommitmentDocumentError::ChainBroken { .. } => VerificationError::CommitmentChainBroken,
+        CommitmentDocumentError::UnsupportedAlgorithm { sequence, content_id } => {
+            VerificationError::UnsupportedCommitmentAlgorithm {
+                sequence,
+                content_id: content_id.to_string(),
+            }
+        }
+    }
+}
+
+/// Map a snapshot-to-history rejection onto a verification error.
+///
+/// The commitment service endpoint inside a DID document is untrusted input,
+/// so a malformed field is reported as itself. Collapsing these into
+/// [`VerificationError::KeyNotFound`] told the caller the holder key was absent
+/// when the real problem was the endpoint.
+fn map_history_from_document_error(err: HistoryFromDocumentError) -> VerificationError {
+    match err {
+        HistoryFromDocumentError::InvalidDid(e) => VerificationError::InvalidDid(e.to_string()),
+        HistoryFromDocumentError::InvalidContentId(e) => {
+            VerificationError::InvalidContentId(e.to_string())
+        }
+        HistoryFromDocumentError::CommitmentAfterHeight {
+            sequence,
+            published_at_height,
+            at_height,
+        } => VerificationError::CommitmentAfterHeight { sequence, published_at_height, at_height },
+        HistoryFromDocumentError::InvalidSignerKeyRef(sequence) => {
+            VerificationError::InvalidSignerKeyRef { sequence }
+        }
+    }
 }
 
 /// Policy controlling the minimum acceptable [`ProofStrength`].
@@ -282,8 +352,8 @@ pub struct Identity<'a> {
 pub struct Documents<'a> {
     // Previous phase data.
     prev: Identity<'a>,
-    // Presenter-provided rights documents, keyed by sequence number.
-    rights_documents: &'a [(u64, &'a RightsDocument)],
+    // Presenter-provided rights documents, indexed by sequence.
+    rights_documents: &'a RightsDocumentSet<'a>,
     // Optional validated AfterProof providing a lower time-bound.
     after_proof: Option<ValidatedAfterProof>,
     // Optional validated BeforeProof providing an upper time-bound.
@@ -301,9 +371,11 @@ pub struct Documents<'a> {
 // ---------------------------------------------------------------------------
 impl<'a> Identity<'a> {
     /// Supply the presenter-provided rights documents and transition to Documents.
-    pub fn with_documents(
-        self, rights_documents: &'a [(u64, &'a RightsDocument)],
-    ) -> Documents<'a> {
+    ///
+    /// Takes a [`RightsDocumentSet`], whose construction rejects duplicate
+    /// sequences — so which document is presented for a given sequence is
+    /// decided by the protocol rather than by presentation order.
+    pub fn with_documents(self, rights_documents: &'a RightsDocumentSet<'a>) -> Documents<'a> {
         Documents {
             prev: self,
             rights_documents,
@@ -495,7 +567,10 @@ impl<'a> Documents<'a> {
 
         // --- Step 3: Right (union of on-chain + off-chain + implicit) ---
         let right_enum: Right = right.parse().map_err(|_| VerificationError::RightNotGranted)?;
-        match history.verify_right_window(&key_ref, right_enum, h_start, h_end, rights_documents) {
+        match history
+            .verify_right_window(&key_ref, right_enum, h_start, h_end, rights_documents)
+            .map_err(map_commitment_document_error)?
+        {
             ValidityResult::Confirmed => {
                 steps.push(StepResult { step: "right", passed: true, detail: None });
             }
@@ -543,13 +618,20 @@ impl DidDocument {
     /// proofs, the result is always at most [`ProofStrength::Minimal`].
     ///
     /// `rights_documents` are the presenter-supplied off-chain rights documents.
+    ///
+    /// # Errors
+    ///
+    /// This builds the history from the document snapshot, so a malformed
+    /// `id`, `contentId`, `publishedBy` or publication height is reported as
+    /// its own [`VerificationError`] rather than being replaced by a substitute
+    /// value or collapsed into [`VerificationError::KeyNotFound`]. The snapshot
+    /// is untrusted input from the commitment service endpoint.
     pub fn verify_right(
-        &self, holder_key: &Authentication, right: &str,
-        rights_documents: &[(u64, &RightsDocument)],
+        &self, holder_key: &Authentication, right: &str, rights_documents: &RightsDocumentSet<'_>,
     ) -> Result<VerificationResult, VerificationError> {
         let at_height = self.last_modified_at_height.unwrap_or(0);
         let history = DidHistory::from_did_document_at(self, at_height)
-            .map_err(|_| VerificationError::KeyNotFound)?;
+            .map_err(map_history_from_document_error)?;
 
         history.check_right(holder_key, right).with_documents(rights_documents).verify()
     }
@@ -563,7 +645,9 @@ mod tests {
         DidDocumentVerificationMethod,
     };
     use crate::ed25519_blake3_signature;
-    use crate::rights::{RIGHTS_DOCUMENT_V1_SCHEMA, RightsDocument, UnsafeRightsDocument};
+    use crate::rights::{
+        ContentHashAlgorithm, RIGHTS_DOCUMENT_V1_SCHEMA, RightsDocument, UnsafeRightsDocument,
+    };
     use crate::signed::{AfterEnvelope, AfterProof, Signed, SmtContent};
     use crate::smt;
 
@@ -597,15 +681,15 @@ mod tests {
         }
     }
 
-    fn make_rights_doc(seq: u64, previous_hash: Option<&str>, right: &str) -> RightsDocument {
+    fn make_rights_doc(seq: u64, previous: Option<ContentId>, right: &str) -> RightsDocument {
         let kid: mosaic_keyvault::multicipher::MKeyId =
             "iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb".parse().unwrap();
         let raw = UnsafeRightsDocument {
             schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
             did: "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb".into(),
             sequence: seq,
-            previous_commitment: previous_hash
-                .map(|h| crate::did::ContentId::from_bytes(h.as_bytes())),
+            previous_commitment: previous,
+            hash_algorithm: ContentHashAlgorithm::Blake3CanonicalJson,
             rights: alloc::vec![crate::rights::UnsafeRightEntry {
                 key: kid.to_string(),
                 rights: alloc::vec![right.into()],
@@ -638,7 +722,7 @@ mod tests {
     #[test]
     fn verify_right_with_key_in_document() {
         let doc = make_test_document();
-        let result = doc.verify_right(&test_key(), "impersonate", &[]).unwrap();
+        let result = doc.verify_right(&test_key(), "impersonate", &empty_docs()).unwrap();
         assert!(result.valid);
         assert_eq!(result.strength, ProofStrength::Minimal);
     }
@@ -646,14 +730,80 @@ mod tests {
     #[test]
     fn verify_right_with_key_not_in_document() {
         let doc = make_test_document();
-        let err = doc.verify_right(&test_other_key(), "impersonate", &[]).unwrap_err();
+        let err = doc.verify_right(&test_other_key(), "impersonate", &empty_docs()).unwrap_err();
         assert_eq!(err, VerificationError::KeyNotFound);
+    }
+
+    // ===== Snapshot error mapping =====
+    //
+    // `verify_right` builds the history from the DID document snapshot, and the
+    // commitment service endpoint inside it is untrusted input. Each way the
+    // snapshot can be wrong must be reported as itself — collapsing them into
+    // `KeyNotFound` told the caller the holder key was missing when the real
+    // problem was a malformed endpoint.
+
+    #[test]
+    fn verify_right_reports_unparseable_content_id() {
+        let mut doc = make_test_document();
+        set_timeline(&mut doc, &[(1, "cmNOT-A-VALID-CONTENT-ID")]);
+
+        let err = doc.verify_right(&test_key(), "impersonate", &empty_docs()).unwrap_err();
+        assert!(
+            matches!(err, VerificationError::InvalidContentId(_)),
+            "an unparseable contentId must be reported, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn verify_right_reports_invalid_document_did() {
+        let mut doc = make_test_document();
+        doc.id = "not-a-did".into();
+
+        let err = doc.verify_right(&test_key(), "impersonate", &empty_docs()).unwrap_err();
+        assert!(
+            matches!(err, VerificationError::InvalidDid(_)),
+            "an unparseable document id must be reported, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn verify_right_reports_snapshot_after_requested_height() {
+        let mut doc = make_test_document();
+        doc.created_at_height = Some(200);
+
+        let err = doc.verify_right(&test_key(), "impersonate", &empty_docs()).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                VerificationError::CommitmentAfterHeight {
+                    published_at_height: 200,
+                    at_height: 100,
+                    ..
+                }
+            ),
+            "a snapshot from after the requested height must be reported, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn verify_right_reports_invalid_signer_key_ref() {
+        let mut doc = make_test_document();
+        let cid = ContentId::structured_blake3([1u8; 32]).to_string();
+        set_timeline(&mut doc, &[(1, cid.as_str())]);
+        doc.service[0].service_endpoint["versions"][0]["publishedBy"] =
+            serde_json::json!(alloc::format!("#{}", "a".repeat(65)));
+
+        let err = doc.verify_right(&test_key(), "impersonate", &empty_docs()).unwrap_err();
+        assert!(
+            matches!(err, VerificationError::InvalidSignerKeyRef { sequence: 1 }),
+            "an oversized publishedBy must be reported, got {err:?}"
+        );
     }
 
     #[test]
     fn verify_right_with_on_chain_impersonate() {
         let doc = make_test_document();
-        let result = doc.verify_right(&test_key(), "impersonate", &[]).unwrap();
+        let result = doc.verify_right(&test_key(), "impersonate", &empty_docs()).unwrap();
         assert!(result.valid);
     }
 
@@ -662,7 +812,7 @@ mod tests {
         let mut doc = make_test_document();
         doc.deactivated = true;
         doc.tombstoned_at_height = Some(50);
-        let err = doc.verify_right(&test_key(), "impersonate", &[]).unwrap_err();
+        let err = doc.verify_right(&test_key(), "impersonate", &empty_docs()).unwrap_err();
         assert_eq!(err, VerificationError::DidDeactivated);
     }
 
@@ -673,7 +823,7 @@ mod tests {
         // "issue" is not among the default-key implicit rights
         // (update/impersonate/delegate), so its rejection isolates the
         // on-chain-relationship check.
-        let err = doc.verify_right(&test_key(), "issue", &[]).unwrap_err();
+        let err = doc.verify_right(&test_key(), "issue", &empty_docs()).unwrap_err();
         assert_eq!(err, VerificationError::RightNotGranted);
     }
 
@@ -687,7 +837,7 @@ mod tests {
         let hash = rights_doc.compute_hash().unwrap();
         set_timeline(&mut doc, &[(1, &hash)]);
 
-        let result = doc.verify_right(&test_key(), "impersonate", &[(1, &rights_doc)]).unwrap();
+        let result = doc.verify_right(&test_key(), "impersonate", &docs(&[&rights_doc])).unwrap();
         assert!(result.valid);
         assert_eq!(result.strength, ProofStrength::Minimal);
     }
@@ -700,7 +850,7 @@ mod tests {
         let hash = rights_doc.compute_hash().unwrap();
         set_timeline(&mut doc, &[(1, &hash)]);
 
-        let result = doc.verify_right(&test_key(), "impersonate", &[(1, &rights_doc)]).unwrap();
+        let result = doc.verify_right(&test_key(), "impersonate", &docs(&[&rights_doc])).unwrap();
         assert!(result.valid);
         assert_eq!(result.strength, ProofStrength::Minimal);
         // Key 'added' at height 10, commitment at 100 → gaps [0,10) and [0,100)
@@ -718,7 +868,7 @@ mod tests {
         let hash = rights_doc.compute_hash().unwrap();
         set_timeline(&mut doc, &[(1, &hash)]);
 
-        let err = doc.verify_right(&test_key(), "issue", &[(1, &rights_doc)]).unwrap_err();
+        let err = doc.verify_right(&test_key(), "issue", &docs(&[&rights_doc])).unwrap_err();
         assert_eq!(err, VerificationError::RightNotGranted);
     }
 
@@ -760,12 +910,23 @@ mod tests {
         }
     }
 
+    /// An empty presentation.
+    fn empty_docs() -> RightsDocumentSet<'static> {
+        RightsDocumentSet::new(alloc::vec![]).expect("empty set is valid")
+    }
+
+    /// A presentation built from documents already in ascending sequence order.
+    fn docs<'a>(docs: &[&'a RightsDocument]) -> RightsDocumentSet<'a> {
+        RightsDocumentSet::new(docs.to_vec()).expect("strictly increasing sequences")
+    }
+
     fn add_commitment(mut history: DidHistory, seq: u64, at_height: u32) -> DidHistory {
         history.commitments.push(crate::history::CommitmentVersion {
             sequence: seq,
             commitment: crate::did::ContentId::from_bytes(b"placeholder"),
             published_at_height: at_height,
             signer_key_ref: KeyRef::new(TEST_KEY_REF.as_bytes().to_vec()).unwrap(),
+            chain_start: false,
         });
         history
     }
@@ -786,15 +947,14 @@ mod tests {
         // Key added at height 10. Commitment published at height 100 grants impersonate.
         // AfterProof at block 99 → H_start = 100, received_at = 200 → H_end = 200.
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid: ContentId = h1.parse().unwrap();
+        let cid: ContentId = d1.compute_content_id().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
         let after = ValidatedAfterProof { block_height: 99 };
         let result = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1)])
+            .with_documents(&docs(&[&d1]))
             .with_after_proof(after)
             .with_received_at(200)
             .verify()
@@ -809,15 +969,14 @@ mod tests {
         // Key added at height 120. H_start = 100 (AfterProof block 99+1).
         // Window [100, 200): key absent [100, 120), valid [120, 200) → Ambiguous.
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid: ContentId = h1.parse().unwrap();
+        let cid: ContentId = d1.compute_content_id().unwrap();
         let history = add_commitment(history_with_key(120, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
         let after = ValidatedAfterProof { block_height: 99 };
         let result = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1)])
+            .with_documents(&docs(&[&d1]))
             .with_after_proof(after)
             .with_received_at(200)
             .verify()
@@ -830,15 +989,14 @@ mod tests {
     fn after_proof_key_revoked_mid_window_ambiguous() {
         // Key added at 10, revoked at 150. Window [100, 200): valid [100, 150), absent [150, 200).
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid: ContentId = h1.parse().unwrap();
+        let cid: ContentId = d1.compute_content_id().unwrap();
         let history = add_commitment(history_with_key(10, Some(150), None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
         let after = ValidatedAfterProof { block_height: 99 };
         let result = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1)])
+            .with_documents(&docs(&[&d1]))
             .with_after_proof(after)
             .with_received_at(200)
             .verify()
@@ -851,8 +1009,7 @@ mod tests {
     fn after_proof_did_tombstoned_during_window_error() {
         // DID tombstoned at 180. Window [100, 200). Still an error (tombstone ⇒ Absent).
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid: ContentId = h1.parse().unwrap();
+        let cid: ContentId = d1.compute_content_id().unwrap();
         let mut history = add_commitment(history_with_key(10, None, None), 1, 100);
         history = replace_commitment_hash(history, 1, cid);
         history.tombstoned_at = Some(180);
@@ -860,7 +1017,7 @@ mod tests {
         let after = ValidatedAfterProof { block_height: 99 };
         let err = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1)])
+            .with_documents(&docs(&[&d1]))
             .with_after_proof(after)
             .with_received_at(200)
             .verify()
@@ -873,11 +1030,9 @@ mod tests {
         // D1 at 100 grants impersonate, D2 at 150 grants issue (no impersonate).
         // Window [100, 180): right absent [150, 180) → Ambiguous.
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid1: ContentId = h1.parse().unwrap();
-        let d2 = make_rights_doc(2, Some(&h1), "issue");
-        let h2 = d2.compute_hash().unwrap();
-        let cid2: ContentId = h2.parse().unwrap();
+        let cid1: ContentId = d1.compute_content_id().unwrap();
+        let d2 = make_rights_doc(2, Some(cid1), "issue");
+        let cid2: ContentId = d2.compute_content_id().unwrap();
 
         let history = history_with_key(10, None, None);
         let history = add_commitment(history, 1, 100);
@@ -888,7 +1043,7 @@ mod tests {
         let after = ValidatedAfterProof { block_height: 99 };
         let result = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1), (2, &d2)])
+            .with_documents(&docs(&[&d1, &d2]))
             .with_after_proof(after)
             .with_received_at(180)
             .verify()
@@ -901,15 +1056,14 @@ mod tests {
     fn after_proof_no_commitment_at_h_start_error() {
         // Commitment at height 100, window [50, 80). No commitment active → Absent.
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid: ContentId = h1.parse().unwrap();
+        let cid: ContentId = d1.compute_content_id().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
         let after = ValidatedAfterProof { block_height: 49 };
         let err = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1)])
+            .with_documents(&docs(&[&d1]))
             .with_after_proof(after)
             .with_received_at(80)
             .verify()
@@ -941,8 +1095,7 @@ mod tests {
     #[test]
     fn verify_right_policy_rejects_when_below_minimum() {
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid: ContentId = h1.parse().unwrap();
+        let cid: ContentId = d1.compute_content_id().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
         let policy = VerifierPolicy::notarization(); // requires Finalized
@@ -950,7 +1103,7 @@ mod tests {
         // No proofs → achieved = Minimal → below Finalized minimum.
         let err = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1)])
+            .with_documents(&docs(&[&d1]))
             .with_policy(&policy)
             .verify()
             .unwrap_err();
@@ -960,8 +1113,7 @@ mod tests {
     #[test]
     fn verify_right_policy_accepts_when_meets_minimum() {
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid: ContentId = h1.parse().unwrap();
+        let cid: ContentId = d1.compute_content_id().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
         let policy = VerifierPolicy::chat(); // accepts Minimal
@@ -969,7 +1121,7 @@ mod tests {
         // No proofs → achieved = Minimal → meets chat minimum.
         let result = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1)])
+            .with_documents(&docs(&[&d1]))
             .with_policy(&policy)
             .verify()
             .unwrap();
@@ -1021,8 +1173,7 @@ mod tests {
         // Key at 10, commitment at 50 grants impersonate.
         // AfterProof in envelope at 120 → H_start=121, validated BeforeProof at 200 → H_end=200.
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid: ContentId = h1.parse().unwrap();
+        let cid: ContentId = d1.compute_content_id().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 50);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -1042,7 +1193,7 @@ mod tests {
 
         let result = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1)])
+            .with_documents(&docs(&[&d1]))
             .with_after_proof(ValidatedAfterProof { block_height: 120 })
             .with_before_proof(ValidatedBeforeProof { block_height: 200 })
             .with_smt_envelope(smt)
@@ -1063,8 +1214,7 @@ mod tests {
     #[test]
     fn finalized_proof_rejects_forged_envelope_signature() {
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid: ContentId = h1.parse().unwrap();
+        let cid: ContentId = d1.compute_content_id().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 50);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -1087,7 +1237,7 @@ mod tests {
 
         let err = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1)])
+            .with_documents(&docs(&[&d1]))
             .with_after_proof(ValidatedAfterProof { block_height: 120 })
             .with_before_proof(ValidatedBeforeProof { block_height: 200 })
             .with_smt_envelope(smt)
@@ -1105,8 +1255,7 @@ mod tests {
         use mosaic_keyvault::multicipher::MSignature;
 
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid: ContentId = h1.parse().unwrap();
+        let cid: ContentId = d1.compute_content_id().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 50);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -1148,7 +1297,7 @@ mod tests {
 
         let err = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1)])
+            .with_documents(&docs(&[&d1]))
             .with_after_proof(ValidatedAfterProof { block_height: 120 })
             .with_before_proof(ValidatedBeforeProof { block_height: 200 })
             .with_smt_envelope(smt)
@@ -1160,8 +1309,7 @@ mod tests {
     #[test]
     fn finalized_proof_fails_when_smt_leaf_hash_mismatch() {
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid: ContentId = h1.parse().unwrap();
+        let cid: ContentId = d1.compute_content_id().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -1181,7 +1329,7 @@ mod tests {
 
         let err = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1)])
+            .with_documents(&docs(&[&d1]))
             .with_after_proof(ValidatedAfterProof { block_height: 90 })
             .with_before_proof(ValidatedBeforeProof { block_height: 200 })
             .with_smt_envelope(smt)
@@ -1193,8 +1341,7 @@ mod tests {
     #[test]
     fn finalized_proof_fails_when_smt_root_mismatch() {
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid: ContentId = h1.parse().unwrap();
+        let cid: ContentId = d1.compute_content_id().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -1214,7 +1361,7 @@ mod tests {
 
         let err = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1)])
+            .with_documents(&docs(&[&d1]))
             .with_after_proof(ValidatedAfterProof { block_height: 90 })
             .with_before_proof(ValidatedBeforeProof { block_height: 200 })
             .with_smt_envelope(smt)
@@ -1228,8 +1375,7 @@ mod tests {
         // AfterProof at 200 → H_start=201, validated BeforeProof at 100 → H_end=100.
         // H_start > H_end → rejected.
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid: ContentId = h1.parse().unwrap();
+        let cid: ContentId = d1.compute_content_id().unwrap();
         let history = add_commitment(history_with_key(10, None, None), 1, 100);
         let history = replace_commitment_hash(history, 1, cid);
 
@@ -1249,7 +1395,7 @@ mod tests {
 
         let err = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1)])
+            .with_documents(&docs(&[&d1]))
             .with_after_proof(ValidatedAfterProof { block_height: 200 })
             .with_before_proof(ValidatedBeforeProof { block_height: 100 })
             .with_smt_envelope(smt)
@@ -1263,11 +1409,9 @@ mod tests {
         // D1 at 100 grants impersonate, D2 at 150 grants issue (no impersonate).
         // Window [91, 200): absent [150, 200) → Ambiguous.
         let d1 = make_rights_doc(1, None, "impersonate");
-        let h1 = d1.compute_hash().unwrap();
-        let cid1: ContentId = h1.parse().unwrap();
-        let d2 = make_rights_doc(2, Some(&h1), "issue");
-        let h2 = d2.compute_hash().unwrap();
-        let cid2: ContentId = h2.parse().unwrap();
+        let cid1: ContentId = d1.compute_content_id().unwrap();
+        let d2 = make_rights_doc(2, Some(cid1), "issue");
+        let cid2: ContentId = d2.compute_content_id().unwrap();
 
         let history = history_with_key(10, None, None);
         let history = add_commitment(history, 1, 100);
@@ -1291,7 +1435,7 @@ mod tests {
 
         let result = history
             .check_right(&test_key(), "impersonate")
-            .with_documents(&[(1, &d1), (2, &d2)])
+            .with_documents(&docs(&[&d1, &d2]))
             .with_after_proof(ValidatedAfterProof { block_height: 90 })
             .with_before_proof(ValidatedBeforeProof { block_height: 200 })
             .with_smt_envelope(smt)

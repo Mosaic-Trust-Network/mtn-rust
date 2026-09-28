@@ -188,6 +188,21 @@ pub mod pallet {
             previous_version_id: Option<(u32, u32)>,
         },
 
+        /// A governed commitment reset was executed, restarting the document
+        /// chain at this commitment.
+        ///
+        /// Emitted instead of [`Event::CommitmentUpdated`], not in addition to
+        /// it: reset sequences stay gapless, so only the event kind tells an
+        /// indexer that the post-reset document must carry no
+        /// `previousCommitment`.
+        CommitmentReset {
+            did: Did,
+            commitment: ContentId,
+            sequence: u64,
+            signer_key_ref: Vec<u8>,
+            previous_version_id: Option<(u32, u32)>,
+        },
+
         /// A governed operation was announced.
         GovernedOpAnnounced {
             did: Did,
@@ -228,6 +243,17 @@ pub mod pallet {
         InvalidPublicKey,
         StorageBoundsExceeded,
         InvalidCommitmentSequence,
+        /// A rights-document commitment uses a hashing algorithm this runtime
+        /// does not support.
+        ///
+        /// Structured BLAKE3 (`cm`) and structured SHA3 (`cj`) are supported;
+        /// flat hashes (`cb`, `cB`) are not commitment algorithms. The set is
+        /// closed: see `ContentId::is_supported_commitment_algorithm`.
+        /// Widening it requires a runtime upgrade, so a chain never
+        /// accumulates a commitment that the verifier cannot check. Applies
+        /// only to commitments — a BeforeProof anchors arbitrary content and
+        /// may use any representable algorithm.
+        UnsupportedCommitmentAlgorithm,
         PendingGovernedOpExists,
         NoPendingGovernedOp,
         GovernedOpNotYetExecutable,
@@ -656,6 +682,25 @@ pub mod pallet {
                             Ok(Some(prev))
                         },
                     )?;
+
+                    // A reset publishes a new commitment and restarts the
+                    // document chain. It is emitted as its own event rather
+                    // than `CommitmentUpdated`: reset sequences stay gapless,
+                    // so a sequence number cannot identify the restart, and a
+                    // plain update would make the post-reset document fail the
+                    // verifier's `previous_commitment` linkage check.
+                    //
+                    // Emitted before `GovernedOpExecuted` so neither `did` nor
+                    // `op` has to be cloned; both are consumed below.
+                    if let GovernedOperation::CommitmentReset { commitment, sequence, .. } = &op {
+                        Self::deposit_event(Event::CommitmentReset {
+                            did: did.clone(),
+                            commitment: *commitment,
+                            sequence: *sequence,
+                            signer_key_ref: signed_op.signer_key_ref.as_bytes().to_vec(),
+                            previous_version_id,
+                        });
+                    }
 
                     Self::deposit_event(Event::GovernedOpExecuted {
                         did,

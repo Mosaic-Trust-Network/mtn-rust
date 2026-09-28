@@ -537,8 +537,35 @@ mod unit_tests {
 
         // ===== Operation constructors (keep test bodies about intent, not struct syntax) =====
 
+        /// A protocol-valid commitment: the content ID of a real rights document.
+        ///
+        /// The runtime pins commitments to structured BLAKE3 (`cm`), so a flat
+        /// BLAKE3 hash is rejected by the algorithm gate. Deriving the fixture
+        /// from an actual document also keeps these tests honest about the
+        /// value production publishes — the previous helper returned a `cb` flat
+        /// hash that no document could ever match, so the suite was exercising a
+        /// commitment shape the protocol forbids.
         fn cid(label: &str) -> ContentId {
-            ContentId::from_bytes(label.as_bytes())
+            use mosaic_did_types::rights::{
+                ContentHashAlgorithm, RIGHTS_DOCUMENT_V1_SCHEMA, UnsafeRightEntry,
+                UnsafeRightsDocument,
+            };
+            let doc = UnsafeRightsDocument {
+                schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
+                did: "did:mosaic:iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb".into(),
+                sequence: 1,
+                previous_commitment: None,
+                hash_algorithm: ContentHashAlgorithm::Blake3CanonicalJson,
+                rights: vec![UnsafeRightEntry {
+                    key: "iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb".into(),
+                    rights: vec![label.into()],
+                }],
+            };
+            assert!(
+                doc.compute_content_id().expect("digest").is_supported_commitment_algorithm(),
+                "fixture must be a supported commitment algorithm"
+            );
+            doc.compute_content_id().expect("digest")
         }
 
         fn update_commitment(did: &Did, commitment: ContentId, sequence: u64) -> DidOperation {
@@ -578,6 +605,96 @@ mod unit_tests {
                 let c = cid("doc v1");
                 rt.submit(&update_commitment(&rt.did, c, 1));
                 assert_eq!(rt.state().commitment, Some((1, c)));
+            });
+        }
+
+        /// A commitment must use a structured algorithm the verifier can
+        /// reproduce. A flat hash has no canonical-JSON preimage, so no
+        /// document could ever match it; without this gate the verifier would
+        /// report that as an ordinary "right not granted" — a DID silently
+        /// holding fewer rights than it should.
+        #[test]
+        fn update_commitment_rejects_flat_hash_algorithm() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+
+                // `cb` (BLAKE3 flat) is representable but has no document
+                // preimage. Built directly rather than via `cid`, which
+                // returns a protocol-valid `cm` value.
+                let flat = ContentId::from_bytes(b"flat");
+                assert!(!flat.is_supported_commitment_algorithm());
+                rt.submit_fails(
+                    &update_commitment(&rt.did, flat, 1),
+                    crate::Error::<Test>::UnsupportedCommitmentAlgorithm,
+                );
+            });
+        }
+
+        /// `cm` (BLAKE3-256 structured) is the pinned algorithm and is accepted.
+        #[test]
+        fn update_commitment_accepts_pinned_hash_algorithm() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                let c = ContentId::structured_blake3([3u8; 32]);
+                assert!(c.is_supported_commitment_algorithm());
+                rt.submit(&update_commitment(&rt.did, c, 1));
+                assert_eq!(rt.state().commitment, Some((1, c)));
+            });
+        }
+
+        /// `cj` (SHA3-256 structured) is a permitted commitment algorithm too:
+        /// the document declares it, and the verifier dispatches on that
+        /// declaration, so the chain does not need to force one algorithm.
+        #[test]
+        fn update_commitment_accepts_sha3_commitment() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                let c = ContentId::from_json_digest_hash([6u8; 32]);
+                assert!(
+                    c.is_supported_commitment_algorithm(),
+                    "structured SHA3 must be a permitted commitment algorithm"
+                );
+                rt.submit(&update_commitment(&rt.did, c, 1));
+                assert_eq!(rt.state().commitment, Some((1, c)));
+            });
+        }
+
+        /// The same gate applies to a governed commitment reset.
+        #[test]
+        fn commitment_reset_rejects_flat_hash_algorithm() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                let flat = ContentId::from_bytes(b"flat");
+                rt.submit_fails(
+                    &announce_commitment_reset(&rt.did, cid("reason"), flat, 1),
+                    crate::Error::<Test>::UnsupportedCommitmentAlgorithm,
+                );
+            });
+        }
+
+        /// A BeforeProof anchors an arbitrary content ID, not a rights-document
+        /// commitment, so any representable algorithm is allowed. There is no
+        /// document that must later reproduce the ID, so there is nothing for
+        /// the commitment gate to protect.
+        #[test]
+        fn register_before_proof_accepts_any_representable_algorithm() {
+            new_test_ext().execute_with(|| {
+                // A flat hash the commitment gate refuses.
+                let flat = ContentId::from_bytes(b"before proof content");
+                assert!(!flat.is_supported_commitment_algorithm());
+                assert_ok!(crate::Pallet::<Test>::register_before_proof(
+                    RawOrigin::Signed(1u64).into(),
+                    flat,
+                ));
+                assert!(crate::BeforeProofs::<Test>::contains_key(flat));
+
+                // A structured SHA3 hash the commitment gate accepts.
+                let sha3 = ContentId::from_json_digest_hash([5u8; 32]);
+                assert_ok!(crate::Pallet::<Test>::register_before_proof(
+                    RawOrigin::Signed(1u64).into(),
+                    sha3,
+                ));
+                assert!(crate::BeforeProofs::<Test>::contains_key(sha3));
             });
         }
 
@@ -1223,6 +1340,78 @@ mod unit_tests {
 
                 assert_eq!(rt.state().commitment, Some((2, cid("v2"))));
                 assert!(crate::PendingGovernedOps::<Test>::get(&rt.did).is_none());
+            });
+        }
+
+        /// A reset must not be reported as a plain `CommitmentUpdated`.
+        ///
+        /// Reset sequences stay gapless (`stored + 1`), so an indexer cannot
+        /// detect the restart from the sequence number; the event kind has to
+        /// carry it. A plain update here would make the post-reset document
+        /// fail the `previous_commitment` chain check.
+        #[test]
+        fn execute_commitment_reset_is_not_a_plain_commitment_update() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit(&update_commitment(&rt.did, cid("v1"), 1));
+
+                rt.at_block(2);
+                rt.submit(&announce_commitment_reset(&rt.did, cid("reason"), cid("v2"), 2));
+
+                rt.at_block(202);
+                rt.submit(&execute_governed(&rt.did));
+
+                let plain = System::events().into_iter().any(|e| {
+                    matches!(
+                        &e.event,
+                        RuntimeEvent::MosaicDid(crate::Event::CommitmentUpdated {
+                            sequence: 2,
+                            ..
+                        })
+                    )
+                });
+                assert!(!plain, "a reset must be distinguishable from a plain commitment update");
+            });
+        }
+
+        /// Executing a reset emits `CommitmentReset`, not only
+        /// `GovernedOpExecuted`.
+        ///
+        /// The verifier rebuilds its timeline from the commitment events. A
+        /// reset previously published state with no event at all, so a history
+        /// rebuilt from the chain could not see the post-reset commitment; the
+        /// distinct event kind is what marks the document chain restart that
+        /// makes the `previous_commitment` check sound.
+        #[test]
+        fn execute_commitment_reset_emits_commitment_reset() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                rt.submit(&update_commitment(&rt.did, cid("v1"), 1));
+
+                rt.at_block(2);
+                rt.submit(&announce_commitment_reset(&rt.did, cid("reason"), cid("v2"), 2));
+
+                rt.at_block(202);
+                rt.submit(&execute_governed(&rt.did));
+
+                let emitted = System::events().into_iter().any(|e| {
+                    if let RuntimeEvent::MosaicDid(crate::Event::CommitmentReset {
+                        sequence,
+                        commitment,
+                        ..
+                    }) = &e.event
+                    {
+                        *sequence == 2 && *commitment == cid("v2")
+                    } else {
+                        false
+                    }
+                });
+                assert!(
+                    emitted,
+                    "executing a reset must emit CommitmentReset so the \
+                     post-reset commitment and the chain restart are visible \
+                     to a history rebuild"
+                );
             });
         }
 

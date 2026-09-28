@@ -18,7 +18,7 @@ use crate::document::{
     DID_DOCUMENT_MOSAIC_CONTEXT, DID_DOCUMENT_W3C_CONTEXT, w3c_type_to_key_type,
 };
 use crate::operation::{KeyType, Right};
-use crate::rights::UnsafeRightsDocument;
+use crate::rights::{RightsDocumentSet, UnsafeRightsDocument};
 
 /// Schema URI for V1 DID history wire format.
 pub const DID_HISTORY_V1_SCHEMA: &str = "https://mosaic-trust.net/ns/did-history/v1";
@@ -42,7 +42,13 @@ fn validate_schema<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::
 }
 
 /// A commitment version in the DID history, reconstructed from events.
+///
+/// Serialized camelCase to match the commitment service inside a DID document,
+/// which spells the same concepts `contentId` / `publishedAtHeight` /
+/// `publishedBy`. The service is hand-built from these values, so the two
+/// representations must not drift.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CommitmentVersion {
     /// Monotonic sequence number (gapless, starting at 1).
     pub sequence: u64,
@@ -52,6 +58,21 @@ pub struct CommitmentVersion {
     pub published_at_height: u32,
     /// Key reference of the signer who published this commitment.
     pub signer_key_ref: KeyRef,
+    /// Whether this commitment starts a fresh document chain.
+    ///
+    /// `true` for the first commitment and for every commitment published via
+    /// `CommitmentReset`, which restarts the chain while the sequence counter
+    /// keeps running (resets are gapless too). The document at a chain start
+    /// must carry **no** `previous_commitment`; every other document must carry
+    /// its predecessor's content ID exactly.
+    ///
+    /// Defaults to `false` when absent from a serialized history, so an older
+    /// history that predates this field loads. The consequence is deliberate:
+    /// a reset buried mid-history is reported as [`CommitmentDocumentError::ChainBroken`]
+    /// rather than silently accepted, because the alternative is a document
+    /// whose chain link is never checked.
+    #[serde(default)]
+    pub chain_start: bool,
 }
 
 /// On-chain right grant with full lifecycle information.
@@ -153,6 +174,14 @@ pub enum DidHistoryEvent {
         signer_key_ref: KeyRef,
         at_height: u32,
     },
+    /// A governed `CommitmentReset` took effect, restarting the document chain.
+    ///
+    /// The pallet emits its own `CommitmentReset` event for this — not
+    /// `CommitmentUpdated` — because reset sequences stay gapless and only the
+    /// event kind identifies the restart. An indexer maps that event to this
+    /// variant, so the post-reset commitment is visible in the timeline and the
+    /// document published at it is expected to carry no predecessor.
+    CommitmentReset { sequence: u64, commitment: ContentId, signer_key_ref: KeyRef, at_height: u32 },
     /// The DID was permanently deactivated.
     DidTombstoned { at_height: u32 },
 }
@@ -167,6 +196,64 @@ pub enum DidHistoryEvent {
 pub trait CommitmentResolver {
     /// Resolve a content ID to the full rights document.
     fn resolve(&self, content_id: &ContentId) -> Option<UnsafeRightsDocument>;
+}
+
+/// Why a DID document snapshot could not be turned into a history.
+///
+/// A snapshot arrives from the commitment service endpoint, which is untrusted
+/// input, so every field it supplies is validated rather than substituted.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum HistoryFromDocumentError {
+    /// The document ID is not a valid DID.
+    #[error("DID document id is not a valid DID: {0}")]
+    InvalidDid(#[source] crate::did::DidParseError),
+    /// A `contentId` in the commitment service is not a valid content ID.
+    #[error("commitment service returned an invalid contentId: {0}")]
+    InvalidContentId(#[source] crate::did::ContentIdParseError),
+    /// A commitment claims a publication height beyond the requested height.
+    #[error(
+        "commitment {sequence} claims publication at height {published_at_height}, \
+         beyond the requested height {at_height}"
+    )]
+    CommitmentAfterHeight { sequence: u64, published_at_height: u32, at_height: u32 },
+    /// A commitment names a `publishedBy` fragment that is not a valid key ref.
+    #[error("commitment {0} names an invalid publisher key ref")]
+    InvalidSignerKeyRef(u64),
+}
+
+/// A presenter-supplied rights document failed validation.
+///
+/// These are **not** "the right was not granted". Every variant describes a
+/// document the presenter actually submitted and got wrong, so each is
+/// reported rather than skipped. The previous implementation folded them into a
+/// silent `continue`, which made a malformed document, a document for the
+/// wrong DID, and a broken chain link indistinguishable from a document that
+/// simply did not grant the right.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum CommitmentDocumentError {
+    /// The document's content ID could not be computed.
+    #[error("rights document digest failed: {0}")]
+    Digest(#[source] crate::rights::ContentIdError),
+    /// The document belongs to a different DID than the history being verified.
+    #[error("rights document is for {document_did} but was presented against {history_did}")]
+    ForeignDid { document_did: Did, history_did: Did },
+    /// The document's `previous_commitment` does not link to the timeline.
+    ///
+    /// At a chain start the document must carry no `previous_commitment`;
+    /// anywhere else it must carry the immediately preceding commitment.
+    #[error("rights document at sequence {sequence} does not link to the preceding commitment")]
+    ChainBroken { sequence: u64 },
+    /// The on-chain commitment uses a hashing algorithm this build cannot verify.
+    ///
+    /// Distinct from a hash mismatch: no document can ever match this
+    /// commitment, so the timeline is unverifiable rather than merely
+    /// unproven. Reported when an old build reads a commitment published under
+    /// a newer runtime's algorithm.
+    #[error(
+        "commitment at sequence {sequence} uses hashing algorithm not supported by this build: \
+         {content_id}"
+    )]
+    UnsupportedAlgorithm { sequence: u64, content_id: ContentId },
 }
 
 impl DidHistory {
@@ -252,6 +339,22 @@ impl DidHistory {
                     commitment,
                     published_at_height: at_height,
                     signer_key_ref,
+                    chain_start: false,
+                };
+                self.commitments.push(cv);
+            }
+            DidHistoryEvent::CommitmentReset {
+                sequence,
+                commitment,
+                signer_key_ref,
+                at_height,
+            } => {
+                let cv = CommitmentVersion {
+                    sequence,
+                    commitment,
+                    published_at_height: at_height,
+                    signer_key_ref,
+                    chain_start: true,
                 };
                 self.commitments.push(cv);
             }
@@ -453,28 +556,28 @@ impl DidHistory {
     /// Returns `Confirmed` if continuous, `Ambiguous` with gaps, or `Absent`.
     pub fn verify_right_window(
         &self, key_ref: &KeyRef, right: Right, h_start: u32, h_end: Option<u32>,
-        documents: &[(u64, &crate::rights::RightsDocument)],
-    ) -> ValidityResult {
+        documents: &RightsDocumentSet<'_>,
+    ) -> Result<ValidityResult, CommitmentDocumentError> {
         let mut intervals = Intervals::new();
 
         // --- Check 1: on-chain RightLifecycle ---
         intervals.extend(self.right_validity_intervals(key_ref, right));
 
         // --- Check 2: commitment documents ---
-        intervals.extend(self.commitment_right_intervals(key_ref, right, documents));
+        intervals.extend(self.commitment_right_intervals(key_ref, right, documents)?);
 
         // --- Check 3: implicit default-key rights ---
         if intervals.is_empty()
             && self.is_default_key(key_ref)
             && matches!(right, Right::Update | Right::Impersonate | Right::Delegate)
         {
-            return ValidityResult::Confirmed;
+            return Ok(ValidityResult::Confirmed);
         }
 
         // --- Normalize, clamp, compare ---
         intervals.normalize();
         let constrained = intervals.clamp(h_start, h_end);
-        build_validity_result(&constrained, h_start, h_end)
+        Ok(build_validity_result(&constrained, h_start, h_end))
     }
 
     /// Collect intervals where `key_ref` held `right` from on-chain grants.
@@ -498,29 +601,75 @@ impl DidHistory {
 
     /// Collect intervals from commitment documents where `key_ref` held `right`.
     ///
-    /// Documents are **hash-bound** (iop-rs#1): a presenter-supplied document
-    /// contributes intervals only when its canonical BLAKE3 content ID equals
-    /// the on-chain commitment recorded for that sequence. Matching on the
-    /// sequence number alone would let a presenter graft arbitrary rights onto
-    /// someone else's commitment timeline — both sides of that comparison are
-    /// attacker-controlled.
+    /// Each on-chain commitment is validated in four steps, and each has a
+    /// distinct failure mode:
+    ///
+    /// 1. **Algorithm support.** A commitment whose algorithm this build cannot
+    ///    verify is reported as [`CommitmentDocumentError::UnsupportedAlgorithm`].
+    ///    It must not be treated as an ordinary mismatch, because no document
+    ///    can ever match it and the timeline is therefore unverifiable.
+    /// 2. **DID binding.** The document's own `did` must equal the history's.
+    ///    The digest already implies this, so the check is redundant by
+    ///    construction — it is made explicit because a claim about a DID is a
+    ///    security statement, and deriving it silently from a hash means a
+    ///    future narrowing of the preimage would remove the binding with no
+    ///    other signal. See the `preimage_covers_*` tests in `rights.rs`.
+    /// 3. **Hash binding.** The document's content ID must equal the on-chain
+    ///    commitment. This is the core of the check: both sides of the
+    ///    comparison are attacker-influenced, so a sequence number alone would
+    ///    let a presenter graft arbitrary rights onto someone else's timeline.
+    /// 4. **Chain linkage.** `previous_commitment` must name the immediately
+    ///    preceding commitment, or be absent at a chain start. Without this,
+    ///    each document is bound only to itself and supersession is unproven.
+    ///
+    /// A *missing* document is not an error: at `Minimal` strength a presenter
+    /// legitimately sends only the versions they need.
     fn commitment_right_intervals(
-        &self, key_ref: &KeyRef, right: Right, documents: &[(u64, &crate::rights::RightsDocument)],
-    ) -> Intervals {
-        use core::str::FromStr;
-
+        &self, key_ref: &KeyRef, right: Right, documents: &RightsDocumentSet<'_>,
+    ) -> Result<Intervals, CommitmentDocumentError> {
         let right_str = right.to_string();
         let key_str = key_ref.as_str().unwrap_or("");
         let mut intervals = Intervals::new();
 
-        for cv in &self.commitments {
-            let Some((_, doc)) = documents.iter().find(|(s, _)| *s == cv.sequence) else {
+        for (index, cv) in self.commitments.iter().enumerate() {
+            if !cv.commitment.is_supported_commitment_algorithm() {
+                return Err(CommitmentDocumentError::UnsupportedAlgorithm {
+                    sequence: cv.sequence,
+                    content_id: cv.commitment,
+                });
+            }
+
+            let Some(doc) = documents.get(cv.sequence) else {
                 continue;
             };
+
+            if doc.did() != &self.did {
+                return Err(CommitmentDocumentError::ForeignDid {
+                    document_did: doc.did().clone(),
+                    history_did: self.did.clone(),
+                });
+            }
+
             let presented_cid =
-                doc.compute_hash().ok().and_then(|hash| ContentId::from_str(&hash).ok());
-            if presented_cid.as_ref() != Some(&cv.commitment) {
+                doc.compute_content_id().map_err(CommitmentDocumentError::Digest)?;
+            if presented_cid != cv.commitment {
                 continue;
+            }
+
+            // The timeline is gapless on-chain, but a governed reset restarts
+            // the document chain. A predecessor is expected unless *this*
+            // entry starts a chain — which is the first entry, or any entry
+            // published via `CommitmentReset`. Note the condition reads this
+            // entry's flag, not the previous entry's: after a reset at index N,
+            // index N+1 must link back to the reset document.
+            let is_chain_start = cv.chain_start || index == 0;
+            let linked = if is_chain_start {
+                doc.previous_commitment().is_none()
+            } else {
+                doc.previous_commitment() == Some(&self.commitments[index - 1].commitment)
+            };
+            if !linked {
+                return Err(CommitmentDocumentError::ChainBroken { sequence: cv.sequence });
             }
 
             if doc.grants_right_by_key_ref(key_str, &right_str) {
@@ -533,7 +682,7 @@ impl DidHistory {
             }
         }
 
-        intervals
+        Ok(intervals)
     }
 
     /// Produce a W3C-compliant DID Document at the given block height.
@@ -649,6 +798,7 @@ impl DidHistory {
                         "contentId": cv.commitment.to_string(),
                         "publishedAtHeight": cv.published_at_height,
                         "publishedBy": alloc::format!("#{}", cv.signer_key_ref),
+                        "chainStart": cv.chain_start,
                     })
                 })
                 .collect();
@@ -715,12 +865,18 @@ impl DidHistory {
     /// produce `AfterProof` or `Finalized` because no validated proof
     /// tokens are attached.
     pub(crate) fn from_did_document_at(
-        doc: &crate::document::DidDocument, _at_height: u32,
-    ) -> Result<Self, crate::did::DidParseError> {
-        let did = crate::did::Did::from_did_string(&doc.id)?;
+        doc: &crate::document::DidDocument, at_height: u32,
+    ) -> Result<Self, HistoryFromDocumentError> {
+        let did = crate::did::Did::from_did_string(&doc.id)
+            .map_err(HistoryFromDocumentError::InvalidDid)?;
         let created = doc.created_at_height.unwrap_or(0);
 
         // --- Keys (verification methods → VerificationMethod) ---
+        //
+        // A W3C snapshot is a single point in time and carries no per-key
+        // height, so there is nothing to filter per key — the whole snapshot is
+        // admitted or rejected together, via the `created > at_height` check
+        // below.
         let keys: Vec<_> = doc
             .verification_method
             .iter()
@@ -741,6 +897,14 @@ impl DidHistory {
                 })
             })
             .collect();
+
+        if created > at_height {
+            return Err(HistoryFromDocumentError::CommitmentAfterHeight {
+                sequence: 0,
+                published_at_height: created,
+                at_height,
+            });
+        }
 
         // --- Rights (W3C relationship arrays → RightLifecycle) ---
         fn key_ids_in(list: &[String]) -> Vec<&str> {
@@ -817,18 +981,40 @@ impl DidHistory {
                 if let (Some(seq), Some(cid_str), Some(pub_at), Some(signer)) =
                     (seq, cid_str, pub_at, signer)
                 {
-                    let key_ref = KeyRef::new(signer.as_bytes().to_vec()).unwrap_or_else(|_| {
-                        // Fallback: use DID's default key if signer key_ref is invalid.
-                        let kid = did.default_key_id.to_string();
-                        KeyRef::new(kid.into_bytes()).unwrap()
-                    });
+                    // Strict parse. A `contentId` this build cannot read is
+                    // reported, not replaced: the previous fallback hashed the
+                    // *text* of the string with BLAKE3 and stored the result as
+                    // a `cb` flat content ID. That value is a digest of nothing,
+                    // is indistinguishable from a publisher-supplied hash, and
+                    // can never match a document — so an unparseable commitment
+                    // surfaced downstream as a DID that quietly had fewer rights.
+                    let commitment = cid_str
+                        .parse::<ContentId>()
+                        .map_err(HistoryFromDocumentError::InvalidContentId)?;
+
+                    // Height filtering. The endpoint is untrusted, so a version
+                    // claiming a future publication height would otherwise
+                    // widen the window a commitment-derived right is asserted
+                    // over. The parameter previously went unused.
+                    if pub_at as u32 > at_height {
+                        return Err(HistoryFromDocumentError::CommitmentAfterHeight {
+                            sequence: seq,
+                            published_at_height: pub_at as u32,
+                            at_height,
+                        });
+                    }
+
+                    let key_ref = KeyRef::new(signer.as_bytes().to_vec())
+                        .map_err(|_| HistoryFromDocumentError::InvalidSignerKeyRef(seq))?;
                     commitments.push(CommitmentVersion {
                         sequence: seq,
-                        commitment: cid_str
-                            .parse::<ContentId>()
-                            .unwrap_or_else(|_| ContentId::from_bytes(cid_str.as_bytes())),
+                        commitment,
                         published_at_height: pub_at as u32,
                         signer_key_ref: key_ref,
+                        // Absent means "not a chain start" (see the field's
+                        // documentation); the first entry is treated as a chain
+                        // start regardless, so an older snapshot still loads.
+                        chain_start: v.get("chainStart").and_then(|c| c.as_bool()).unwrap_or(false),
                     });
                 }
             }
@@ -1079,12 +1265,14 @@ mod tests {
                     commitment: test_commitment(1),
                     published_at_height: 100,
                     signer_key_ref: kr.clone(),
+                    chain_start: false,
                 },
                 CommitmentVersion {
                     sequence: 2,
                     commitment: test_commitment(2),
                     published_at_height: 200,
                     signer_key_ref: kr.clone(),
+                    chain_start: false,
                 },
             ],
             ..DidHistory::new(did)
@@ -1185,6 +1373,7 @@ mod tests {
                 commitment,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
+                chain_start: false,
             }],
             ..DidHistory::new(did)
         };
@@ -1197,6 +1386,7 @@ mod tests {
                 did: "did:mosaic:iozABC".into(),
                 sequence: 1,
                 previous_commitment: None,
+                hash_algorithm: crate::rights::ContentHashAlgorithm::Blake3CanonicalJson,
                 rights: alloc::vec![crate::rights::UnsafeRightEntry {
                     key: kr.to_string(),
                     rights: alloc::vec!["impersonate".into()],
@@ -1364,6 +1554,37 @@ mod tests {
         assert_eq!(cv.commitment, cid);
         assert_eq!(cv.published_at_height, 100);
         assert_eq!(cv.signer_key_ref, kr);
+        assert!(!cv.chain_start, "a plain update does not restart the chain");
+    }
+
+    /// A reset event marks its commitment as a chain start, even though the
+    /// sequence counter keeps running. The document published at it must carry
+    /// no predecessor, so the verifier expects a fresh chain from here.
+    #[test]
+    fn apply_commitment_reset_marks_chain_start() {
+        let mut history = DidHistory::new(test_did());
+        let kr = test_key_ref(1);
+
+        history.apply(DidHistoryEvent::CommitmentUpdated {
+            sequence: 1,
+            commitment: test_commitment(1),
+            signer_key_ref: kr.clone(),
+            at_height: 100,
+        });
+        history.apply(DidHistoryEvent::CommitmentReset {
+            sequence: 2,
+            commitment: test_commitment(2),
+            signer_key_ref: kr.clone(),
+            at_height: 150,
+        });
+
+        assert_eq!(history.commitments.len(), 2);
+        assert!(!history.commitments[0].chain_start);
+        assert!(
+            history.commitments[1].chain_start,
+            "a reset starts a new document chain at a continuing sequence"
+        );
+        assert_eq!(history.commitments[1].sequence, 2);
     }
 
     #[test]
@@ -1560,6 +1781,107 @@ mod tests {
         assert_eq!(
             original_cid, roundtripped_cid,
             "ContentId must round-trip through DidDocument; from_did_document_at must parse the ContentId string, not BLAKE3-hash it"
+        );
+    }
+
+    /// An unparseable `contentId` must be reported, not replaced.
+    ///
+    /// The previous fallback hashed the *text* of the string with BLAKE3 and
+    /// stored it as a `cb` flat content ID — a digest of nothing, which can
+    /// never match a document, and is indistinguishable from a genuine
+    /// publisher-supplied hash. The symptom was a DID that silently had fewer
+    /// rights than it should.
+    #[test]
+    fn from_did_document_at_rejects_unparseable_content_id() {
+        let mut history = DidHistory::new(test_did());
+        let kr = test_key_ref(1);
+        history.apply(DidHistoryEvent::CommitmentUpdated {
+            sequence: 1,
+            commitment: test_commitment(1),
+            signer_key_ref: kr,
+            at_height: 100,
+        });
+        let doc = history.to_did_document_at(150, None);
+
+        // Corrupt the contentId in the service endpoint.
+        let mut doc = doc;
+        for svc in &mut doc.service {
+            if svc.type_ == "MosaicCommitmentTimeline2026" {
+                svc.service_endpoint = serde_json::json!({
+                    "versions": [{
+                        "sequence": 1,
+                        "contentId": "cmNOT-A-VALID-CONTENT-ID",
+                        "publishedAtHeight": 100,
+                        "publishedBy": "#ioztest",
+                    }]
+                });
+            }
+        }
+
+        let err = DidHistory::from_did_document_at(&doc, 150)
+            .expect_err("an unparseable contentId must be reported");
+        assert!(
+            matches!(err, HistoryFromDocumentError::InvalidContentId(_)),
+            "expected InvalidContentId, got {err:?}"
+        );
+    }
+
+    /// A commitment claiming a future publication height must be rejected, not
+    /// admitted — the endpoint is untrusted and this height bounds the window
+    /// the resulting right is asserted over.
+    #[test]
+    fn from_did_document_at_rejects_commitment_published_after_requested_height() {
+        let mut history = DidHistory::new(test_did());
+        let kr = test_key_ref(1);
+        history.apply(DidHistoryEvent::CommitmentUpdated {
+            sequence: 1,
+            commitment: test_commitment(1),
+            signer_key_ref: kr,
+            at_height: 100,
+        });
+        let doc = history.to_did_document_at(150, None);
+
+        // Ask for a height before the commitment was published.
+        let err = DidHistory::from_did_document_at(&doc, 50)
+            .expect_err("a commitment published after the requested height must be rejected");
+        assert_eq!(
+            err,
+            HistoryFromDocumentError::CommitmentAfterHeight {
+                sequence: 1,
+                published_at_height: 100,
+                at_height: 50
+            }
+        );
+    }
+
+    /// A snapshot whose creation height is beyond the requested height is
+    /// rejected: the caller asked about a point in time before the DID existed.
+    #[test]
+    fn from_did_document_at_rejects_snapshot_created_after_requested_height() {
+        let mut history = DidHistory::new(test_did());
+        let kr = test_key_ref(1);
+        history.apply(DidHistoryEvent::KeyAdded {
+            key_ref: kr,
+            key_type: KeyType::Ed25519,
+            controller: test_did(),
+            public_key: alloc::vec![1u8; 32],
+            at_height: 10,
+            expires_at_height: None,
+        });
+        history.apply(DidHistoryEvent::RightAdded {
+            key_ref: test_key_ref(1),
+            right: Right::Update,
+            at_height: 10,
+            matures_at_height: None,
+            expires_at_height: None,
+        });
+        let doc = history.to_did_document_at(200, None);
+
+        let err = DidHistory::from_did_document_at(&doc, 5)
+            .expect_err("a snapshot from after the requested height must be rejected");
+        assert!(
+            matches!(err, HistoryFromDocumentError::CommitmentAfterHeight { at_height: 5, .. }),
+            "expected CommitmentAfterHeight, got {err:?}"
         );
     }
 
@@ -1876,8 +2198,12 @@ mod tests {
     // ===== check_right tests =====
 
     /// Make a rights document granting `right` to `key_str`.
+    ///
+    /// `previous` must be the predecessor's real content ID — a document that
+    /// omits it where the timeline expects a predecessor is rejected as
+    /// [`CommitmentDocumentError::ChainBroken`].
     fn make_rights_doc(
-        seq: u64, previous_hash: Option<&str>, key_str: &str, right: &str,
+        seq: u64, previous: Option<ContentId>, key_str: &str, right: &str,
     ) -> crate::rights::RightsDocument {
         use crate::rights::{RIGHTS_DOCUMENT_V1_SCHEMA, UnsafeRightEntry, UnsafeRightsDocument};
         let did_str = test_did().to_did_string();
@@ -1885,13 +2211,67 @@ mod tests {
             schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
             did: did_str,
             sequence: seq,
-            previous_commitment: previous_hash.map(|h| ContentId::from_bytes(h.as_bytes())),
+            previous_commitment: previous,
+            hash_algorithm: crate::rights::ContentHashAlgorithm::Blake3CanonicalJson,
             rights: alloc::vec![UnsafeRightEntry {
                 key: key_str.into(),
                 rights: alloc::vec![right.into()],
             }],
         };
         raw.try_into().expect("test rights doc should be valid")
+    }
+
+    /// A rights document belonging to an arbitrary DID.
+    fn make_rights_doc_for_did(
+        seq: u64, previous: Option<ContentId>, did: &crate::did::Did, key_str: &str, right: &str,
+    ) -> crate::rights::RightsDocument {
+        use crate::rights::{RIGHTS_DOCUMENT_V1_SCHEMA, UnsafeRightEntry, UnsafeRightsDocument};
+        let raw = UnsafeRightsDocument {
+            schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
+            did: did.to_did_string(),
+            sequence: seq,
+            previous_commitment: previous,
+            hash_algorithm: crate::rights::ContentHashAlgorithm::Blake3CanonicalJson,
+            rights: alloc::vec![UnsafeRightEntry {
+                key: key_str.into(),
+                rights: alloc::vec![right.into()],
+            }],
+        };
+        raw.try_into().expect("test rights doc should be valid")
+    }
+
+    /// A three-document presentation.
+    fn set3<'a>(
+        a: &'a crate::rights::RightsDocument, b: &'a crate::rights::RightsDocument,
+        c: &'a crate::rights::RightsDocument,
+    ) -> RightsDocumentSet<'a> {
+        RightsDocumentSet::new(alloc::vec![a, b, c]).expect("strictly increasing is valid")
+    }
+
+    /// Build a document and return it with its content ID.
+    fn make_rights_doc_cid(
+        seq: u64, previous: Option<ContentId>, key_str: &str, right: &str,
+    ) -> (crate::rights::RightsDocument, ContentId) {
+        let doc = make_rights_doc(seq, previous, key_str, right);
+        let cid = doc.compute_content_id().expect("digest must compute");
+        (doc, cid)
+    }
+
+    /// An empty presentation.
+    fn empty_set() -> RightsDocumentSet<'static> {
+        RightsDocumentSet::new(alloc::vec![]).expect("empty set is valid")
+    }
+
+    /// A one-document presentation.
+    fn set1<'a>(docs: &[&'a crate::rights::RightsDocument]) -> RightsDocumentSet<'a> {
+        RightsDocumentSet::new(docs.to_vec()).expect("single document is valid")
+    }
+
+    /// A two-document presentation.
+    fn set2<'a>(
+        a: &'a crate::rights::RightsDocument, b: &'a crate::rights::RightsDocument,
+    ) -> RightsDocumentSet<'a> {
+        RightsDocumentSet::new(alloc::vec![a, b]).expect("strictly increasing is valid")
     }
 
     #[test]
@@ -1911,7 +2291,9 @@ mod tests {
         };
 
         assert_eq!(
-            history.verify_right_window(&kr, Right::Impersonate, 10, Some(100), &[]),
+            history
+                .verify_right_window(&kr, Right::Impersonate, 10, Some(100), &empty_set())
+                .unwrap(),
             ValidityResult::Confirmed
         );
     }
@@ -1932,7 +2314,9 @@ mod tests {
             ..DidHistory::new(test_did())
         };
 
-        let result = history.verify_right_window(&kr, Right::Impersonate, 0, Some(100), &[]);
+        let result = history
+            .verify_right_window(&kr, Right::Impersonate, 0, Some(100), &empty_set())
+            .unwrap();
         match result {
             ValidityResult::Ambiguous { gaps } => {
                 assert_eq!(gaps.len(), 2);
@@ -1953,7 +2337,7 @@ mod tests {
         let kr = test_key_ref(1);
         let history = DidHistory::new(test_did());
         assert_eq!(
-            history.verify_right_window(&kr, Right::Issue, 0, Some(100), &[]),
+            history.verify_right_window(&kr, Right::Issue, 0, Some(100), &empty_set()).unwrap(),
             ValidityResult::Absent
         );
     }
@@ -1966,23 +2350,298 @@ mod tests {
 
         // Implicit Impersonate right for default key.
         assert_eq!(
-            history.verify_right_window(&key_ref, Right::Impersonate, 0, None, &[]),
+            history
+                .verify_right_window(&key_ref, Right::Impersonate, 0, None, &empty_set())
+                .unwrap(),
             ValidityResult::Confirmed
         );
         assert_eq!(
-            history.verify_right_window(&key_ref, Right::Update, 0, None, &[]),
+            history.verify_right_window(&key_ref, Right::Update, 0, None, &empty_set()).unwrap(),
             ValidityResult::Confirmed
         );
         assert_eq!(
-            history.verify_right_window(&key_ref, Right::Delegate, 0, None, &[]),
+            history.verify_right_window(&key_ref, Right::Delegate, 0, None, &empty_set()).unwrap(),
             ValidityResult::Confirmed
         );
 
         // Issue is NOT implicit.
         assert_eq!(
-            history.verify_right_window(&key_ref, Right::Issue, 0, None, &[]),
+            history.verify_right_window(&key_ref, Right::Issue, 0, None, &empty_set()).unwrap(),
             ValidityResult::Absent
         );
+    }
+
+    /// A presentation for a DID that is not the one being verified is a
+    /// security claim about a different subject, so it is rejected outright
+    /// rather than contributing nothing.
+    #[test]
+    fn verify_right_window_rejects_document_for_foreign_did() {
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+
+        // A document that is internally valid but belongs to another DID.
+        let foreign =
+            make_rights_doc_for_did(1, None, &crate::did::Did::bob(), key_str, "impersonate");
+        let foreign_cid = foreign.compute_content_id().unwrap();
+
+        let history = DidHistory {
+            commitments: alloc::vec![CommitmentVersion {
+                sequence: 1,
+                commitment: foreign_cid,
+                published_at_height: 100,
+                signer_key_ref: kr.clone(),
+                chain_start: false,
+            }],
+            ..DidHistory::new(test_did())
+        };
+
+        let err = history
+            .verify_right_window(&kr, Right::Impersonate, 100, Some(200), &set1(&[&foreign]))
+            .expect_err("a document for another DID must be rejected");
+        assert_eq!(
+            err,
+            CommitmentDocumentError::ForeignDid {
+                document_did: crate::did::Did::bob(),
+                history_did: test_did(),
+            }
+        );
+    }
+
+    /// A commitment published under an algorithm this build cannot verify makes
+    /// the timeline unverifiable — no document can ever match it — so it must
+    /// be reported rather than silently read as "right not granted".
+    #[test]
+    fn verify_right_window_rejects_commitment_with_unsupported_algorithm() {
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+        let doc = make_rights_doc(1, None, key_str, "impersonate");
+
+        // A `cb` (BLAKE3 flat) commitment: representable, but not a commitment
+        // algorithm — a flat hash has no canonical-JSON preimage a document
+        // could reproduce.
+        let flat = ContentId::from_bytes(b"not a rights document");
+        assert!(!flat.is_supported_commitment_algorithm());
+
+        let history = DidHistory {
+            commitments: alloc::vec![CommitmentVersion {
+                sequence: 1,
+                commitment: flat,
+                published_at_height: 100,
+                signer_key_ref: kr.clone(),
+                chain_start: false,
+            }],
+            ..DidHistory::new(test_did())
+        };
+
+        let err = history
+            .verify_right_window(&kr, Right::Impersonate, 100, Some(200), &set1(&[&doc]))
+            .expect_err("an unverifiable commitment must be reported, not skipped");
+        assert_eq!(
+            err,
+            CommitmentDocumentError::UnsupportedAlgorithm { sequence: 1, content_id: flat }
+        );
+    }
+
+    /// A `cj` (structured SHA3) commitment is permitted: the document declares
+    /// its algorithm, the verifier dispatches on the declaration, and the
+    /// content IDs compare as typed values.
+    #[test]
+    fn verify_right_window_accepts_commitment_with_sha3_algorithm() {
+        use json_digest::JsonDigest;
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+
+        // The document declares SHA3, so its content ID is the `cj` value the
+        // commitment must carry.
+        let raw = UnsafeRightsDocument {
+            schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
+            did: test_did().to_did_string(),
+            sequence: 1,
+            previous_commitment: None,
+            hash_algorithm: crate::rights::ContentHashAlgorithm::Sha3CanonicalJson,
+            rights: alloc::vec![crate::rights::UnsafeRightEntry {
+                key: key_str.into(),
+                rights: alloc::vec!["impersonate".into()],
+            }],
+        };
+        let sha3 = raw.compute_content_id().unwrap();
+        assert!(matches!(sha3, ContentId::Structured(JsonDigest::Sha3(_))));
+        assert!(sha3.is_supported_commitment_algorithm());
+        let doc: crate::rights::RightsDocument =
+            raw.try_into().expect("the declaration is well formed");
+
+        let history = DidHistory {
+            commitments: alloc::vec![CommitmentVersion {
+                sequence: 1,
+                commitment: sha3,
+                published_at_height: 100,
+                signer_key_ref: kr.clone(),
+                chain_start: false,
+            }],
+            ..DidHistory::new(test_did())
+        };
+
+        assert_eq!(
+            history
+                .verify_right_window(&kr, Right::Impersonate, 100, Some(200), &set1(&[&doc]))
+                .unwrap(),
+            ValidityResult::Confirmed,
+            "a SHA3 commitment must verify against a document that declares SHA3"
+        );
+    }
+
+    /// A chain-start document legitimately carries no predecessor.
+    #[test]
+    fn verify_right_window_accepts_chain_start_without_previous_commitment() {
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+        let (doc, cid) = make_rights_doc_cid(1, None, key_str, "impersonate");
+
+        let history = DidHistory {
+            commitments: alloc::vec![CommitmentVersion {
+                sequence: 1,
+                commitment: cid,
+                published_at_height: 100,
+                signer_key_ref: kr.clone(),
+                chain_start: true,
+            }],
+            ..DidHistory::new(test_did())
+        };
+
+        assert_eq!(
+            history
+                .verify_right_window(&kr, Right::Impersonate, 100, Some(200), &set1(&[&doc]))
+                .unwrap(),
+            ValidityResult::Confirmed
+        );
+    }
+
+    /// A chain-start document that nevertheless claims a predecessor is
+    /// inconsistent: it says "I supersede X" while sitting at the start of a
+    /// chain that has no X.
+    #[test]
+    fn verify_right_window_rejects_chain_start_that_claims_a_predecessor() {
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+        let bogus_predecessor = ContentId::from_bytes(b"not a real predecessor");
+        let (doc, cid) = make_rights_doc_cid(1, Some(bogus_predecessor), key_str, "impersonate");
+
+        let history = DidHistory {
+            commitments: alloc::vec![CommitmentVersion {
+                sequence: 1,
+                commitment: cid,
+                published_at_height: 100,
+                signer_key_ref: kr.clone(),
+                chain_start: true,
+            }],
+            ..DidHistory::new(test_did())
+        };
+
+        let err = history
+            .verify_right_window(&kr, Right::Impersonate, 100, Some(200), &set1(&[&doc]))
+            .expect_err("a chain start must not claim a predecessor");
+        assert_eq!(err, CommitmentDocumentError::ChainBroken { sequence: 1 });
+    }
+
+    /// After a governed reset the chain restarts, and the *next* document must
+    /// link back to the reset document. This is the case that reads the current
+    /// entry's `chain_start` rather than the previous entry's.
+    #[test]
+    fn verify_right_window_after_reset_relinks_to_the_reset_document() {
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+
+        // Pre-reset document, then a reset at sequence 2, then sequence 3.
+        let (d1, cid1) = make_rights_doc_cid(1, None, key_str, "impersonate");
+        let (d2, cid2) = make_rights_doc_cid(2, None, key_str, "issue"); // chain start
+        let (d3, cid3) = make_rights_doc_cid(3, Some(cid2), key_str, "impersonate");
+
+        let history = DidHistory {
+            commitments: alloc::vec![
+                CommitmentVersion {
+                    sequence: 1,
+                    commitment: cid1,
+                    published_at_height: 100,
+                    signer_key_ref: kr.clone(),
+                    chain_start: false,
+                },
+                CommitmentVersion {
+                    sequence: 2,
+                    commitment: cid2,
+                    published_at_height: 150,
+                    signer_key_ref: kr.clone(),
+                    chain_start: true,
+                },
+                CommitmentVersion {
+                    sequence: 3,
+                    commitment: cid3,
+                    published_at_height: 200,
+                    signer_key_ref: kr.clone(),
+                    chain_start: false,
+                },
+            ],
+            ..DidHistory::new(test_did())
+        };
+
+        assert_eq!(
+            history
+                .verify_right_window(&kr, Right::Impersonate, 200, Some(300), &set3(&d1, &d2, &d3))
+                .unwrap(),
+            ValidityResult::Confirmed,
+            "the document after a reset must link to the reset document"
+        );
+    }
+
+    /// A document that hashes correctly but names the wrong predecessor is
+    /// rejected: it was genuinely committed, yet its supersession claim is
+    /// unproven.
+    #[test]
+    fn verify_right_window_rejects_document_naming_the_wrong_predecessor() {
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+
+        let (d1, cid1) = make_rights_doc_cid(1, None, key_str, "impersonate");
+        let (d2, _cid2) = make_rights_doc_cid(2, Some(cid1), key_str, "issue");
+        // A third document, correct sequence, but pointing at the wrong parent.
+        let (d3, _cid3) = make_rights_doc_cid(
+            3,
+            Some(ContentId::from_bytes(b"wrong parent")),
+            key_str,
+            "impersonate",
+        );
+        let history = DidHistory {
+            commitments: alloc::vec![
+                CommitmentVersion {
+                    sequence: 1,
+                    commitment: cid1,
+                    published_at_height: 100,
+                    signer_key_ref: kr.clone(),
+                    chain_start: false,
+                },
+                CommitmentVersion {
+                    sequence: 2,
+                    commitment: make_rights_doc(2, Some(cid1), key_str, "issue")
+                        .compute_content_id()
+                        .unwrap(),
+                    published_at_height: 150,
+                    signer_key_ref: kr.clone(),
+                    chain_start: false,
+                },
+                CommitmentVersion {
+                    sequence: 3,
+                    commitment: d3.compute_content_id().unwrap(),
+                    published_at_height: 200,
+                    signer_key_ref: kr.clone(),
+                    chain_start: false,
+                },
+            ],
+            ..DidHistory::new(test_did())
+        };
+
+        let err = history
+            .verify_right_window(&kr, Right::Impersonate, 200, Some(300), &set3(&d1, &d2, &d3))
+            .expect_err("a wrong predecessor must be rejected");
+        assert_eq!(err, CommitmentDocumentError::ChainBroken { sequence: 3 });
     }
 
     /// iop-rs#1 pin: a presenter-supplied document that grants the right but
@@ -1995,8 +2654,7 @@ mod tests {
         let doc = make_rights_doc(1, None, key_str, "impersonate");
 
         // Commitment is the hash of DIFFERENT content, sequence matches.
-        let wrong_cid: ContentId =
-            make_rights_doc(1, None, key_str, "issue").compute_hash().unwrap().parse().unwrap();
+        let wrong_cid = make_rights_doc(1, None, key_str, "issue").compute_content_id().unwrap();
 
         let history = DidHistory {
             commitments: alloc::vec![CommitmentVersion {
@@ -2004,12 +2662,15 @@ mod tests {
                 commitment: wrong_cid,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
+                chain_start: false,
             }],
             ..DidHistory::new(test_did())
         };
 
         assert_eq!(
-            history.verify_right_window(&kr, Right::Impersonate, 100, Some(200), &[(1, &doc)]),
+            history
+                .verify_right_window(&kr, Right::Impersonate, 100, Some(200), &set1(&[&doc]))
+                .unwrap(),
             ValidityResult::Absent
         );
     }
@@ -2020,7 +2681,7 @@ mod tests {
         let kr = test_key_ref(1);
         let key_str = kr.as_str().unwrap();
         let doc = make_rights_doc(1, None, key_str, "impersonate");
-        let cid: ContentId = doc.compute_hash().unwrap().parse().unwrap();
+        let cid: ContentId = doc.compute_content_id().unwrap();
 
         let history = DidHistory {
             commitments: alloc::vec![CommitmentVersion {
@@ -2028,12 +2689,15 @@ mod tests {
                 commitment: cid,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
+                chain_start: false,
             }],
             ..DidHistory::new(test_did())
         };
 
         assert_eq!(
-            history.verify_right_window(&kr, Right::Impersonate, 100, Some(200), &[(1, &doc)]),
+            history
+                .verify_right_window(&kr, Right::Impersonate, 100, Some(200), &set1(&[&doc]))
+                .unwrap(),
             ValidityResult::Confirmed
         );
     }
@@ -2044,10 +2708,9 @@ mod tests {
         // Window [100, 200) → Ambiguous with gap [150, 200).
         let kr = test_key_ref(1);
         let key_str = kr.as_str().unwrap();
-        let d1 = make_rights_doc(1, None, key_str, "impersonate");
-        let d2 = make_rights_doc(2, None, key_str, "issue"); // grants issue, NOT impersonate
-        let cid1: ContentId = d1.compute_hash().unwrap().parse().unwrap();
-        let cid2: ContentId = d2.compute_hash().unwrap().parse().unwrap();
+        let (d1, cid1) = make_rights_doc_cid(1, None, key_str, "impersonate");
+        // grants issue, NOT impersonate; chains back to cid1
+        let (d2, cid2) = make_rights_doc_cid(2, Some(cid1), key_str, "issue");
 
         let history = DidHistory {
             commitments: alloc::vec![
@@ -2056,24 +2719,22 @@ mod tests {
                     commitment: cid1,
                     published_at_height: 100,
                     signer_key_ref: kr.clone(),
+                    chain_start: false,
                 },
                 CommitmentVersion {
                     sequence: 2,
                     commitment: cid2,
                     published_at_height: 150,
                     signer_key_ref: kr.clone(),
+                    chain_start: false,
                 },
             ],
             ..DidHistory::new(test_did())
         };
 
-        let result = history.verify_right_window(
-            &kr,
-            Right::Impersonate,
-            100,
-            Some(200),
-            &[(1, &d1), (2, &d2)],
-        );
+        let result = history
+            .verify_right_window(&kr, Right::Impersonate, 100, Some(200), &set2(&d1, &d2))
+            .unwrap();
         match result {
             ValidityResult::Ambiguous { gaps } => {
                 assert_eq!(gaps.len(), 1);
@@ -2190,6 +2851,7 @@ mod tests {
             commitment: test_commitment(1),
             published_at_height: 100,
             signer_key_ref: test_key_ref(1),
+            chain_start: false,
         };
 
         let json = serde_json::to_string(&cv).expect("serialization must succeed");
@@ -2255,6 +2917,7 @@ mod tests {
                 commitment: test_commitment(1),
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
+                chain_start: false,
             }],
             keys: alloc::vec![crate::state::VerificationMethod {
                 key_ref: kr.clone(),

@@ -277,6 +277,7 @@ canonicalises to a `json_digest::JsonDigest`:
   "$schema": "https://mosaic-trust.net/ns/did-rights/v1",
   "did": "did:mosaic:iozABC...",
   "sequence": 3,
+  "hashAlgorithm": "blake3-canonical-json",  // part of the preimage; see §3.5
   "previousCommitment": "cmXXXX...",   // content-ID of sequence-2 document
   "rights": [
     { "keyRef": "ioz9vVgYENonuJJRpaX1skzMfehqZc5bYsMCotYG97EAunqH", "rights": ["impersonate"] },
@@ -290,6 +291,14 @@ canonicalises to a `json_digest::JsonDigest`:
   on-chain via a `CommitmentUpdated` event. A rights document with a sequence
   that has no matching on-chain event has no provable timestamp and is rejected
   in time-bounded verification.
+- **`hashAlgorithm`** — the algorithm that produced this document's content ID.
+  It is inside the preimage, so the digest covers the declaration and a document
+  cannot claim one algorithm and be hashed with another. Mandatory: a verifier
+  must choose an algorithm before it can hash, and the on-chain value is the
+  claim being checked, not an input. `blake3-canonical-json` and
+  `sha3-canonical-json` are the permitted algorithms — both hash the canonical
+  JSON Merkle tree; flat hashes are not commitment algorithms. The pallet
+  rejects a commitment produced with any algorithm outside that set.
 - **`previousCommitment`** — the content ID of the rights document at
   `sequence - 1`. For sequence 1, `previousCommitment` is `null` (there is no
   predecessor). For every subsequent sequence N, this MUST equal
@@ -299,16 +308,19 @@ canonicalises to a `json_digest::JsonDigest`:
   Update/Delegate are not duplicated here; verifiers check those against on-chain
   state per the union model (§3.7).
 
-Canonicalization: `json_digest` (NFKD-normalized, sorted keys, BLAKE3-256
-Merkle tree). Produces a `ContentId::Structured(JsonDigest::Blake3(hash))`:
+Canonicalization: `json_digest` (NFKD-normalized, sorted keys, Merkle tree over
+the declared `hashAlgorithm`):
 
 ```
 blake3_struct(rights_document) → ContentId::Structured(JsonDigest::Blake3(hash))
 → displayed as "cmXXXX..."
+sha3_struct(rights_document)   → ContentId::Structured(JsonDigest::Sha3(hash))
+→ displayed as "cjXXXX..."
 ```
 
-The `cm` prefix distinguishes BLAKE3-structured content IDs from flat-hash
-variants (`cb` for Blake3Flat, `cj` for SHA3-structured).
+The `cm` and `cj` prefixes distinguish the structured content IDs from flat-hash
+variants (`cb` for Blake3Flat, `cB` for Blake2bFlat), which are not commitment
+algorithms.
 
 #### 3.5.1 Selective disclosure within the commitment document
 
@@ -325,6 +337,7 @@ impersonation key holder receives:
   "$schema": "https://mosaic-trust.net/ns/did-rights/v1",
   "did": "did:mosaic:iozABC...",
   "sequence": 3,
+  "hashAlgorithm": "blake3-canonical-json",
   "previousCommitment": "cmAAAA...",
   "rights": [
     "cmBBBB...",
