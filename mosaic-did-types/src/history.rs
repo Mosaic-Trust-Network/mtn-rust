@@ -2915,6 +2915,103 @@ mod tests {
         }
     }
 
+    /// Evidence can start after the window does. When the window's lower bound
+    /// precedes the first commitment, the leading stretch has no off-chain
+    /// rights proof and must be reported as a gap — never silently folded into
+    /// a `Confirmed` verdict.
+    #[test]
+    fn verify_right_window_reports_a_gap_before_the_first_commitment() {
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+        let (d1, cid1) = make_rights_doc_cid(1, None, key_str, "impersonate");
+        let (_d2, cid2) = make_rights_doc_cid(2, Some(cid1), key_str, "impersonate");
+
+        let history = DidHistory {
+            commitments: alloc::vec![
+                CommitmentVersion {
+                    sequence: 1,
+                    commitment: cid1,
+                    published_at_height: 150,
+                    signer_key_ref: kr.clone(),
+                    chain_start: true,
+                },
+                CommitmentVersion {
+                    sequence: 2,
+                    commitment: cid2,
+                    published_at_height: 250,
+                    signer_key_ref: kr.clone(),
+                    chain_start: false,
+                },
+            ],
+            ..DidHistory::new(test_did())
+        };
+
+        // The first (and only presented) document was committed at 150, but
+        // the window starts at 100: [100, 150) has no evidence.
+        let result = history
+            .verify_right_window(&kr, Right::Impersonate, 100, Some(200), &set1(&[&d1]))
+            .unwrap();
+        match result {
+            ValidityResult::Ambiguous { gaps } => {
+                assert_eq!(gaps.len(), 1, "expected exactly the leading gap: {gaps:?}");
+                assert_eq!(gaps[0].start, 100);
+                assert_eq!(gaps[0].end, Some(150));
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
+    /// The same gap through the real snapshot path, with the presenter omitting
+    /// the document that was active at the window start. Dropping the earliest
+    /// document must not turn the unevidenced leading stretch into a silent
+    /// grant.
+    #[test]
+    fn verify_right_window_snapshot_with_unevidenced_window_start_reports_a_gap() {
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+
+        // Commitment 1 is active at the window start (100); commitment 2 is
+        // published later.
+        let (_d1, cid1) = make_rights_doc_cid(1, None, key_str, "impersonate");
+        let (d2, cid2) = make_rights_doc_cid(2, Some(cid1), key_str, "impersonate");
+
+        let mut full = DidHistory::new(test_did());
+        full.apply(DidHistoryEvent::CommitmentUpdated {
+            sequence: 1,
+            commitment: cid1,
+            signer_key_ref: kr.clone(),
+            at_height: 80,
+        });
+        full.apply(DidHistoryEvent::CommitmentUpdated {
+            sequence: 2,
+            commitment: cid2,
+            signer_key_ref: kr.clone(),
+            at_height: 150,
+        });
+
+        let snapshot = full.to_did_document_at(200, Some(100));
+        let reconstructed =
+            DidHistory::from_did_document_at(&snapshot, 200).expect("a snapshot must reconstruct");
+        assert_eq!(reconstructed.commitments.len(), 2);
+
+        // Only the 150 document is presented; the 80 one is withheld.
+        let result = reconstructed
+            .verify_right_window(&kr, Right::Impersonate, 100, Some(200), &set1(&[&d2]))
+            .unwrap();
+        match result {
+            ValidityResult::Ambiguous { gaps } => {
+                assert_eq!(
+                    gaps.len(),
+                    1,
+                    "the unevidenced [100, 150) stretch must be a gap: {gaps:?}"
+                );
+                assert_eq!(gaps[0].start, 100);
+                assert_eq!(gaps[0].end, Some(150));
+            }
+            other => panic!("expected Ambiguous, got {other:?}"),
+        }
+    }
+
     // ===== Serde round‑trip tests =====
 
     #[test]
