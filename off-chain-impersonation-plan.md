@@ -1335,7 +1335,7 @@ rejection — the verifier's security model determines what strength is required
 |---------------|-------------|----------------------|-------------------|
 | Minimal | TOFU: `H_end = now`, `H_start = genesis` | Signature against pubKey in commitment document | `blake3_struct(D) == on-chain commitment` |
 | AfterProof | `H_start = blockHeight + 1`, `H_end = now` | Signature against pubKey in signed AfterEnvelope | Commitment at `H_start` (lower-bound check) |
-| FinalizedProof | `H_start = blockHeight + 1`, `H_end = beforeProofBlockHeight` | Full SMT + AfterEnvelope + signature verification | Every commitment active in `[H_start, H_end]` |
+| FinalizedProof | `H_start = blockHeight + 1`, `H_end = beforeProofBlockHeight` | Full SMT + AfterEnvelope + signature verification | Every commitment active in the window, hash-bound to its document; uncovered spans are `Ambiguous` gaps in `issues` |
 
 ### 7.2 Algorithm
 
@@ -1424,12 +1424,10 @@ verify_right(presentationProof, right):
     │     Verify: D.rights grants (key_ref, right).                │
     │                                                              │
     │   Case B — multiple anchored commitments [C1..Ck]:           │
-    │     Presenter must provide documents for ALL anchored        │
-    │     versions in the span.                                    │
-    │     Verify hash chain: Ci+1.previousCommitment == blake3(Di) │
-    │     Verify: EVERY Ci.rights grants (key_ref, right).         │
-    │     Each commitment is a full replacement — if any Ci omits  │
-    │     the right, the claim fails.                              │
+    │     Each version: presented document hash-binds to the       │
+    │     anchored commitment and satisfies its chain link.        │
+    │     Missing or non-granting versions leave Ambiguous gaps    │
+    │     reported in `issues`; continuity requires none.          │
     │                                                              │
     │ ELSE (no upper bound, MinimalProof or AfterProof):           │
     │   Verify: blake3_struct(D) == current on-chain commitment    │
@@ -1455,6 +1453,13 @@ verify_right(presentationProof, right):
 > `chainLink: "windowStart"`. Step 4 skips only that entry's predecessor check;
 > every later entry must still link exactly to its visible predecessor, and a
 > `windowStart` anywhere else is rejected.
+>
+> **Continuity is not implied by strength.** Neither `AfterProof` nor
+> `Finalized` fails a presentation just because a commitment version in the
+> window is missing or omits the right: the uncovered span is an `Ambiguous`
+> gap listed in `VerificationResult::issues`, and `valid` stays `true`. A
+> verifier that needs gap-free coverage (for example regulatory notarization)
+> must require an empty `issues` list in addition to the proof strength.
 
 ### 7.3 Verifier policy: choosing acceptable proof strength
 

@@ -35,11 +35,18 @@ pub struct StepResult {
 /// Result of a right-verification attempt.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VerificationResult {
-    /// Whether the right was confirmed.
+    /// Whether verification found no definitive failure.
+    ///
+    /// `true` does not mean the right held continuously across the requested
+    /// window: spans without evidence are reported in [`Self::issues`].
     pub valid: bool,
     /// The proof strength that was satisfied.
     pub strength: ProofStrength,
-    /// Issues encountered during verification (warnings + errors).
+    /// Ambiguities and warnings encountered during verification.
+    ///
+    /// A non-empty list can accompany `valid == true` — for example an
+    /// uncovered commitment span. Callers that require continuity across the
+    /// window must treat a non-empty list as insufficient.
     pub issues: Vec<String>,
     /// Detailed per-step results for debugging.
     pub steps: Vec<StepResult>,
@@ -54,10 +61,18 @@ pub enum ProofStrength {
     /// from an `AfterProof` anchor) through the present. Key validity, DID
     /// liveness, and commitment continuity are checked across the window.
     AfterProof,
-    /// Full time-bounded proof — right held continuously across `[H_start, H_end]`.
-    /// Both bounds are cryptographically anchored. All timeline versions must
-    /// have matching documents, all grant the right, and the hash chain must
-    /// be intact.
+    /// Full time-bounded proof — both window bounds are cryptographically
+    /// anchored and the holder's SMT envelope is verified.
+    ///
+    /// The right is checked across `[H_start, H_end]` over the *presented*
+    /// rights documents: each presented document must hash to its on-chain
+    /// commitment and satisfy its [`crate::history::ChainLink`] position. A
+    /// version without a presented document, or whose document does not grant
+    /// the right, contributes nothing; the uncovered span is reported as a gap
+    /// in [`VerificationResult::issues`] and the right result is
+    /// [`ValidityResult::Ambiguous`], not a failure. A caller that requires
+    /// continuous coverage across the window must require an empty `issues`
+    /// list (or a `Confirmed` right result).
     Finalized,
 }
 
@@ -97,8 +112,6 @@ pub enum VerificationError {
     NoCommitmentService,
     /// JSON digest computation failed.
     DigestError(String),
-    /// A timeline version is missing a corresponding rights document (Finalized only).
-    MissingCommitmentDocument,
     /// The `previousCommitment` hash chain between consecutive rights documents is broken.
     CommitmentChainBroken,
     /// A commitment's chain position is structurally invalid: a `Linked` entry
