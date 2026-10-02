@@ -992,7 +992,10 @@ pub trait CommitmentResolver {
 >   into `DidHistory`.
 > - **Backward (light client):** start from a proven `DidState` at `H_end`, walk backwards
 >   through `previous_version_id` pointers, collect events in reverse, call `.reverse()`,
->   then apply in forward order to the same `DidHistory`.
+>   then replay in forward order to the same `DidHistory`. If the walk stopped at a target
+>   height rather than reaching genesis, the first commitment event goes through
+>   `apply_window_start` (marking the window boundary as `chainLink: "windowStart"`); every
+>   later event uses `apply`.
 >
 > Both paths produce equivalent results for the same `[H_start, H_end]` range. Verifier
 > code written against `DidHistory`'s query methods does not need separate implementations.

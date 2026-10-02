@@ -131,10 +131,17 @@ impl RightLifecycle {
 /// This type is direction-agnostic: the same type and its query methods
 /// (`commitment_at`, `valid_keys_at`, `has_right_at`) work identically
 /// regardless of how events were collected:
-/// - **Forward (indexer):** consume the full event stream chronologically.
-/// - **Backward (light client):** start from a proven `DidState`, walk backwards
-///   through `previous_version_id` pointers, collect events in reverse, call
-///   `.reverse()`, then apply in forward order.
+/// - **Forward (indexer):** consume the full event stream chronologically and
+///   [`apply`](DidHistory::apply) each event.
+/// - **Backward (light client):** start from a proven `DidState`, walk
+///   backwards through `previous_version_id` pointers, collect events in
+///   reverse and call `.reverse()`, then replay in forward order. If the walk
+///   stopped at a target height instead of reaching genesis, the first
+///   commitment event must go through
+///   [`apply_window_start`](DidHistory::apply_window_start) so the history
+///   knows its predecessor lies outside the window; every later event uses
+///   [`apply`](DidHistory::apply). Use [`apply`](DidHistory::apply)
+///   throughout only when the walk reached genesis.
 ///
 /// Both paths produce equivalent results for the same `[H_start, H_end]` range.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -159,9 +166,11 @@ pub struct DidHistory {
 /// A DID-history event — the `no_std` equivalent of the pallet's SCALE events.
 ///
 /// Each variant carries the block height at which it occurred (`at_height`).
-/// Events are collected into `Vec<DidHistoryEvent>` (forward from an indexer or
-/// reverse-walked then `.reverse()`d from the pointer chain) and applied via
-/// `DidHistory::apply()`.
+/// Events are collected into `Vec<DidHistoryEvent>` (forward from an indexer
+/// or reverse-walked then `.reverse()`d from the pointer chain) and replayed:
+/// events after a window boundary go through `DidHistory::apply()`, while the
+/// first commitment of a replay that stopped short of genesis goes through
+/// `DidHistory::apply_window_start()`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DidHistoryEvent {
     /// A key was added to the DID document.
@@ -298,9 +307,12 @@ impl DidHistory {
 
     /// Apply a single history event to this DID's timeline.
     ///
-    /// Events are applied in chronological order (oldest first). Both the
-    /// forward (indexer) and backward (light-client) paths produce events in
-    /// this order before calling `apply`.
+    /// Events are applied in chronological order (oldest first). This is the
+    /// right entry point when the event stream starts at genesis — an
+    /// indexer's full replay, or a light-client walk that reached genesis. A
+    /// replay that starts mid-history must send its first commitment event to
+    /// [`apply_window_start`](Self::apply_window_start) instead, so the first
+    /// visible commitment is not mislabelled as a chain start.
     pub fn apply(&mut self, event: DidHistoryEvent) {
         match event {
             DidHistoryEvent::KeyAdded {
