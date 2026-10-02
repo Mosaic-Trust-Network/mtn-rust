@@ -40,6 +40,7 @@ pub use weights::WeightInfo;
 #[frame_support::pallet]
 pub mod pallet {
     use super::*;
+    use frame_support::dispatch::PostDispatchInfo;
     use frame_support::pallet_prelude::*;
     use frame_support::traits::tokens::{
         Fortitude, Precision, Restriction, fungible::Inspect as FungibleInspect,
@@ -318,6 +319,43 @@ pub mod pallet {
         UnsupportedCommitmentAlgorithm,
     }
 
+    // ========== WEIGHT HELPERS ==========
+
+    /// Weight of a single SSI operation.
+    ///
+    /// Shared by the pre-dispatch batch estimate and the post-dispatch actual
+    /// weight so the operation-to-weight mapping lives in exactly one place.
+    pub fn ssi_operation_weight<T: Config>(op: &SsiOperation) -> Weight {
+        match op {
+            SsiOperation::Did(signed) => match &signed.operation {
+                DidOperation::AddKey { .. } => T::WeightInfo::add_key(),
+                DidOperation::RevokeKey { .. } => T::WeightInfo::revoke_key(),
+                DidOperation::AddRight { .. } => T::WeightInfo::add_right(),
+                DidOperation::RevokeRight { .. } => T::WeightInfo::revoke_right(),
+                DidOperation::UpdateCommitment { .. } => T::WeightInfo::update_commitment(),
+                DidOperation::AnnounceGoverned { .. } => T::WeightInfo::announce_governed_op(),
+                DidOperation::CancelGoverned { .. } => T::WeightInfo::cancel_governed_op(),
+                DidOperation::ExecuteGoverned { .. } => T::WeightInfo::execute_governed_op(),
+            },
+            SsiOperation::BeforeProof(_) => T::WeightInfo::register_before_proof(),
+        }
+    }
+
+    /// Weight of a batch: every operation plus one `DidStates` read per
+    /// distinct DID.
+    ///
+    /// `distinct_dids` is the upper bound (one per DID-carrying operation) for
+    /// the pre-dispatch charge, and the actually touched count for the
+    /// post-dispatch refund. The explicit read covers the lazy per-DID capture
+    /// until generated weights absorb it from the `submit_batch_distinct_dids`
+    /// benchmark; drop it when `weights.rs` is next regenerated.
+    pub fn batch_weight<T: Config>(operations: &[SsiOperation], distinct_dids: u64) -> Weight {
+        operations
+            .iter()
+            .fold(Weight::zero(), |acc, op| acc.saturating_add(ssi_operation_weight::<T>(op)))
+            .saturating_add(T::DbWeight::get().reads(distinct_dids))
+    }
+
     // ========== EXTRINSICS ==========
 
     #[pallet::call]
@@ -327,26 +365,16 @@ pub mod pallet {
         /// **Anti-Censorship:** Any account can submit for any DID.
         #[pallet::call_index(0)]
         #[pallet::weight({
-            operations.iter().fold(Weight::zero(), |acc, op| {
-                let w = match op {
-                    SsiOperation::Did(signed) => match &signed.operation {
-                        DidOperation::AddKey { .. } => T::WeightInfo::add_key(),
-                        DidOperation::RevokeKey { .. } => T::WeightInfo::revoke_key(),
-                        DidOperation::AddRight { .. } => T::WeightInfo::add_right(),
-                        DidOperation::RevokeRight { .. } => T::WeightInfo::revoke_right(),
-                        DidOperation::UpdateCommitment { .. } => T::WeightInfo::update_commitment(),
-                        DidOperation::AnnounceGoverned { .. } => T::WeightInfo::announce_governed_op(),
-                        DidOperation::CancelGoverned { .. } => T::WeightInfo::cancel_governed_op(),
-                        DidOperation::ExecuteGoverned { .. } => T::WeightInfo::execute_governed_op(),
-                    },
-                    SsiOperation::BeforeProof(_) => T::WeightInfo::register_before_proof(),
-                };
-                acc.saturating_add(w)
-            })
+            // Worst case: every DID-carrying operation touches a different DID.
+            let distinct_dids = operations
+                .iter()
+                .filter(|op| matches!(op, SsiOperation::Did(_)))
+                .count() as u64;
+            batch_weight::<T>(operations, distinct_dids)
         })]
         pub fn submit_did_operations(
             origin: OriginFor<T>, operations: BoundedVec<SsiOperation, T::MaxOperationsPerTx>,
-        ) -> DispatchResult {
+        ) -> DispatchResultWithPostInfo {
             let submitter = ensure_signed(origin)?;
             let height_u32: u32 =
                 Self::block_number_to_u32(<frame_system::Pallet<T>>::block_number());
@@ -399,14 +427,17 @@ pub mod pallet {
                 operation_count: operations.len() as u32,
             });
 
-            Ok(())
+            // The capture ran once per DID actually touched, so refund the
+            // worst-case distinct-DID reads charged up front.
+            let actual_weight = batch_weight::<T>(&operations, batch_previous.len() as u64);
+            Ok(PostDispatchInfo { actual_weight: Some(actual_weight), pays_fee: Pays::Yes })
         }
 
         #[pallet::call_index(1)]
         #[pallet::weight(T::WeightInfo::register_before_proof())]
         pub fn register_before_proof(
             origin: OriginFor<T>, content_id: ContentId,
-        ) -> DispatchResult {
+        ) -> DispatchResultWithPostInfo {
             let mut ops = BoundedVec::new();
             ops.try_push(SsiOperation::BeforeProof(content_id)).expect("1 op fits");
             Self::submit_did_operations(origin, ops)

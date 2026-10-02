@@ -26,6 +26,9 @@ impl frame_system::Config for Test {
     type AccountData = pallet_balances::AccountData<<Self as pallet_balances::Config>::Balance>;
     type Lookup = IdentityLookup<u64>;
     type AccountId = u64;
+    // Real DB weights, so batch actual-weight accounting is observable in
+    // tests (the test default is zero).
+    type DbWeight = frame_support::weights::constants::RocksDbWeight;
 }
 
 #[derive_impl(pallet_balances::config_preludes::TestDefaultConfig)]

@@ -846,6 +846,101 @@ mod unit_tests {
             });
         }
 
+        /// A batch's post-dispatch actual weight refunds the distinct-DID
+        /// capture reads it did not need. Two AddKeys on two DIDs cost exactly
+        /// one more `DidStates` read than the same two operations on one DID.
+        #[test]
+        fn batch_actual_weight_reflects_distinct_did_reads() {
+            use frame_support::weights::Weight;
+
+            // Two distinct DIDs: Alice and Bob each create themselves.
+            let distinct_actual = new_test_ext().execute_with(|| {
+                System::set_block_number(1);
+                let alice_did = did_from_sk(&ALICE_SK);
+                let bob_did = did_from_sk(&BOB_SK);
+                let distinct: BoundedVec<SsiOperation, ConstU32<100>> = vec![
+                    SsiOperation::Did(sign_op_with_key(
+                        &ALICE_SK,
+                        key_ref_from_sk(&ALICE_SK),
+                        DidOperation::AddKey {
+                            did: alice_did,
+                            auth: auth_from_sk(&ALICE_SK),
+                            expires_at_height: None,
+                            initial_nonce: 0,
+                        },
+                        1,
+                    )),
+                    SsiOperation::Did(sign_op_with_key(
+                        &BOB_SK,
+                        key_ref_from_sk(&BOB_SK),
+                        DidOperation::AddKey {
+                            did: bob_did,
+                            auth: auth_from_sk(&BOB_SK),
+                            expires_at_height: None,
+                            initial_nonce: 0,
+                        },
+                        1,
+                    )),
+                ]
+                .try_into()
+                .unwrap();
+                let distinct_post = crate::Pallet::<Test>::submit_did_operations(
+                    RawOrigin::Signed(1u64).into(),
+                    distinct,
+                )
+                .expect("distinct-DID batch must succeed");
+                distinct_post.actual_weight.expect("actual weight must be reported")
+            });
+
+            // The same two AddKeys, but both on Alice's DID.
+            let same_actual = new_test_ext().execute_with(|| {
+                System::set_block_number(1);
+                let alice_did = did_from_sk(&ALICE_SK);
+                let same: BoundedVec<SsiOperation, ConstU32<100>> = vec![
+                    SsiOperation::Did(sign_op_with_key(
+                        &ALICE_SK,
+                        key_ref_from_sk(&ALICE_SK),
+                        DidOperation::AddKey {
+                            did: alice_did.clone(),
+                            auth: auth_from_sk(&ALICE_SK),
+                            expires_at_height: None,
+                            initial_nonce: 0,
+                        },
+                        1,
+                    )),
+                    SsiOperation::Did(sign_op_with_key(
+                        &ALICE_SK,
+                        key_ref_from_sk(&ALICE_SK),
+                        DidOperation::AddKey {
+                            did: alice_did,
+                            auth: auth_from_sk(&BOB_SK),
+                            expires_at_height: None,
+                            initial_nonce: 0,
+                        },
+                        2,
+                    )),
+                ]
+                .try_into()
+                .unwrap();
+                let same_post = crate::Pallet::<Test>::submit_did_operations(
+                    RawOrigin::Signed(1u64).into(),
+                    same,
+                )
+                .expect("same-DID batch must succeed");
+                same_post.actual_weight.expect("actual weight must be reported")
+            });
+
+            let no_ops: Vec<SsiOperation> = Vec::new();
+            let extra_read = crate::pallet::batch_weight::<Test>(&no_ops, 1)
+                .saturating_sub(crate::pallet::batch_weight::<Test>(&no_ops, 0));
+            assert!(extra_read.any_gt(Weight::zero()), "a read must have weight");
+            assert_eq!(
+                distinct_actual,
+                same_actual.saturating_add(extra_read),
+                "the distinct-DID batch pays exactly one extra capture read"
+            );
+        }
+
         /// Plan §3.2 (same transaction, same DID): `previous_version_id` is
         /// captured once at the start of the call and shared by **all** DID
         /// events in the batch. A per-operation capture makes the second event

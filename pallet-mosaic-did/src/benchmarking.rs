@@ -15,7 +15,7 @@ use mosaic_did_types::{
     SignedDidOperation, SsiOperation, VerificationMethod, ed25519_blake3_signature,
 };
 use parity_scale_codec::{Encode, alloc::string::ToString};
-use polkadot_sdk::{sp_core::Get, sp_runtime::BoundedVec};
+use polkadot_sdk::sp_core::Get;
 
 /// RFC 8032 test vector 1 - Alice's Ed25519 key pair.
 /// sk: 9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60
@@ -34,6 +34,7 @@ const ALICE_PK: [u8; 32] = [
 fn sign_with_alice(message: &[u8]) -> mosaic_keyvault::multicipher::MSignature {
     use mosaic_keyvault::PrivateKey;
     use mosaic_keyvault::ed25519::EdPrivateKey;
+    use mosaic_keyvault::multicipher::MSignature;
 
     let sk = EdPrivateKey::from_bytes(ALICE_SK).expect("valid alice sk");
     let sig = sk.sign(message);
@@ -74,6 +75,49 @@ fn create_add_key_op(nonce: u64) -> SignedDidOperation {
     let message = (&signed_op.operation, &signed_op.signer_key_ref, &signed_op.nonce).encode();
     let signature = sign_with_alice(&message);
 
+    SignedDidOperation { signature, ..signed_op }
+}
+
+/// Deterministic distinct Ed25519 secret key for benchmark index `i`.
+fn distinct_sk(i: u32) -> mosaic_keyvault::ed25519::EdPrivateKey {
+    use mosaic_keyvault::ed25519::EdPrivateKey;
+
+    let mut seed = [0u8; 32];
+    seed[..4].copy_from_slice(&(i + 1).to_le_bytes());
+    EdPrivateKey::from_bytes(seed).expect("any 32 bytes is a valid Ed25519 seed")
+}
+
+/// The DID created by `create_distinct_add_key_op(i)`.
+fn distinct_did(i: u32) -> Did {
+    use mosaic_keyvault::PrivateKey as _;
+
+    Did::from_public_key(&distinct_sk(i).public_key().to_bytes()).expect("valid DID")
+}
+
+/// A self-signed `AddKey` creation operation for a distinct DID.
+fn create_distinct_add_key_op(i: u32) -> SignedDidOperation {
+    use mosaic_keyvault::PrivateKey as _;
+
+    let sk = distinct_sk(i);
+    let pk_bytes = sk.public_key().to_bytes();
+    let auth =
+        Authentication::from_key_type_and_bytes(KeyType::Ed25519, &pk_bytes).expect("valid auth");
+    let key_ref = KeyRef::new(format!("{}", auth.key_id()).into_bytes()).expect("key ref fits");
+
+    let signed_op = SignedDidOperation {
+        operation: DidOperation::AddKey {
+            did: Did::from_public_key(&pk_bytes).expect("valid DID"),
+            auth,
+            expires_at_height: None,
+            initial_nonce: 0,
+        },
+        signer_key_ref: key_ref,
+        signature: ed25519_blake3_signature([0u8; 64]),
+        nonce: 1,
+    };
+
+    let message = (&signed_op.operation, &signed_op.signer_key_ref, &signed_op.nonce).encode();
+    let signature = mosaic_keyvault::multicipher::MSignature::Ed25519Blake3(sk.sign(&message));
     SignedDidOperation { signature, ..signed_op }
 }
 
@@ -150,6 +194,7 @@ fn setup_existing_did<T: Config>() {
         added_at_height: 1,
         expires_at_height: None,
         revoked_at_height: None,
+        nonce: 0,
     };
 
     let mut state = mosaic_did_types::DidState::new(did.clone());
@@ -166,6 +211,7 @@ fn setup_existing_did<T: Config>() {
                 added_at_height: i,
                 expires_at_height: None,
                 revoked_at_height: None,
+                nonce: 0,
             })
             .expect("max keys/did is known");
     }
@@ -282,6 +328,26 @@ mod benchmarks {
         submit_did_operations(RawOrigin::Signed(caller), operations);
 
         assert!(BeforeProofs::<T>::contains_key(content_id));
+    }
+
+    /// Worst case for the lazy per-DID capture: one extrinsic with `n`
+    /// operations, each creating a different DID, so the batch pays one
+    /// `DidStates::get` per operation. The other benchmarks submit single-op
+    /// batches; this one isolates the distinct-DID term for weight generation.
+    #[benchmark]
+    fn submit_batch_distinct_dids<T: Config>(n: Linear<1, { T::MaxOperationsPerTx::get() }>) {
+        let caller: T::AccountId = whitelisted_caller();
+
+        let mut operations = sp_std::vec![];
+        for i in 0..n {
+            operations.push(SsiOperation::Did(create_distinct_add_key_op(i)));
+        }
+        let operations = operations.try_into().expect("n fits MaxOperationsPerTx");
+
+        #[extrinsic_call]
+        submit_did_operations(RawOrigin::Signed(caller), operations);
+
+        assert!(DidStates::<T>::contains_key(distinct_did(n - 1)));
     }
 
     // impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);
