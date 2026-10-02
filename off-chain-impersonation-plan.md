@@ -307,6 +307,21 @@ canonicalises to a `json_digest::JsonDigest`:
 - **`rights`** — maps key references to the set of rights that key holds.
   Update/Delegate are not duplicated here; verifiers check those against on-chain
   state per the union model (§3.7).
+- **Commitment timeline service.** A resolved DID document carries the
+  commitment timeline in its `MosaicCommitmentTimeline2026` service, one entry
+  per version:
+  `{ "sequence", "contentId", "publishedAtHeight", "publishedBy", "chainLink" }`.
+  Whether a predecessor is expected is stated by `chainLink`, never inferred
+  from the entry's position:
+  - `"anchor"` — the first commitment of a chain, or a governed reset: the
+    document MUST carry no `previousCommitment`.
+  - `"linked"` — a normal update: the document MUST name the previous visible
+    commitment.
+  - `"windowStart"` — the first entry of a truncated view (a `from_height`
+    snapshot or a backward-walk replay): the true predecessor lies outside the
+    window, so the claim is not checked. Valid only at the first visible entry;
+    a `"windowStart"` anywhere else, or a `"linked"` first entry, is
+    structurally invalid.
 
 Canonicalization: `json_digest` (NFKD-normalized, sorted keys, Merkle tree over
 the declared `hashAlgorithm`):
@@ -394,6 +409,25 @@ all entries except their own already hashed. The verifier confirms
 `blake3_struct(Di)` matches `D_{i+1}.previousCommitment` — without learning
 about other key holders.
 
+**Truncated windows.** A verifier does not always see the whole chain. A
+`from_height` DID-document snapshot starts at the commitment active at the
+window's lower bound, and a light-client backward walk (§3.2) replays only the
+events between the target height and now. In both cases the first visible
+commitment is a *window start*: its true predecessor exists but lies outside
+the view. The timeline records that boundary explicitly as
+`chainLink: "windowStart"`, and the verifier skips exactly that one
+predecessor check. Every later visible entry must still link exactly, and a
+`windowStart` past the first entry is rejected. Recording the boundary in the
+data — instead of inferring truncation from an entry's position — is what keeps
+the history honest about its own extent.
+
+The chain check is a **presenter-to-verifier completeness guarantee on a
+presenter-supplied timeline**. When the timeline is rebuilt from consensus
+events (an indexer, or the events a light client replayed), the on-chain
+sequence, heights, and commitment hashes are already authoritative; the
+`previousCommitment` link is then a wire-format and audit consistency check
+rather than an additional security anchor.
+
 #### 3.6.1 Governed operations
 
 Certain state changes are destructive enough that a compromised Update key must
@@ -476,14 +510,18 @@ deposit-separation mechanism as `CommitmentReset`.
 - **Deposit.** `GOVERNED_OP_DEPOSIT` is a governance parameter shared by all
   variants. It must be high enough to deter frivolous use but not punitive for
   legitimate operations.
-- **`previousCommitment: null` is only valid at sequence 1 and at a
-  `CommitmentReset`.** Any other commitment document with a null predecessor is
-  structurally invalid — the verifier rejects it.
+- **A document's predecessor requirement is stated by its timeline entry's
+  `chainLink`.** `anchor` demands `previousCommitment: null` — only sequence 1
+  and a `CommitmentReset` produce it. `linked` demands the previous visible
+  commitment. `windowStart` skips the check because the true predecessor lies
+  outside the view. A claim that contradicts its position — a predecessor on an
+  `anchor` entry, or a `linked` first entry with no visible predecessor — is
+  structurally invalid and the verifier rejects it.
 
 Every commitment either chains to its immediate predecessor via
-`previousCommitment`, or — at sequence 1 and at a `CommitmentReset` — carries
-`null` backed by a `GovernedOpExecuted::CommitmentReset` event proving the
-break was governed.
+`previousCommitment`, or carries no predecessor and is anchored by sequence 1,
+a `GovernedOpExecuted::CommitmentReset` event, or a window boundary marked
+`chainLink: "windowStart"`.
 
 ### 3.7 Union semantics — the commitment and on-chain rights coexist
 
@@ -1387,6 +1425,12 @@ verify_right(presentationProof, right):
     └─────────────────────────────────────────────────────────────┘
 ```
 
+> **Windowed timelines.** When the history is a truncated view — a `from_height`
+> snapshot or a backward-walk replay — its first entry carries
+> `chainLink: "windowStart"`. Step 4 skips only that entry's predecessor check;
+> every later entry must still link exactly to its visible predecessor, and a
+> `windowStart` anywhere else is rejected.
+
 ### 7.3 Verifier policy: choosing acceptable proof strength
 
 The verifier's security model determines which bundle types it accepts:
@@ -1585,7 +1629,10 @@ Key decisions:
   corrupted by multiple transactions in the same block modifying the same DID.
 - **`previousCommitment` hash chain** (§3.6) — prevents presenters from
   selectively omitting revocations. The indexer cannot verify it (documents are
-  private), so the chain is a presenter-to-verifier guarantee.
+  private), so the chain is a presenter-to-verifier guarantee on
+  presenter-supplied timelines. The first entry of a truncated view carries
+  `chainLink: "windowStart"` and skips that one boundary link; `linked` needs a
+  visible predecessor and `windowStart` is only valid first.
 - **Gapless sequence enforcement** (§3.4) — every sequence number must be
   anchored on-chain. A rights document without a matching `CommitmentUpdated`
   event has no provable timestamp and is rejected in time-bounded verification.
