@@ -389,7 +389,10 @@ impl DidHistory {
     /// Check whether a key held a specific right at `height`.
     ///
     /// Union semantics (§3.7): checks on-chain `RightLifecycle` entries first,
-    /// then falls through to the commitment document via the `CommitmentResolver`.
+    /// then falls through to the commitment document via the
+    /// `CommitmentResolver`. A resolved document contributes only if it hashes
+    /// to the active commitment, so a presenter-backed resolver cannot grant
+    /// rights the chain never anchored.
     pub fn has_right_at(
         &self, key_ref: &KeyRef, right: Right, height: u32,
         commitment_resolver: &dyn CommitmentResolver,
@@ -403,12 +406,15 @@ impl DidHistory {
             return true;
         }
 
-        // Check 2: commitment document (off-chain path). `grants_right`
-        // parses both sides into `Authentication`, so it matches a
-        // full-public-key entry against the bare key id exactly like the
-        // validated path (`grants_right_by_key_ref`) does.
+        // Check 2: commitment document (off-chain path). The resolver is
+        // caller-supplied and may be presenter-backed, so the document must
+        // hash to the commitment it claims before it can contribute: an
+        // unbound document proves nothing. `grants_right` then parses both
+        // sides into `Authentication`, matching a full-public-key entry
+        // against the bare key id exactly like the validated path does.
         if let Some(cv) = self.commitment_at(height)
             && let Some(doc) = commitment_resolver.resolve(&cv.commitment)
+            && doc.compute_content_id().is_ok_and(|presented| presented == cv.commitment)
             && doc.grants_right(key_ref.as_str().unwrap_or(""), &right.to_string())
         {
             return true;
@@ -1379,7 +1385,21 @@ mod tests {
     fn has_right_at_falls_through_to_commitment() {
         let did = test_did();
         let kr = test_key_ref(1);
-        let commitment = test_commitment(1);
+
+        // The document is bound to the commitment by its own digest, as the
+        // resolver path requires.
+        let doc = UnsafeRightsDocument {
+            schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
+            did: "did:mosaic:iozABC".into(),
+            sequence: 1,
+            previous_commitment: None,
+            hash_algorithm: crate::rights::ContentHashAlgorithm::Blake3CanonicalJson,
+            rights: alloc::vec![crate::rights::UnsafeRightEntry {
+                key: kr.to_string(),
+                rights: alloc::vec!["impersonate".into()],
+            }],
+        };
+        let commitment = doc.compute_content_id().unwrap();
 
         let history = DidHistory {
             commitments: alloc::vec![CommitmentVersion {
@@ -1387,32 +1407,65 @@ mod tests {
                 commitment,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
-                chain_start: false,
+                chain_start: true,
             }],
             ..DidHistory::new(did)
         };
 
         let mut resolver = TestResolver::new();
-        resolver.insert(
-            commitment,
-            UnsafeRightsDocument {
-                schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
-                did: "did:mosaic:iozABC".into(),
-                sequence: 1,
-                previous_commitment: None,
-                hash_algorithm: crate::rights::ContentHashAlgorithm::Blake3CanonicalJson,
-                rights: alloc::vec![crate::rights::UnsafeRightEntry {
-                    key: kr.to_string(),
-                    rights: alloc::vec!["impersonate".into()],
-                }],
-            },
-        );
+        resolver.insert(commitment, doc);
 
         // No commitment before height 100
         assert!(!history.has_right_at(&kr, Right::Impersonate, 50, &resolver));
 
         // Commitment active at height 100+
         assert!(history.has_right_at(&kr, Right::Impersonate, 100, &resolver));
+    }
+
+    /// A resolver document must be hash-bound to the on-chain commitment
+    /// before it can grant anything. A presenter-backed resolver that returns
+    /// a document for a different content ID must not confer rights.
+    #[test]
+    fn has_right_at_rejects_a_document_not_bound_to_the_commitment() {
+        let did = test_did();
+        let kr = test_key_ref(1);
+        let claimed = test_commitment(1);
+
+        let history = DidHistory {
+            commitments: alloc::vec![CommitmentVersion {
+                sequence: 1,
+                commitment: claimed,
+                published_at_height: 100,
+                signer_key_ref: kr.clone(),
+                chain_start: true,
+            }],
+            ..DidHistory::new(did)
+        };
+
+        let doc = UnsafeRightsDocument {
+            schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
+            did: test_did().to_did_string(),
+            sequence: 1,
+            previous_commitment: None,
+            hash_algorithm: crate::rights::ContentHashAlgorithm::Blake3CanonicalJson,
+            rights: alloc::vec![crate::rights::UnsafeRightEntry {
+                key: kr.to_string(),
+                rights: alloc::vec!["impersonate".into()],
+            }],
+        };
+        assert_ne!(
+            doc.compute_content_id().unwrap(),
+            claimed,
+            "the fixture must genuinely be unbound"
+        );
+
+        let mut resolver = TestResolver::new();
+        resolver.insert(claimed, doc);
+
+        assert!(
+            !history.has_right_at(&kr, Right::Impersonate, 100, &resolver),
+            "a document that does not hash to the commitment must not grant"
+        );
     }
 
     /// The resolver path must use the same cross-variant key matching as the
@@ -1432,7 +1485,20 @@ mod tests {
         // public key (`poz...`).
         let kr = KeyRef::new(pk.key_id().to_string().into_bytes()).unwrap();
 
-        let commitment = test_commitment(2);
+        let doc = UnsafeRightsDocument {
+            schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
+            did: test_did().to_did_string(),
+            sequence: 1,
+            previous_commitment: None,
+            hash_algorithm: crate::rights::ContentHashAlgorithm::Blake3CanonicalJson,
+            rights: alloc::vec![crate::rights::UnsafeRightEntry {
+                // The revealing form: a full public key, not a key id.
+                key: pk.to_string(),
+                rights: alloc::vec!["impersonate".into()],
+            }],
+        };
+        let commitment = doc.compute_content_id().unwrap();
+
         let history = DidHistory {
             commitments: alloc::vec![CommitmentVersion {
                 sequence: 1,
@@ -1445,21 +1511,7 @@ mod tests {
         };
 
         let mut resolver = TestResolver::new();
-        resolver.insert(
-            commitment,
-            UnsafeRightsDocument {
-                schema: RIGHTS_DOCUMENT_V1_SCHEMA.into(),
-                did: test_did().to_did_string(),
-                sequence: 1,
-                previous_commitment: None,
-                hash_algorithm: crate::rights::ContentHashAlgorithm::Blake3CanonicalJson,
-                rights: alloc::vec![crate::rights::UnsafeRightEntry {
-                    // The revealing form: a full public key, not a key id.
-                    key: pk.to_string(),
-                    rights: alloc::vec!["impersonate".into()],
-                }],
-            },
-        );
+        resolver.insert(commitment, doc);
 
         assert!(
             history.has_right_at(&kr, Right::Impersonate, 100, &resolver),
