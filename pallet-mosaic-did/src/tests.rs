@@ -105,8 +105,12 @@ mod unit_tests {
     fn operation_creates_correct_types() {
         let did = alice_did();
 
-        let add_key =
-            DidOperation::AddKey { did: did.clone(), auth: alice_auth(), expires_at_height: None };
+        let add_key = DidOperation::AddKey {
+            did: did.clone(),
+            auth: alice_auth(),
+            expires_at_height: None,
+            initial_nonce: 0,
+        };
 
         assert_eq!(add_key.did(), &did);
         assert_eq!(add_key.required_right(), Right::Update);
@@ -157,7 +161,12 @@ mod unit_tests {
         let signer_key_ref = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
 
         let signed_op = SignedDidOperation {
-            operation: DidOperation::AddKey { did: did.clone(), auth, expires_at_height: None },
+            operation: DidOperation::AddKey {
+                did: did.clone(),
+                auth,
+                expires_at_height: None,
+                initial_nonce: 0,
+            },
             signer_key_ref,
             signature: ed25519_blake3_signature([1u8; 64]),
             nonce: 1,
@@ -174,7 +183,12 @@ mod unit_tests {
         let signer_key_ref = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
 
         let did_op = SsiOperation::Did(SignedDidOperation {
-            operation: DidOperation::AddKey { did: did.clone(), auth, expires_at_height: None },
+            operation: DidOperation::AddKey {
+                did: did.clone(),
+                auth,
+                expires_at_height: None,
+                initial_nonce: 0,
+            },
             signer_key_ref,
             signature: ed25519_blake3_signature([1u8; 64]),
             nonce: 1,
@@ -213,6 +227,7 @@ mod unit_tests {
                 added_at_height: 1,
                 expires_at_height: None,
                 revoked_at_height: None,
+                nonce: 0,
             };
             state.keys.try_push(vm).unwrap();
 
@@ -257,6 +272,7 @@ mod unit_tests {
                 added_at_height: 10,
                 expires_at_height: Some(100),
                 revoked_at_height: None,
+                nonce: 0,
             };
 
             assert!(!vm.is_valid_at(9));
@@ -276,6 +292,7 @@ mod unit_tests {
                 added_at_height: 10,
                 expires_at_height: None,
                 revoked_at_height: Some(50),
+                nonce: 0,
             };
 
             assert!(vm.is_valid_at(10));
@@ -352,6 +369,7 @@ mod unit_tests {
                     added_at_height: 1,
                     expires_at_height: None,
                     revoked_at_height: None,
+                    nonce: 0,
                 })
                 .unwrap();
 
@@ -366,6 +384,7 @@ mod unit_tests {
                     added_at_height: 50,
                     expires_at_height: None,
                     revoked_at_height: None,
+                    nonce: 0,
                 })
                 .unwrap();
 
@@ -444,6 +463,7 @@ mod unit_tests {
                     did: this.did.clone(),
                     auth: auth_from_sk(&ALICE_SK),
                     expires_at_height: None,
+                    initial_nonce: 0,
                 });
                 this
             }
@@ -530,6 +550,7 @@ mod unit_tests {
                     did: self.did.clone(),
                     auth: auth_from_sk(&BOB_SK),
                     expires_at_height,
+                    initial_nonce: 0,
                 });
                 bob_kr
             }
@@ -858,22 +879,191 @@ mod unit_tests {
                         RuntimeEvent::MosaicDid(crate::Event::CommitmentUpdated {
                             sequence,
                             previous_version_id,
+                            signer,
                             ..
-                        }) => Some((*sequence, *previous_version_id)),
+                        }) => Some((*sequence, *previous_version_id, signer.nonce)),
                         _ => None,
                     })
                     .collect();
 
                 assert_eq!(
                     prevs,
-                    vec![(1, Some((1, 0))), (2, Some((1, 0)))],
-                    "both events in a same-DID batch must reference the pre-batch pointer"
+                    vec![(1, Some((1, 0)), 2), (2, Some((1, 0)), 3)],
+                    "both events reference the pre-batch pointer and carry their own operation nonce"
                 );
                 assert_eq!(
                     rt.state().last_modified_at,
                     (2, 3),
                     "the batch's own location is the new version, not a previous one"
                 );
+            });
+        }
+
+        /// The implicit zero-transaction state has nonce 0, so the creating
+        /// `AddKey` must carry a nonce strictly above its declared floor, and
+        /// its event exposes both the operation nonce and the new key's floor.
+        #[test]
+        fn creation_nonce_must_exceed_the_declared_floor() {
+            new_test_ext().execute_with(|| {
+                System::set_block_number(1);
+                let did = did_from_sk(&ALICE_SK);
+                let key_ref = key_ref_from_sk(&ALICE_SK);
+                let op = || DidOperation::AddKey {
+                    did: did.clone(),
+                    auth: auth_from_sk(&ALICE_SK),
+                    expires_at_height: None,
+                    initial_nonce: 0,
+                };
+
+                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
+                    vec![SsiOperation::Did(sign_op_with_key(&ALICE_SK, key_ref.clone(), op(), 0))]
+                        .try_into()
+                        .unwrap();
+                assert_noop!(
+                    crate::Pallet::<Test>::submit_did_operations(
+                        RawOrigin::Signed(1u64).into(),
+                        batch,
+                    ),
+                    crate::Error::<Test>::InvalidNonce
+                );
+
+                let batch: BoundedVec<SsiOperation, ConstU32<100>> =
+                    vec![SsiOperation::Did(sign_op_with_key(&ALICE_SK, key_ref.clone(), op(), 1))]
+                        .try_into()
+                        .unwrap();
+                assert_ok!(crate::Pallet::<Test>::submit_did_operations(
+                    RawOrigin::Signed(1u64).into(),
+                    batch,
+                ));
+                assert_eq!(
+                    crate::DidStates::<Test>::get(&did).unwrap().nonce_for_key(&key_ref),
+                    1,
+                    "the creation consumes nonce 1 and stores it"
+                );
+
+                let (ev_signer, ev_nonce, ev_floor) = System::read_events_no_consensus()
+                    .find_map(|e| match &e.event {
+                        RuntimeEvent::MosaicDid(crate::Event::KeyAdded {
+                            signer,
+                            initial_nonce,
+                            ..
+                        }) => Some((signer.key_ref.clone(), signer.nonce, *initial_nonce)),
+                        _ => None,
+                    })
+                    .expect("KeyAdded must be emitted");
+                assert_eq!(
+                    (ev_signer, ev_nonce, ev_floor),
+                    (key_ref.as_bytes().to_vec(), 1, 0),
+                    "creation is self-signed and consumes nonce 1"
+                );
+            });
+        }
+
+        /// Every event that carries an operation nonce must also name the key
+        /// whose counter that nonce advances, otherwise an indexer cannot
+        /// attribute it.
+        #[test]
+        fn signed_operation_events_identify_their_signer() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new(); // Alice creates at nonce 1
+                let alice_kr = key_ref_from_sk(&ALICE_SK);
+                let bob_kr = rt.add_bob_key(); // Alice adds Bob at nonce 2
+                rt.submit(&DidOperation::AddRight {
+                    did: rt.did.clone(),
+                    key_ref: bob_kr.clone(),
+                    right: Right::Delegate,
+                    expires_at_height: None,
+                }); // nonce 3
+                rt.submit(&DidOperation::RevokeKey {
+                    did: rt.did.clone(),
+                    key_ref: bob_kr.clone(),
+                }); // nonce 4
+
+                let events: Vec<_> = System::read_events_no_consensus().collect();
+
+                let added: Vec<_> = events
+                    .iter()
+                    .filter_map(|e| match &e.event {
+                        RuntimeEvent::MosaicDid(crate::Event::KeyAdded {
+                            key_ref, signer, ..
+                        }) => Some((key_ref.clone(), signer.key_ref.clone(), signer.nonce)),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    added,
+                    vec![
+                        (alice_kr.as_bytes().to_vec(), alice_kr.as_bytes().to_vec(), 1),
+                        (bob_kr.as_bytes().to_vec(), alice_kr.as_bytes().to_vec(), 2),
+                    ],
+                    "creation is self-signed; a later add names the adder"
+                );
+
+                let right = events
+                    .iter()
+                    .find_map(|e| match &e.event {
+                        RuntimeEvent::MosaicDid(crate::Event::RightAdded { signer, .. }) => {
+                            Some((signer.key_ref.clone(), signer.nonce))
+                        }
+                        _ => None,
+                    })
+                    .expect("RightAdded must be emitted");
+                assert_eq!(right, (alice_kr.as_bytes().to_vec(), 3));
+
+                let revoked = events
+                    .iter()
+                    .find_map(|e| match &e.event {
+                        RuntimeEvent::MosaicDid(crate::Event::KeyRevoked {
+                            key_ref,
+                            signer,
+                            ..
+                        }) => Some((key_ref.clone(), signer.key_ref.clone(), signer.nonce)),
+                        _ => None,
+                    })
+                    .expect("KeyRevoked must be emitted");
+                assert_eq!(
+                    revoked,
+                    (bob_kr.as_bytes().to_vec(), alice_kr.as_bytes().to_vec(), 4),
+                    "the revoke names the signer whose counter advanced, not the revoked key"
+                );
+            });
+        }
+
+        /// Governed-operation events name the DID signer, not the paying
+        /// account.
+        #[test]
+        fn governed_events_identify_their_signer() {
+            new_test_ext().execute_with(|| {
+                let mut rt = TestDriver::new();
+                let alice_kr = key_ref_from_sk(&ALICE_SK);
+
+                rt.submit(&announce_commitment_reset(&rt.did, cid("reason"), cid("v1"), 1));
+                rt.submit(&cancel_governed(&rt.did));
+
+                let events: Vec<_> = System::read_events_no_consensus().collect();
+                let announced = events
+                    .iter()
+                    .find_map(|e| match &e.event {
+                        RuntimeEvent::MosaicDid(crate::Event::GovernedOpAnnounced {
+                            signer,
+                            ..
+                        }) => Some((signer.key_ref.clone(), signer.nonce)),
+                        _ => None,
+                    })
+                    .expect("announce must be emitted");
+                assert_eq!(announced, (alice_kr.as_bytes().to_vec(), 2));
+
+                let cancelled = events
+                    .iter()
+                    .find_map(|e| match &e.event {
+                        RuntimeEvent::MosaicDid(crate::Event::GovernedOpCancelled {
+                            signer,
+                            ..
+                        }) => Some((signer.key_ref.clone(), signer.nonce)),
+                        _ => None,
+                    })
+                    .expect("cancel must be emitted");
+                assert_eq!(cancelled, (alice_kr.as_bytes().to_vec(), 3));
             });
         }
 
@@ -919,8 +1109,8 @@ mod unit_tests {
                 rt.submit(&update_commitment(&rt.did, cid("v1"), 1));
 
                 let events: Vec<_> = System::read_events_no_consensus().collect();
-                let revoked_pv = events.iter().find_map(|e| {
-                    if let RuntimeEvent::MosaicDid(crate::Event::KeyRevoked {
+                let expired_pv = events.iter().find_map(|e| {
+                    if let RuntimeEvent::MosaicDid(crate::Event::KeyExpired {
                         previous_version_id,
                         ..
                     }) = &e.event
@@ -932,12 +1122,12 @@ mod unit_tests {
                 });
                 // The sweep event must reference the last real mutation
                 // (Bob's key added at (1, 0)), not the current location.
-                assert_eq!(revoked_pv, Some(Some((1, 0))));
+                assert_eq!(expired_pv, Some(Some((1, 0))));
             });
         }
 
         #[test]
-        fn nonce_survives_key_removal_replay_rejected() {
+        fn re_add_with_initial_nonce_sets_the_replay_floor() {
             new_test_ext().execute_with(|| {
                 let mut rt = TestDriver::new();
                 let alice_kr = key_ref_from_sk(&ALICE_SK);
@@ -972,20 +1162,27 @@ mod unit_tests {
                     batch,
                 ));
 
-                // Alice revokes Bob's key; the nonce lineage must survive.
+                // Revoking Bob removes the counter with the key record.
                 rt.submit(&DidOperation::RevokeKey {
                     did: rt.did.clone(),
                     key_ref: bob_kr.clone(),
                 });
-                assert_eq!(rt.state().nonce_for_key(&bob_kr), 1, "nonce must survive key removal");
+                assert_eq!(
+                    rt.state().nonce_for_key(&bob_kr),
+                    0,
+                    "the nonce is part of the key and goes away with it"
+                );
 
-                // Re-add the same key_ref and re-grant Delegate so the replay
-                // below is otherwise fully valid once the grant matures.
+                // Re-add the same key_ref with a floor above the consumed
+                // nonce, and re-grant Delegate so a replay would otherwise be
+                // fully valid once the grant matures.
                 rt.submit(&DidOperation::AddKey {
                     did: rt.did.clone(),
                     auth: auth_from_sk(&BOB_SK),
                     expires_at_height: None,
+                    initial_nonce: 1,
                 });
+                assert_eq!(rt.state().nonce_for_key(&bob_kr), 1, "the floor is the stored nonce");
                 rt.submit(&DidOperation::AddRight {
                     did: rt.did.clone(),
                     key_ref: bob_kr.clone(),
@@ -1038,14 +1235,11 @@ mod unit_tests {
         }
 
         #[test]
-        fn nonce_map_evicts_invalid_key_history_instead_of_bricking() {
+        fn key_capacity_bounds_signers_and_removal_frees_their_nonce() {
             new_test_ext().execute_with(|| {
                 let mut rt = TestDriver::new();
 
-                // 31 update-right keys join the DID (plus Alice = 32 potential
-                // signers, the nonce-map bound). They sign commitment updates
-                // rather than grants so the rights vector stays far from its
-                // own bound — this test is about the nonce map.
+                // 31 update-right keys join the DID (plus Alice = 32 keys).
                 for i in 1u8..=31 {
                     let sk = [i; 32];
                     let kr = key_ref_from_sk(&sk);
@@ -1053,6 +1247,7 @@ mod unit_tests {
                         did: rt.did.clone(),
                         auth: auth_from_sk(&sk),
                         expires_at_height: None,
+                        initial_nonce: 0,
                     });
                     rt.submit(&DidOperation::AddRight {
                         did: rt.did.clone(),
@@ -1062,45 +1257,39 @@ mod unit_tests {
                     });
                 }
 
-                // Each update key signs once so a nonce entry is recorded for
-                // it; the map is now at its bound of 32.
-                rt.at_block(102);
-                for i in 1u8..=31 {
-                    let sk = [i; 32];
-                    let op = sign_op_with_key(
-                        &sk,
-                        key_ref_from_sk(&sk),
-                        update_commitment(&rt.did, cid("v"), i as u64),
-                        1,
-                    );
-                    let batch: BoundedVec<SsiOperation, ConstU32<100>> =
-                        vec![SsiOperation::Did(op)].try_into().unwrap();
-                    assert_ok!(crate::Pallet::<Test>::submit_did_operations(
-                        RawOrigin::Signed(1u64).into(),
-                        batch,
-                    ));
-                }
-                assert_eq!(rt.state().nonces.len(), 32, "nonce map is at its bound");
+                // The key vector is at its bound: a 33rd key is rejected. The
+                // nonce is part of the key record, so key capacity is the only
+                // bound.
+                let sk33 = [32u8; 32];
+                rt.submit_fails(
+                    &DidOperation::AddKey {
+                        did: rt.did.clone(),
+                        auth: auth_from_sk(&sk33),
+                        expires_at_height: None,
+                        initial_nonce: 0,
+                    },
+                    crate::Error::<Test>::StorageBoundsExceeded,
+                );
 
-                // Five of those signers are revoked; their nonce entries
-                // survive by design (replay-window fix), keeping the map full.
+                // Revoking keys frees their slots and their nonces.
                 for i in 1u8..=5 {
                     rt.submit(&DidOperation::RevokeKey {
                         did: rt.did.clone(),
                         key_ref: key_ref_from_sk(&[i; 32]),
                     });
                 }
+                assert_eq!(
+                    rt.state().nonce_for_key(&key_ref_from_sk(&[1u8; 32])),
+                    0,
+                    "a revoked key takes its nonce with it"
+                );
 
-                // A brand-new signer must still be able to join and sign:
-                // the full map evicts history of keys that can no longer sign
-                // instead of failing every future operation with
-                // StorageBoundsExceeded.
-                let sk33 = [32u8; 32];
                 let kr33 = key_ref_from_sk(&sk33);
                 rt.submit(&DidOperation::AddKey {
                     did: rt.did.clone(),
                     auth: auth_from_sk(&sk33),
                     expires_at_height: None,
+                    initial_nonce: 0,
                 });
                 rt.submit(&DidOperation::AddRight {
                     did: rt.did.clone(),
@@ -1112,7 +1301,7 @@ mod unit_tests {
                 let op33 = sign_op_with_key(
                     &sk33,
                     kr33.clone(),
-                    update_commitment(&rt.did, cid("v"), 32),
+                    update_commitment(&rt.did, cid("v"), 1),
                     1,
                 );
                 let batch: BoundedVec<SsiOperation, ConstU32<100>> =
@@ -1124,8 +1313,8 @@ mod unit_tests {
                 assert_eq!(rt.state().nonce_for_key(&kr33), 1);
 
                 // And the DID remains fully operable for its controller.
-                rt.submit(&update_commitment(&rt.did, cid("alive"), 33));
-                assert_eq!(rt.state().commitment, Some((33, cid("alive"))));
+                rt.submit(&update_commitment(&rt.did, cid("alive"), 2));
+                assert_eq!(rt.state().commitment, Some((2, cid("alive"))));
             });
         }
 
@@ -1140,6 +1329,7 @@ mod unit_tests {
                     did: rt.did.clone(),
                     auth: auth_from_sk(&BOB_SK),
                     expires_at_height: None,
+                    initial_nonce: 0,
                 });
 
                 rt.at_block(2);
@@ -1197,6 +1387,17 @@ mod unit_tests {
                 rt.at_block(11);
                 rt.submit(&update_commitment(&rt.did, cid("v1"), 1));
                 assert_eq!(rt.state().keys.len(), 1); // Bob's key swept
+
+                // The sweep is permissionless, not a signed operation: it is a
+                // distinct event with no signer and no operation nonce.
+                let expired = System::read_events_no_consensus().any(|e| {
+                    matches!(&e.event, RuntimeEvent::MosaicDid(crate::Event::KeyExpired { .. }))
+                });
+                assert!(expired, "the sweep must emit KeyExpired, not KeyRevoked");
+                let revoked = System::read_events_no_consensus().any(|e| {
+                    matches!(&e.event, RuntimeEvent::MosaicDid(crate::Event::KeyRevoked { .. }))
+                });
+                assert!(!revoked, "no signed RevokeKey happened in this test");
             });
         }
 
@@ -1220,6 +1421,11 @@ mod unit_tests {
                 rt.at_block(11);
                 rt.submit(&update_commitment(&rt.did, cid("v1"), 1));
                 assert_eq!(rt.state().rights.len(), before);
+
+                let expired = System::read_events_no_consensus().any(|e| {
+                    matches!(&e.event, RuntimeEvent::MosaicDid(crate::Event::RightExpired { .. }))
+                });
+                assert!(expired, "the sweep must emit RightExpired, not RightRevoked");
             });
         }
 
@@ -1508,7 +1714,12 @@ mod unit_tests {
         let signer_key_ref = KeyRef::new(auth.key_id().to_string().into_bytes()).unwrap();
 
         let create_op = SsiOperation::Did(SignedDidOperation {
-            operation: DidOperation::AddKey { did: signer_did, auth, expires_at_height: None },
+            operation: DidOperation::AddKey {
+                did: signer_did,
+                auth,
+                expires_at_height: None,
+                initial_nonce: 0,
+            },
             signer_key_ref,
             signature: ed25519_blake3_signature([1u8; 64]),
             nonce: 1,
@@ -1548,12 +1759,17 @@ mod unit_tests {
         let payload =
             |op: &DidOperation, nonce: u64| -> Vec<u8> { (op, &key_ref, &nonce).encode() };
 
-        let addkey =
-            DidOperation::AddKey { did: did.clone(), auth: auth.clone(), expires_at_height: None };
+        let addkey = DidOperation::AddKey {
+            did: did.clone(),
+            auth: auth.clone(),
+            expires_at_height: None,
+            initial_nonce: 0,
+        };
         let addkey_expires = DidOperation::AddKey {
             did: did.clone(),
             auth: auth.clone(),
             expires_at_height: Some(1000),
+            initial_nonce: 0,
         };
         let revokekey = DidOperation::RevokeKey { did: did.clone(), key_ref: key_ref.clone() };
         let addright = DidOperation::AddRight {

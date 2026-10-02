@@ -39,7 +39,7 @@ pub fn validate_did_operation<T: Config>(
     let maybe_state = DidStates::<T>::get(did);
 
     match &signed_op.operation {
-        DidOperation::AddKey { did, auth, .. } => {
+        DidOperation::AddKey { did, auth, initial_nonce, .. } => {
             // AddKey requires the PublicKey variant — the chain needs actual key bytes.
             let mpk = auth.to_multi_public_key().ok_or(Error::<T>::InvalidPublicKey)?;
             let key_type = public_key_to_key_type(&mpk).ok_or(Error::<T>::InvalidPublicKey)?;
@@ -71,6 +71,10 @@ pub fn validate_did_operation<T: Config>(
                     let derived_did = Did::from_public_key(&raw_bytes)
                         .map_err(|_| Error::<T>::InvalidPublicKey)?;
                     ensure!(did == &derived_did, Error::<T>::DidMismatch);
+                    // The implicit zero-transaction state has nonce 0 for the
+                    // default key, so the self-signed creation operation must
+                    // consume a nonce strictly above the floor it declares.
+                    ensure!(signed_op.nonce > *initial_nonce, Error::<T>::InvalidNonce);
                     // Verify signature against the public key being registered
                     // (proves the submitter controls the private key)
                     validate_signature_for_creation::<T>(signed_op, &mpk)?;

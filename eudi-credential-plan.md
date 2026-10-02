@@ -386,7 +386,7 @@ pub fn required_right_for_credential(format: CredentialFormat, vct: &str) -> Rig
 │   ├─ keys          → pubkeys, key_refs           (no PII)     │
 │   ├─ rights        → (Update, Delegate)          (no PII)     │
 │   ├─ commitment    → blake3(rights‑document)     (no PII)     │
-│   └─ nonces        → u64 counters                (no PII)     │
+│   └─ key nonce     → u64 counters                (no PII)     │
 └───────────────────────────────────────────────────────────────┘
 
 ┌─ Off‑chain (private, holder's wallet) ───────────────────────┐

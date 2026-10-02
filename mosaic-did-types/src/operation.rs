@@ -200,6 +200,14 @@ pub enum DidOperation {
         auth: Authentication,
         /// Optional block height at which this key expires.
         expires_at_height: Option<u32>,
+        /// Replay-protection floor for the added key: its first signed
+        /// operation must use a nonce strictly greater than this value.
+        ///
+        /// Fresh key material normally starts at 0. When recycled key material
+        /// is re-added, the controller MUST choose a floor above every nonce
+        /// ever used with that key; otherwise operations signed before the key
+        /// was removed become replayable again.
+        initial_nonce: u64,
     },
 
     /// Revoke an existing key from the DID document.
@@ -377,8 +385,12 @@ mod tests {
     fn operation_did_accessor() {
         let did = Did::alice();
 
-        let op =
-            DidOperation::AddKey { did: did.clone(), auth: test_auth(), expires_at_height: None };
+        let op = DidOperation::AddKey {
+            did: did.clone(),
+            auth: test_auth(),
+            expires_at_height: None,
+            initial_nonce: 0,
+        };
 
         assert_eq!(op.did(), &did);
         assert_eq!(op.required_right(), Right::Update);
@@ -391,7 +403,12 @@ mod tests {
         let key_ref = KeyRef::new(format!("{}", auth.key_id()).into_bytes()).unwrap();
 
         let ops = alloc::vec![
-            DidOperation::AddKey { did: did.clone(), auth: test_auth(), expires_at_height: None },
+            DidOperation::AddKey {
+                did: did.clone(),
+                auth: test_auth(),
+                expires_at_height: None,
+                initial_nonce: 0
+            },
             DidOperation::RevokeKey { did: did.clone(), key_ref: key_ref.clone() },
             DidOperation::AddRight {
                 did: did.clone(),

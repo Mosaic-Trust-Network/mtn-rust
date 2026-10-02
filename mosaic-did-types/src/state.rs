@@ -7,7 +7,7 @@
 
 use alloc::vec::Vec;
 
-use bounded_collections::{BoundedBTreeMap, BoundedVec, ConstU32};
+use bounded_collections::{BoundedVec, ConstU32};
 
 #[cfg(feature = "substrate")]
 use parity_scale_codec::{Decode, DecodeWithMemTracking, Encode, MaxEncodedLen};
@@ -25,12 +25,6 @@ use crate::validity::is_height_valid;
 pub const MAX_KEYS_PER_DID: u32 = 32;
 /// Maximum number of right grants per DID document.
 pub const MAX_RIGHTS_PER_DID: u32 = 64;
-/// Maximum number of nonce entries per DID document.
-pub const MAX_NONCES_PER_DID: u32 = 32;
-
-// The nonce-eviction fallback in `update_nonce` relies on every live
-// signer always fitting into the nonce map.
-const _: () = assert!(MAX_KEYS_PER_DID <= MAX_NONCES_PER_DID);
 
 // ========== CORE STATE TYPES ==========
 
@@ -56,6 +50,15 @@ pub struct VerificationMethod {
     pub expires_at_height: Option<u32>,
     /// Block height at which this key was revoked (None if still active).
     pub revoked_at_height: Option<u32>,
+    /// Replay-protection counter. The next signed operation by this key must
+    /// use a nonce strictly greater than this value.
+    ///
+    /// Initialized from the `initial_nonce` of the `AddKey` that registered
+    /// the key (0 for the implicit default key of a zero-transaction DID).
+    /// The nonce lives and dies with the key: removing the key removes the
+    /// counter, and re-adding recycled key material starts from the floor the
+    /// controller states in the new `AddKey`.
+    pub nonce: u64,
 }
 
 impl VerificationMethod {
@@ -151,8 +154,6 @@ pub struct DidState {
     pub rights: BoundedVec<RightGrant, ConstU32<MAX_RIGHTS_PER_DID>>,
     /// Block height at which this DID was tombstoned, if ever.
     pub tombstoned_at_height: Option<u32>,
-    /// Per-key nonce for replay protection.
-    pub nonces: BoundedBTreeMap<KeyRef, u64, ConstU32<MAX_NONCES_PER_DID>>,
     /// Latest rights-document commitment published by the DID controller.
     /// `(sequence, commitment_hash)`. `None` means no commitment has ever been published.
     pub commitment: Option<(u64, ContentId)>,
@@ -170,7 +171,6 @@ impl DidState {
             keys: BoundedVec::default(),
             rights: BoundedVec::default(),
             tombstoned_at_height: None,
-            nonces: BoundedBTreeMap::default(),
             commitment: None,
             last_modified_at: (0, 0),
         }
@@ -216,49 +216,23 @@ impl DidState {
     }
 
     /// Get the current nonce for a key.
+    ///
+    /// A key that is not part of the document — including the implicit default
+    /// key of a zero-transaction DID — has nonce 0.
     pub fn nonce_for_key(&self, key_ref: &KeyRef) -> u64 {
-        self.nonces.get(key_ref).copied().unwrap_or(0)
+        self.find_key(key_ref).map_or(0, |k| k.nonce)
     }
 
-    /// Update the nonce for a key, inserting if not present.
+    /// Set the nonce for a key that is part of the document.
     ///
-    /// Nonce entries of removed or invalidated keys persist so that
-    /// re-registering the same `key_ref` cannot reset the replay window.
-    /// That history is bounded by `MAX_NONCES_PER_DID`; when the map is
-    /// full, an entry whose key can no longer sign (absent, revoked, or
-    /// expired) is evicted instead of failing every future operation.
-    /// Only a map whose entries all belong to currently valid keys
-    /// returns `Err` — while `MAX_KEYS_PER_DID <= MAX_NONCES_PER_DID`
-    /// (enforced below) every live signer always fits, so the map is
-    /// never full of valid signers when a new one inserts.
-    pub fn update_nonce(
-        &mut self, key_ref: &KeyRef, nonce: u64, now: u32,
-    ) -> Result<(), &'static str> {
-        if let Some(existing) = self.nonces.get_mut(key_ref) {
-            *existing = nonce;
-            return Ok(());
-        }
-        if self.nonces.try_insert(key_ref.clone(), nonce).is_ok() {
-            return Ok(());
-        }
-        let victim = self
-            .nonces
-            .keys()
-            .find(|r| match self.find_key(r) {
-                None => true,
-                Some(k) => !k.is_valid_at(now),
-            })
-            .cloned();
-        match victim {
-            Some(v) => {
-                self.nonces.remove(&v);
-                self.nonces
-                    .try_insert(key_ref.clone(), nonce)
-                    .map(|_| ())
-                    .map_err(|_| "nonce storage bounds exceeded")
-            }
-            None => Err("nonce storage bounds exceeded"),
-        }
+    /// The nonce lives on the key record: adding a key initializes it (from
+    /// the `AddKey` floor), and removing the key removes the counter with it.
+    /// Validation resolves the signer from `keys` before this is called, so an
+    /// unknown key is a caller error rather than a storage-bound condition.
+    pub fn update_nonce(&mut self, key_ref: &KeyRef, nonce: u64) -> Result<(), &'static str> {
+        let key = self.find_key_mut(key_ref).ok_or("nonce update for unknown key")?;
+        key.nonce = nonce;
+        Ok(())
     }
 
     /// Render this state as a W3C DID Document evaluated at `height`.
@@ -418,6 +392,7 @@ mod tests {
                 added_at_height: 1,
                 expires_at_height: None,
                 revoked_at_height: None,
+                nonce: 0,
             })
             .unwrap();
 
@@ -455,6 +430,7 @@ mod tests {
             added_at_height: 10,
             expires_at_height: Some(100),
             revoked_at_height: None,
+            nonce: 0,
         };
 
         assert!(!vm.is_valid_at(9));
@@ -474,6 +450,7 @@ mod tests {
             added_at_height: 10,
             expires_at_height: None,
             revoked_at_height: Some(50),
+            nonce: 0,
         };
 
         assert!(vm.is_valid_at(10));
@@ -575,6 +552,7 @@ mod tests {
             added_at_height: 10,
             expires_at_height: None,
             revoked_at_height: None,
+            nonce: 0,
         };
         // No rights → activated_at = added_at
         assert_eq!(vm.activated_at_height(&[]), 10);
@@ -590,6 +568,7 @@ mod tests {
             added_at_height: 10,
             expires_at_height: None,
             revoked_at_height: None,
+            nonce: 0,
         };
         let rights = alloc::vec![RightGrant {
             key_ref: test_key_ref(),
@@ -613,6 +592,7 @@ mod tests {
             added_at_height: 10,
             expires_at_height: None,
             revoked_at_height: None,
+            nonce: 0,
         };
         let rights = alloc::vec![RightGrant {
             key_ref: test_key_ref_2(),
@@ -634,6 +614,29 @@ mod tests {
 
         let unknown = "key-nonexistent".parse().unwrap();
         assert_eq!(state.nonce_for_key(&unknown), 0);
+    }
+
+    /// The nonce lives on the key record: when the key goes away, the counter
+    /// goes with it. Re-adding key material therefore starts from the explicit
+    /// floor supplied to `AddKey`.
+    #[test]
+    fn nonce_is_removed_with_the_key() {
+        let mut state = make_test_state();
+        let key_ref = test_key_ref();
+
+        state.update_nonce(&key_ref, 7).unwrap();
+        assert_eq!(state.nonce_for_key(&key_ref), 7);
+
+        let pos = state.keys.iter().position(|k| k.key_ref == key_ref).unwrap();
+        state.keys.remove(pos);
+        assert_eq!(state.nonce_for_key(&key_ref), 0, "removing the key removes its replay counter");
+    }
+
+    #[test]
+    fn update_nonce_rejects_unknown_key() {
+        let mut state = make_test_state();
+        let unknown = "key-nonexistent".parse().unwrap();
+        assert!(state.update_nonce(&unknown, 1).is_err());
     }
 
     #[test]

@@ -83,7 +83,8 @@ fewer entries, DIDs that prefer on-chain visibility keep the full budget):
 
 ```rust
 pub struct DidState {
-    // ... (existing fields: did, keys, rights, tombstoned_at_height, nonces)
+    // ... (existing fields: did, keys, rights, tombstoned_at_height)
+    // Each VerificationMethod carries its own replay-protection `nonce`.
 
     /// Latest rights-document commitment published by the DID controller.
     /// `None` means no commitment has ever been published.
@@ -192,19 +193,35 @@ Every state-changing event carries a `previous_version_id` field. It is not
 stored in `DidState` — see §3.1 for why:
 
 ```
-KeyAdded           { ..., previous_version_id: Option<(u32, u32)> }
-KeyRevoked         { ..., previous_version_id: Option<(u32, u32)> }
-RightAdded         { ..., previous_version_id: Option<(u32, u32)> }
-RightRevoked       { ..., previous_version_id: Option<(u32, u32)> }
-CommitmentUpdated  { ..., previous_version_id: Option<(u32, u32)> }
-GovernedOpAnnounced { ..., previous_version_id: Option<(u32, u32)> }
-GovernedOpCancelled { ..., previous_version_id: Option<(u32, u32)> }
-GovernedOpExecuted  { ..., previous_version_id: Option<(u32, u32)> }
+OperationSigner = { key_ref, nonce }
+
+KeyAdded           { ..., signer: OperationSigner, initial_nonce: u64, previous_version_id }
+KeyRevoked         { ..., signer: OperationSigner, previous_version_id }
+KeyExpired         { ..., previous_version_id }
+RightAdded         { ..., signer: OperationSigner, previous_version_id }
+RightRevoked       { ..., signer: OperationSigner, previous_version_id }
+RightExpired       { ..., previous_version_id }
+CommitmentUpdated  { ..., signer: OperationSigner, previous_version_id }
+CommitmentReset    { ..., signer: OperationSigner, previous_version_id }
+GovernedOpAnnounced { ..., signer: OperationSigner, previous_version_id }
+GovernedOpCancelled { ..., signer: OperationSigner, previous_version_id }
+GovernedOpExecuted  { ..., signer: OperationSigner, previous_version_id }
 ```
 
 The `previous_version_id` is the value of `last_modified_at` *before* this
 operation was applied. For the `AddKey` that creates the DID (the first
 operation), `previous_version_id` is `None`.
+
+Every event caused by a signed operation carries an `OperationSigner`, binding
+the signer's `key_ref` to the operation's `nonce` so neither can appear without
+the other. The event's affected key is usually not the signer (a revoke cannot
+target its own signer; a grant is issued to another key; a governed operation
+is signed by a DID key while the deposit is paid by an unrelated account).
+Removals caused by the permissionless expiry sweep are distinct events —
+`KeyExpired` / `RightExpired` — with no signer and no operation nonce.
+`KeyAdded` additionally carries the new key's `initial_nonce` floor, so an
+indexer can rebuild per-key counters and match events to submitted operations
+without reading state.
 
 An indexer processes these events to build `DidHistory` and can ignore the
 pointer (it has the full history from the event stream). A client without an
@@ -246,7 +263,15 @@ CommitmentUpdated {
 
 1. **DID must exist** (`DidStates::get`) and not be tombstoned.
 2. **Signer MUST hold `Right::Update`** at the current block height.
-3. **Nonce check** — `signed_op.nonce > stored_nonce`.
+3. **Nonce check** — `signed_op.nonce > stored_nonce`, where the nonce is a
+   field of the signer's `VerificationMethod` (0 for a key not in the
+   document, including the implicit default key of a zero-transaction DID).
+   A key is added with an `initial_nonce` floor and its first signed operation
+   must exceed it (the self-signed creation operation needs
+   `op.nonce > initial_nonce`). Removing a key removes its counter with the
+   record, so re-adding recycled key material starts from the declared floor:
+   the controller MUST choose a floor above every nonce ever used with that
+   key, otherwise pre-removal signatures become replayable.
 4. **Signature verification** against the signer's public key in `DidState.keys`.
 5. **Sequence MUST equal `stored_sequence + 1`** — gapless. The first
    commitment must carry `sequence = 1` (`stored_sequence` defaults to 0 when
@@ -1116,7 +1141,7 @@ on the chain — this is architecturally guaranteed, not policy-enforced.
 │   ├─ keys          → pubkeys, keyRefs         (no PII)    │
 │   ├─ rights        → Update, Delegate         (no PII)    │
 │   ├─ commitment    → blake3(rights-document)  (no PII)    │
-│   └─ nonces        → u64 counters             (no PII)    │
+│   └─ key nonce     → u64 counters             (no PII)    │
 └────────────────────────────────────────────────────────────┘
 
 ┌─ Off-chain (private, holder's custody) ────────────────────┐

@@ -104,16 +104,12 @@ Any `Vec` or `BTreeMap` stored on-chain MUST be bounded:
 // Our actual constants:
 pub const MAX_KEYS_PER_DID: u32 = 32;
 pub const MAX_RIGHTS_PER_DID: u32 = 64;
-pub const MAX_NONCES_PER_DID: u32 = 32;
 
 pub struct OnChainDidState {
     pub keys: BoundedVec<OnChainVerificationMethod, ConstU32<MAX_KEYS_PER_DID>>,
     pub rights: BoundedVec<OnChainRightGrant, ConstU32<MAX_RIGHTS_PER_DID>>,
-    pub nonces: BoundedBTreeMap<
-        BoundedVec<u8, ConstU32<MAX_KEY_ID_LEN>>,
-        u64,
-        ConstU32<MAX_NONCES_PER_DID>,
-    >,
+    // The replay-protection nonce lives on each VerificationMethod, so it is
+    // bounded by MAX_KEYS_PER_DID and is removed together with its key.
 }
 ```
 

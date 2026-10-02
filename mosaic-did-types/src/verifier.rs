@@ -920,6 +920,7 @@ mod tests {
                 added_at_height: key_added_at,
                 expires_at_height: expires_at,
                 revoked_at_height: revoked_at,
+                nonce: 0,
             }],
             ..DidHistory::new(crate::did::Did::from_did_string(TEST_DID_STR).unwrap())
         }

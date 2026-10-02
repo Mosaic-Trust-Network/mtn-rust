@@ -62,7 +62,7 @@ fn create_add_key_op(nonce: u64) -> SignedDidOperation {
     let auth = alice_auth();
     let key_ref = alice_key_ref();
 
-    let operation = DidOperation::AddKey { did, auth, expires_at_height: None };
+    let operation = DidOperation::AddKey { did, auth, expires_at_height: None, initial_nonce: 0 };
 
     let signed_op = SignedDidOperation {
         operation,

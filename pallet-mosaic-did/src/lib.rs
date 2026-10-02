@@ -140,6 +140,23 @@ pub mod pallet {
 
     // ========== EVENTS ==========
 
+    /// The signed operation that caused an event.
+    ///
+    /// Bundling the signer with the nonce makes it impossible for an event to
+    /// expose a nonce without naming whose counter it advances, or vice versa.
+    #[derive(Clone, Debug, PartialEq, Eq, Encode, Decode, DecodeWithMemTracking, TypeInfo)]
+    pub struct OperationSigner {
+        /// Key reference of the signer whose counter this operation consumed.
+        pub key_ref: Vec<u8>,
+        /// The operation's nonce.
+        pub nonce: u64,
+    }
+
+    /// # Variant order
+    ///
+    /// SCALE encodes enum variants by declaration order, so every variant index
+    /// is part of the wire format. Append new variants at the end; never insert
+    /// one between existing variants.
     #[pallet::event]
     #[pallet::generate_deposit(pub(super) fn deposit_event)]
     pub enum Event<T: Config> {
@@ -153,11 +170,21 @@ pub mod pallet {
             key_type: KeyType,
             public_key: Vec<u8>,
             expires_at_height: Option<u32>,
+            /// Replay-protection floor the added key starts from.
+            initial_nonce: u64,
+            /// The signed `AddKey` operation. For the self-signed creation of
+            /// the DID, `signer.key_ref == key_ref`.
+            signer: OperationSigner,
             previous_version_id: Option<(u32, u32)>,
         },
 
-        /// A key was revoked from a DID document.
-        KeyRevoked { did: Did, key_ref: Vec<u8>, previous_version_id: Option<(u32, u32)> },
+        /// A key was revoked by a signed `RevokeKey` operation.
+        KeyRevoked {
+            did: Did,
+            key_ref: Vec<u8>,
+            signer: OperationSigner,
+            previous_version_id: Option<(u32, u32)>,
+        },
 
         /// A right was granted to a key.
         RightAdded {
@@ -166,14 +193,16 @@ pub mod pallet {
             right: Right,
             expires_at_height: Option<u32>,
             matures_at_height: Option<u32>,
+            signer: OperationSigner,
             previous_version_id: Option<(u32, u32)>,
         },
 
-        /// A right was revoked from a key.
+        /// A right was revoked by a signed `RevokeRight` operation.
         RightRevoked {
             did: Did,
             key_ref: Vec<u8>,
             right: Right,
+            signer: OperationSigner,
             previous_version_id: Option<(u32, u32)>,
         },
 
@@ -185,7 +214,32 @@ pub mod pallet {
             did: Did,
             commitment: ContentId,
             sequence: u64,
-            signer_key_ref: Vec<u8>,
+            signer: OperationSigner,
+            previous_version_id: Option<(u32, u32)>,
+        },
+
+        /// A governed operation was announced.
+        GovernedOpAnnounced {
+            did: Did,
+            operation: GovernedOperation,
+            deposit_account: T::AccountId,
+            deposit: BalanceOf<T>,
+            signer: OperationSigner,
+            previous_version_id: Option<(u32, u32)>,
+        },
+
+        /// A governed operation was cancelled before execution.
+        GovernedOpCancelled {
+            did: Did,
+            signer: OperationSigner,
+            previous_version_id: Option<(u32, u32)>,
+        },
+
+        /// A governed operation was executed after its delay window.
+        GovernedOpExecuted {
+            did: Did,
+            operation: GovernedOperation,
+            signer: OperationSigner,
             previous_version_id: Option<(u32, u32)>,
         },
 
@@ -200,33 +254,32 @@ pub mod pallet {
             did: Did,
             commitment: ContentId,
             sequence: u64,
-            signer_key_ref: Vec<u8>,
+            signer: OperationSigner,
             previous_version_id: Option<(u32, u32)>,
         },
 
-        /// A governed operation was announced.
-        GovernedOpAnnounced {
-            did: Did,
-            operation: GovernedOperation,
-            deposit_account: T::AccountId,
-            deposit: BalanceOf<T>,
-            previous_version_id: Option<(u32, u32)>,
-        },
+        /// A key expired and was removed by the permissionless expiry sweep.
+        ///
+        /// Distinct from [`Event::KeyRevoked`]: no signed operation caused
+        /// this removal, so there is no signer and no operation nonce.
+        KeyExpired { did: Did, key_ref: Vec<u8>, previous_version_id: Option<(u32, u32)> },
 
-        /// A governed operation was cancelled before execution.
-        GovernedOpCancelled { did: Did, previous_version_id: Option<(u32, u32)> },
-
-        /// A governed operation was executed after its delay window.
-        GovernedOpExecuted {
+        /// A right expired and was removed by the permissionless expiry sweep.
+        RightExpired {
             did: Did,
-            operation: GovernedOperation,
-            signer_key_ref: Vec<u8>,
+            key_ref: Vec<u8>,
+            right: Right,
             previous_version_id: Option<(u32, u32)>,
         },
     }
 
     // ========== ERRORS ==========
 
+    /// # Variant order
+    ///
+    /// SCALE encodes enum variants by declaration order, so every error index
+    /// is part of the dispatch-error wire format. Append new variants at the
+    /// end; never insert one between existing variants.
     #[pallet::error]
     pub enum Error<T> {
         DidTombstoned,
@@ -244,6 +297,14 @@ pub mod pallet {
         InvalidPublicKey,
         StorageBoundsExceeded,
         InvalidCommitmentSequence,
+        PendingGovernedOpExists,
+        NoPendingGovernedOp,
+        GovernedOpNotYetExecutable,
+        GovernedOpExpired,
+        RightNotYetMatured,
+        CannotModifyOwnKey,
+        /// The deposit for a governed operation could not be reserved or transferred.
+        DepositLockFailed,
         /// A rights-document commitment uses a hashing algorithm this runtime
         /// does not support.
         ///
@@ -255,14 +316,6 @@ pub mod pallet {
         /// only to commitments — a BeforeProof anchors arbitrary content and
         /// may use any representable algorithm.
         UnsupportedCommitmentAlgorithm,
-        PendingGovernedOpExists,
-        NoPendingGovernedOp,
-        GovernedOpNotYetExecutable,
-        GovernedOpExpired,
-        RightNotYetMatured,
-        CannotModifyOwnKey,
-        /// The deposit for a governed operation could not be reserved or transferred.
-        DepositLockFailed,
     }
 
     // ========== EXTRINSICS ==========
@@ -388,15 +441,21 @@ pub mod pallet {
             Ok(state)
         }
 
+        /// Describe the signed operation that caused an event.
+        fn operation_signer(signed_op: &SignedDidOperation) -> OperationSigner {
+            OperationSigner {
+                key_ref: signed_op.signer_key_ref.as_bytes().to_vec(),
+                nonce: signed_op.nonce,
+            }
+        }
+
         fn record_mutation(
             state: &mut DidState, key_ref: &KeyRef, nonce: u64,
         ) -> Result<(), sp_runtime::DispatchError> {
             let height: u32 = Self::block_number_to_u32(<frame_system::Pallet<T>>::block_number());
             let idx: u32 = frame_system::Pallet::<T>::extrinsic_index().unwrap_or(0);
             state.last_modified_at = (height, idx);
-            state
-                .update_nonce(key_ref, nonce, height)
-                .map_err(|_| Error::<T>::StorageBoundsExceeded.into())
+            state.update_nonce(key_ref, nonce).map_err(|_| Error::<T>::SignerKeyInvalid.into())
         }
 
         fn apply_did_operation(
@@ -406,7 +465,7 @@ pub mod pallet {
             let did = signed_op.operation.did().clone();
 
             match &signed_op.operation {
-                DidOperation::AddKey { did: _, auth, expires_at_height } => {
+                DidOperation::AddKey { did: _, auth, expires_at_height, initial_nonce } => {
                     let mpk = auth.to_multi_public_key().ok_or(Error::<T>::InvalidPublicKey)?;
                     let key_type =
                         public_key_to_key_type(&mpk).ok_or(Error::<T>::InvalidPublicKey)?;
@@ -424,6 +483,7 @@ pub mod pallet {
                         added_at_height: height_u32,
                         expires_at_height: *expires_at_height,
                         revoked_at_height: None,
+                        nonce: *initial_nonce,
                     };
 
                     DidStates::<T>::try_mutate(&did, |maybe_state| -> DispatchResult {
@@ -453,6 +513,8 @@ pub mod pallet {
                         key_type,
                         public_key: public_key_raw_bytes(&mpk),
                         expires_at_height: *expires_at_height,
+                        signer: Self::operation_signer(signed_op),
+                        initial_nonce: *initial_nonce,
                         previous_version_id,
                     });
                 }
@@ -476,6 +538,7 @@ pub mod pallet {
                     Self::deposit_event(Event::KeyRevoked {
                         did: did.clone(),
                         key_ref: key_ref.as_bytes().to_vec(),
+                        signer: Self::operation_signer(signed_op),
                         previous_version_id,
                     });
                 }
@@ -510,6 +573,7 @@ pub mod pallet {
                         right: *right,
                         expires_at_height: *expires_at_height,
                         matures_at_height,
+                        signer: Self::operation_signer(signed_op),
                         previous_version_id,
                     });
                 }
@@ -530,6 +594,7 @@ pub mod pallet {
                         did: did.clone(),
                         key_ref: key_ref.as_bytes().to_vec(),
                         right: *right,
+                        signer: Self::operation_signer(signed_op),
                         previous_version_id,
                     });
                 }
@@ -545,7 +610,7 @@ pub mod pallet {
                         did,
                         commitment: *commitment,
                         sequence: *sequence,
-                        signer_key_ref: signed_op.signer_key_ref.as_bytes().to_vec(),
+                        signer: Self::operation_signer(signed_op),
                         previous_version_id,
                     });
                 }
@@ -574,6 +639,7 @@ pub mod pallet {
                         operation: operation.clone(),
                         deposit_account: submitter.clone(),
                         deposit,
+                        signer: Self::operation_signer(signed_op),
                         previous_version_id,
                     });
                 }
@@ -599,7 +665,11 @@ pub mod pallet {
                     )
                     .map_err(|_| Error::<T>::DepositLockFailed)?;
 
-                    Self::deposit_event(Event::GovernedOpCancelled { did, previous_version_id });
+                    Self::deposit_event(Event::GovernedOpCancelled {
+                        did,
+                        signer: Self::operation_signer(signed_op),
+                        previous_version_id,
+                    });
                 }
 
                 DidOperation::ExecuteGoverned { did: _ } => {
@@ -647,7 +717,7 @@ pub mod pallet {
                             did: did.clone(),
                             commitment: *commitment,
                             sequence: *sequence,
-                            signer_key_ref: signed_op.signer_key_ref.as_bytes().to_vec(),
+                            signer: Self::operation_signer(signed_op),
                             previous_version_id,
                         });
                     }
@@ -655,7 +725,7 @@ pub mod pallet {
                     Self::deposit_event(Event::GovernedOpExecuted {
                         did,
                         operation: op,
-                        signer_key_ref: signed_op.signer_key_ref.as_bytes().to_vec(),
+                        signer: Self::operation_signer(signed_op),
                         previous_version_id,
                     });
                 }
@@ -703,7 +773,7 @@ pub mod pallet {
                     if state.keys[i].expires_at_height.is_some_and(|h| current_height >= h) {
                         let removed = state.keys.swap_remove(i);
                         // Nonce entry survives (replay protection) — see RevokeKey.
-                        Self::deposit_event(Event::KeyRevoked {
+                        Self::deposit_event(Event::KeyExpired {
                             did: did.clone(),
                             key_ref: removed.key_ref.as_bytes().to_vec(),
                             previous_version_id,
@@ -719,7 +789,7 @@ pub mod pallet {
                 while i < state.rights.len() {
                     if state.rights[i].expires_at_height.is_some_and(|h| current_height >= h) {
                         let removed = state.rights.swap_remove(i);
-                        Self::deposit_event(Event::RightRevoked {
+                        Self::deposit_event(Event::RightExpired {
                             did: did.clone(),
                             key_ref: removed.key_ref.as_bytes().to_vec(),
                             right: removed.right,

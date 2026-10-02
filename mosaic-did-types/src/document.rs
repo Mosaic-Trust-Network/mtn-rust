@@ -172,6 +172,7 @@ mod tests {
                 added_at_height: 1,
                 expires_at_height: None,
                 revoked_at_height: None,
+                nonce: 0,
             })
             .unwrap();
         // Rights produce the W3C relationships in to_did_document_at:

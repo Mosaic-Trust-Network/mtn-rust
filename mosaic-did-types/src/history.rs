@@ -319,6 +319,7 @@ impl DidHistory {
                     added_at_height: at_height,
                     expires_at_height,
                     revoked_at_height: None,
+                    nonce: 0,
                 };
                 self.keys.push(vm);
             }
@@ -1008,6 +1009,7 @@ impl DidHistory {
                     added_at_height: created,
                     expires_at_height: None,
                     revoked_at_height: None,
+                    nonce: 0,
                 })
             })
             .collect();
@@ -1422,6 +1424,7 @@ mod tests {
                     added_at_height: 10,
                     expires_at_height: Some(100),
                     revoked_at_height: None,
+                    nonce: 0,
                 },
                 crate::state::VerificationMethod {
                     key_ref: kr2.clone(),
@@ -1431,6 +1434,7 @@ mod tests {
                     added_at_height: 50,
                     expires_at_height: None,
                     revoked_at_height: Some(80),
+                    nonce: 0,
                 },
             ],
             ..DidHistory::new(did)
@@ -2270,6 +2274,7 @@ mod tests {
                 added_at_height: 0,
                 expires_at_height: None,
                 revoked_at_height: Some(50),
+                nonce: 0,
             }],
             ..DidHistory::new(test_did())
         };
@@ -2298,6 +2303,7 @@ mod tests {
                 added_at_height: 10,
                 expires_at_height: None,
                 revoked_at_height: Some(150),
+                nonce: 0,
             }],
             ..DidHistory::new(did)
         };
@@ -2328,6 +2334,7 @@ mod tests {
                 added_at_height: 150,
                 expires_at_height: None,
                 revoked_at_height: None,
+                nonce: 0,
             }],
             ..DidHistory::new(did)
         };
@@ -2357,6 +2364,7 @@ mod tests {
                 added_at_height: 10,
                 expires_at_height: None,
                 revoked_at_height: Some(50),
+                nonce: 0,
             }],
             ..DidHistory::new(did)
         };
@@ -2379,6 +2387,7 @@ mod tests {
                 added_at_height: 300,
                 expires_at_height: None,
                 revoked_at_height: None,
+                nonce: 0,
             }],
             ..DidHistory::new(did)
         };
@@ -2404,6 +2413,7 @@ mod tests {
                     added_at_height: 100,
                     expires_at_height: None,
                     revoked_at_height: Some(200),
+                    nonce: 0,
                 },
                 crate::state::VerificationMethod {
                     key_ref: kr.clone(),
@@ -2413,6 +2423,7 @@ mod tests {
                     added_at_height: 300,
                     expires_at_height: None,
                     revoked_at_height: None,
+                    nonce: 0,
                 },
             ],
             ..DidHistory::new(did)
@@ -3458,6 +3469,7 @@ mod tests {
                 added_at_height: 10,
                 expires_at_height: None,
                 revoked_at_height: None,
+                nonce: 0,
             }],
             rights: alloc::vec![RightLifecycle {
                 key_ref: kr.clone(),
