@@ -41,12 +41,43 @@ fn validate_schema<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::
     }
 }
 
+/// How a commitment relates to its predecessor in the documents chain.
+///
+/// The `previousCommitment` link is only checkable when the predecessor is
+/// visible to the verifier. This enum makes the requirement explicit on every
+/// entry instead of inferring it from the entry's position in the timeline:
+///
+/// - [`ChainLink::Anchor`] — the first commitment of a chain, or a commitment
+///   published by a governed reset. The document must carry **no**
+///   predecessor; a document that claims one is rejected.
+/// - [`ChainLink::Linked`] — a normal update. The document must name the
+///   previous visible commitment as its predecessor.
+/// - [`ChainLink::WindowStart`] — the first entry of a truncated view (a
+///   `from_height` snapshot or a backward-walk replay). The true predecessor
+///   lies outside the window, so the claim is not checked. Valid only at the
+///   first visible commitment; anywhere else it is rejected.
+///
+/// Serialized camelCase (`anchor` / `linked` / `windowStart`) to match the
+/// commitment service inside a DID document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChainLink {
+    /// First commitment of a chain, or a governed reset: the document must
+    /// carry no `previousCommitment`.
+    Anchor,
+    /// Normal update: the document must name the previous visible commitment.
+    Linked,
+    /// First entry of a truncated view: the predecessor is outside the window
+    /// and its claim is not checked.
+    WindowStart,
+}
+
 /// A commitment version in the DID history, reconstructed from events.
 ///
 /// Serialized camelCase to match the commitment service inside a DID document,
 /// which spells the same concepts `contentId` / `publishedAtHeight` /
-/// `publishedBy`. The service is hand-built from these values, so the two
-/// representations must not drift.
+/// `publishedBy` / `chainLink`. The service is hand-built from these values,
+/// so the two representations must not drift.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitmentVersion {
@@ -58,26 +89,8 @@ pub struct CommitmentVersion {
     pub published_at_height: u32,
     /// Key reference of the signer who published this commitment.
     pub signer_key_ref: KeyRef,
-    /// Whether this commitment starts a fresh document chain.
-    ///
-    /// `true` for the first commitment and for every commitment published via
-    /// `CommitmentReset`, which restarts the chain while the sequence counter
-    /// keeps running (resets are gapless too). The document at a chain start
-    /// must carry **no** `previous_commitment`; every other document must carry
-    /// its predecessor's content ID exactly.
-    ///
-    /// Defaults to `false` when absent from a serialized history. A reset
-    /// buried in a history without this field is then reported as
-    /// [`CommitmentDocumentError::ChainBroken`], so a chain link is never left
-    /// unchecked.
-    ///
-    /// The one exception is the first *visible* entry of a truncated snapshot
-    /// (a `from_height` window that dropped its predecessors). It is flagged
-    /// `false` because it genuinely is not a chain start, yet its predecessor
-    /// is outside the window: its linkage is unknown, and verification skips
-    /// only that one link rather than rejecting the timeline.
-    #[serde(default)]
-    pub chain_start: bool,
+    /// How this commitment relates to its predecessor.
+    pub chain_link: ChainLink,
 }
 
 /// On-chain right grant with full lifecycle information.
@@ -224,6 +237,11 @@ pub enum HistoryFromDocumentError {
     /// A commitment names a `publishedBy` fragment that is not a valid key ref.
     #[error("commitment {0} names an invalid publisher key ref")]
     InvalidSignerKeyRef(u64),
+    /// A commitment's `chainLink` is missing, unknown, or occupies a position
+    /// it cannot: a `Linked` first entry has no visible predecessor, and a
+    /// `WindowStart` past the first entry is not a window boundary.
+    #[error("commitment {0} carries an invalid chainLink")]
+    InvalidChainLink(u64),
 }
 
 /// A presenter-supplied rights document failed validation.
@@ -338,15 +356,16 @@ impl DidHistory {
                 signer_key_ref,
                 at_height,
             } => {
-                // A plain update starts a chain only when it is the first
+                // A plain update anchors a chain only when it is the first
                 // commitment ever seen; later ones link to their predecessor.
-                let chain_start = self.commitments.is_empty();
+                let chain_link =
+                    if self.commitments.is_empty() { ChainLink::Anchor } else { ChainLink::Linked };
                 let cv = CommitmentVersion {
                     sequence,
                     commitment,
                     published_at_height: at_height,
                     signer_key_ref,
-                    chain_start,
+                    chain_link,
                 };
                 self.commitments.push(cv);
             }
@@ -361,13 +380,51 @@ impl DidHistory {
                     commitment,
                     published_at_height: at_height,
                     signer_key_ref,
-                    chain_start: true,
+                    // A governed reset restarts the document chain: the
+                    // published document must carry no predecessor.
+                    chain_link: ChainLink::Anchor,
                 };
                 self.commitments.push(cv);
             }
             DidHistoryEvent::DidTombstoned { at_height } => {
                 self.tombstoned_at = Some(at_height);
             }
+        }
+    }
+
+    /// Apply the first event of a replay that started mid-history.
+    ///
+    /// A backward walk stops at the target height, so the events it replays
+    /// are a *window* and the first commitment in that window is not
+    /// necessarily where the document chain began. A leading plain update is
+    /// marked [`ChainLink::WindowStart`]: its true predecessor lies outside the
+    /// window, so the verifier must not demand that the document link to a
+    /// visible predecessor. A leading [`DidHistoryEvent::CommitmentReset`] is a
+    /// genuine anchor and keeps [`ChainLink::Anchor`].
+    ///
+    /// If the history already has a commitment (or the event is not a
+    /// commitment event), this behaves like [`DidHistory::apply`].
+    pub fn apply_window_start(&mut self, event: DidHistoryEvent) {
+        if !self.commitments.is_empty() {
+            self.apply(event);
+            return;
+        }
+        match event {
+            DidHistoryEvent::CommitmentUpdated {
+                sequence,
+                commitment,
+                signer_key_ref,
+                at_height,
+            } => {
+                self.commitments.push(CommitmentVersion {
+                    sequence,
+                    commitment,
+                    published_at_height: at_height,
+                    signer_key_ref,
+                    chain_link: ChainLink::WindowStart,
+                });
+            }
+            other => self.apply(other),
         }
     }
     /// Find the commitment active at a given block height.
@@ -632,9 +689,11 @@ impl DidHistory {
     ///    commitment. This is the core of the check: both sides of the
     ///    comparison are attacker-influenced, so a sequence number alone would
     ///    let a presenter graft arbitrary rights onto someone else's timeline.
-    /// 4. **Chain linkage.** `previous_commitment` must name the immediately
-    ///    preceding commitment, or be absent at a chain start. Without this,
-    ///    each document is bound only to itself and supersession is unproven.
+    /// 4. **Chain position.** [`ChainLink`] states the predecessor
+    ///    requirement: `Anchor` demands no `previous_commitment`, `Linked`
+    ///    demands the previous visible commitment, and `WindowStart` marks the
+    ///    first entry of a truncated view whose predecessor lies outside the
+    ///    window and is therefore not checked.
     ///
     /// A *missing* document is not an error: at `Minimal` strength a presenter
     /// legitimately sends only the versions they need.
@@ -670,23 +729,17 @@ impl DidHistory {
                 continue;
             }
 
-            // The flag is authoritative: a chain starts at the genuine first
-            // commitment (marked in `apply`) or at a governed reset. Note the
-            // condition reads *this* entry's flag, not the previous entry's:
+            // `chain_link` states the predecessor requirement explicitly, so
+            // verification never infers it from the entry's position. The
+            // condition reads *this* entry's link, not the previous entry's:
             // after a reset at index N, index N+1 must link back to the reset
             // document.
-            //
-            // An unflagged first entry means the timeline is truncated before
-            // the visible window (`to_did_document_at(_, Some(from_height))`):
-            // its true predecessor is outside the snapshot, so the link cannot
-            // be checked and is not required. Every later entry must link
-            // exactly to its visible predecessor.
-            let linked = if cv.chain_start {
-                doc.previous_commitment().is_none()
-            } else if index == 0 {
-                true
-            } else {
-                doc.previous_commitment() == Some(&self.commitments[index - 1].commitment)
+            let linked = match cv.chain_link {
+                ChainLink::Anchor => doc.previous_commitment().is_none(),
+                ChainLink::Linked => index.checked_sub(1).is_some_and(|prev| {
+                    doc.previous_commitment() == Some(&self.commitments[prev].commitment)
+                }),
+                ChainLink::WindowStart => true,
             };
             if !linked {
                 return Err(CommitmentDocumentError::ChainBroken { sequence: cv.sequence });
@@ -812,13 +865,25 @@ impl DidHistory {
             let versions: Vec<_> = self.commitments[start_idx..]
                 .iter()
                 .take_while(|cv| cv.published_at_height <= height)
-                .map(|cv| {
+                .enumerate()
+                .map(|(offset, cv)| {
+                    // The first entry of a view that dropped earlier
+                    // commitments is a window start: its true predecessor
+                    // lies outside the view, so the verifier must not demand
+                    // a link to it. A reset or genuine first entry stays an
+                    // anchor.
+                    let chain_link =
+                        if offset == 0 && start_idx > 0 && cv.chain_link == ChainLink::Linked {
+                            ChainLink::WindowStart
+                        } else {
+                            cv.chain_link
+                        };
                     serde_json::json!({
                         "sequence": cv.sequence,
                         "contentId": cv.commitment.to_string(),
                         "publishedAtHeight": cv.published_at_height,
                         "publishedBy": alloc::format!("#{}", cv.signer_key_ref),
-                        "chainStart": cv.chain_start,
+                        "chainLink": chain_link,
                     })
                 })
                 .collect();
@@ -992,7 +1057,7 @@ impl DidHistory {
         if let Some(svc) = doc.service.iter().find(|s| s.type_ == "MosaicCommitmentTimeline2026")
             && let Some(versions) = svc.service_endpoint.get("versions").and_then(|v| v.as_array())
         {
-            for v in versions {
+            for (index, v) in versions.iter().enumerate() {
                 let seq = v.get("sequence").and_then(|s| s.as_u64());
                 let cid_str = v.get("contentId").and_then(|c| c.as_str());
                 let pub_at = v.get("publishedAtHeight").and_then(|h| h.as_u64());
@@ -1022,6 +1087,21 @@ impl DidHistory {
                         });
                     }
 
+                    let chain_link = match v.get("chainLink").and_then(|l| l.as_str()) {
+                        Some("anchor") => ChainLink::Anchor,
+                        Some("linked") => ChainLink::Linked,
+                        Some("windowStart") => ChainLink::WindowStart,
+                        _ => return Err(HistoryFromDocumentError::InvalidChainLink(seq)),
+                    };
+                    // Mirror the enum's position invariants: only the first
+                    // visible entry may be a window start, and a linked entry
+                    // needs a visible predecessor.
+                    if (index == 0 && chain_link == ChainLink::Linked)
+                        || (index > 0 && chain_link == ChainLink::WindowStart)
+                    {
+                        return Err(HistoryFromDocumentError::InvalidChainLink(seq));
+                    }
+
                     let key_ref = KeyRef::new(signer.as_bytes().to_vec())
                         .map_err(|_| HistoryFromDocumentError::InvalidSignerKeyRef(seq))?;
                     commitments.push(CommitmentVersion {
@@ -1029,12 +1109,7 @@ impl DidHistory {
                         commitment,
                         published_at_height: pub_at as u32,
                         signer_key_ref: key_ref,
-                        // Absent means "not a chain start" (see the field's
-                        // documentation). When it lands on the first visible
-                        // entry, verification reads the timeline as truncated
-                        // before the window and skips that one link, so an
-                        // older snapshot still loads.
-                        chain_start: v.get("chainStart").and_then(|c| c.as_bool()).unwrap_or(false),
+                        chain_link,
                     });
                 }
             }
@@ -1285,14 +1360,14 @@ mod tests {
                     commitment: test_commitment(1),
                     published_at_height: 100,
                     signer_key_ref: kr.clone(),
-                    chain_start: false,
+                    chain_link: ChainLink::Anchor,
                 },
                 CommitmentVersion {
                     sequence: 2,
                     commitment: test_commitment(2),
                     published_at_height: 200,
                     signer_key_ref: kr.clone(),
-                    chain_start: false,
+                    chain_link: ChainLink::Linked,
                 },
             ],
             ..DidHistory::new(did)
@@ -1407,7 +1482,7 @@ mod tests {
                 commitment,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
-                chain_start: true,
+                chain_link: ChainLink::Anchor,
             }],
             ..DidHistory::new(did)
         };
@@ -1437,7 +1512,7 @@ mod tests {
                 commitment: claimed,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
-                chain_start: true,
+                chain_link: ChainLink::Anchor,
             }],
             ..DidHistory::new(did)
         };
@@ -1505,7 +1580,7 @@ mod tests {
                 commitment,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
-                chain_start: true,
+                chain_link: ChainLink::Anchor,
             }],
             ..DidHistory::new(test_did())
         };
@@ -1682,18 +1757,19 @@ mod tests {
         assert_eq!(cv.commitment, cid);
         assert_eq!(cv.published_at_height, 100);
         assert_eq!(cv.signer_key_ref, kr);
-        assert!(cv.chain_start, "the first commitment starts the chain");
-        assert!(
-            !history.commitments[1].chain_start,
-            "a later plain update links to its predecessor instead of restarting the chain"
+        assert_eq!(cv.chain_link, ChainLink::Anchor, "the first commitment anchors the chain");
+        assert_eq!(
+            history.commitments[1].chain_link,
+            ChainLink::Linked,
+            "a later plain update links to its predecessor instead of anchoring a new chain"
         );
     }
 
-    /// A reset event marks its commitment as a chain start, even though the
+    /// A reset event marks its commitment as an anchor, even though the
     /// sequence counter keeps running. The document published at it must carry
     /// no predecessor, so the verifier expects a fresh chain from here.
     #[test]
-    fn apply_commitment_reset_marks_chain_start() {
+    fn apply_commitment_reset_marks_anchor() {
         let mut history = DidHistory::new(test_did());
         let kr = test_key_ref(1);
 
@@ -1711,13 +1787,15 @@ mod tests {
         });
 
         assert_eq!(history.commitments.len(), 2);
-        assert!(
-            history.commitments[0].chain_start,
-            "the first commitment starts the initial chain"
+        assert_eq!(
+            history.commitments[0].chain_link,
+            ChainLink::Anchor,
+            "the first commitment anchors the initial chain"
         );
-        assert!(
-            history.commitments[1].chain_start,
-            "a reset starts a new document chain at a continuing sequence"
+        assert_eq!(
+            history.commitments[1].chain_link,
+            ChainLink::Anchor,
+            "a reset anchors a new document chain at a continuing sequence"
         );
         assert_eq!(history.commitments[1].sequence, 2);
     }
@@ -2565,7 +2643,7 @@ mod tests {
                 commitment: foreign_cid,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
-                chain_start: false,
+                chain_link: ChainLink::Anchor,
             }],
             ..DidHistory::new(test_did())
         };
@@ -2603,7 +2681,7 @@ mod tests {
                 commitment: flat,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
-                chain_start: false,
+                chain_link: ChainLink::Anchor,
             }],
             ..DidHistory::new(test_did())
         };
@@ -2651,7 +2729,7 @@ mod tests {
                 commitment: sha3,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
-                chain_start: false,
+                chain_link: ChainLink::Anchor,
             }],
             ..DidHistory::new(test_did())
         };
@@ -2665,9 +2743,9 @@ mod tests {
         );
     }
 
-    /// A chain-start document legitimately carries no predecessor.
+    /// An anchor document legitimately carries no predecessor.
     #[test]
-    fn verify_right_window_accepts_chain_start_without_previous_commitment() {
+    fn verify_right_window_accepts_anchor_without_previous_commitment() {
         let kr = test_key_ref(1);
         let key_str = kr.as_str().unwrap();
         let (doc, cid) = make_rights_doc_cid(1, None, key_str, "impersonate");
@@ -2678,7 +2756,7 @@ mod tests {
                 commitment: cid,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
-                chain_start: true,
+                chain_link: ChainLink::Anchor,
             }],
             ..DidHistory::new(test_did())
         };
@@ -2691,11 +2769,11 @@ mod tests {
         );
     }
 
-    /// A chain-start document that nevertheless claims a predecessor is
+    /// An anchor document that nevertheless claims a predecessor is
     /// inconsistent: it says "I supersede X" while sitting at the start of a
     /// chain that has no X.
     #[test]
-    fn verify_right_window_rejects_chain_start_that_claims_a_predecessor() {
+    fn verify_right_window_rejects_anchor_that_claims_a_predecessor() {
         let kr = test_key_ref(1);
         let key_str = kr.as_str().unwrap();
         let bogus_predecessor = ContentId::from_bytes(b"not a real predecessor");
@@ -2707,7 +2785,7 @@ mod tests {
                 commitment: cid,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
-                chain_start: true,
+                chain_link: ChainLink::Anchor,
             }],
             ..DidHistory::new(test_did())
         };
@@ -2750,8 +2828,9 @@ mod tests {
 
         assert_eq!(reconstructed.commitments.len(), 2);
         assert_eq!(reconstructed.commitments[0].sequence, 2);
-        assert!(
-            !reconstructed.commitments[0].chain_start,
+        assert_eq!(
+            reconstructed.commitments[0].chain_link,
+            ChainLink::WindowStart,
             "a mid-chain window start is not a chain start"
         );
 
@@ -2767,7 +2846,7 @@ mod tests {
 
     /// After a governed reset the chain restarts, and the *next* document must
     /// link back to the reset document. This is the case that reads the current
-    /// entry's `chain_start` rather than the previous entry's.
+    /// entry's `chain_link` rather than the previous entry's.
     #[test]
     fn verify_right_window_after_reset_relinks_to_the_reset_document() {
         let kr = test_key_ref(1);
@@ -2785,21 +2864,21 @@ mod tests {
                     commitment: cid1,
                     published_at_height: 100,
                     signer_key_ref: kr.clone(),
-                    chain_start: false,
+                    chain_link: ChainLink::Anchor,
                 },
                 CommitmentVersion {
                     sequence: 2,
                     commitment: cid2,
                     published_at_height: 150,
                     signer_key_ref: kr.clone(),
-                    chain_start: true,
+                    chain_link: ChainLink::Anchor,
                 },
                 CommitmentVersion {
                     sequence: 3,
                     commitment: cid3,
                     published_at_height: 200,
                     signer_key_ref: kr.clone(),
-                    chain_start: false,
+                    chain_link: ChainLink::Linked,
                 },
             ],
             ..DidHistory::new(test_did())
@@ -2838,7 +2917,7 @@ mod tests {
                     commitment: cid1,
                     published_at_height: 100,
                     signer_key_ref: kr.clone(),
-                    chain_start: false,
+                    chain_link: ChainLink::Anchor,
                 },
                 CommitmentVersion {
                     sequence: 2,
@@ -2847,14 +2926,14 @@ mod tests {
                         .unwrap(),
                     published_at_height: 150,
                     signer_key_ref: kr.clone(),
-                    chain_start: false,
+                    chain_link: ChainLink::Linked,
                 },
                 CommitmentVersion {
                     sequence: 3,
                     commitment: d3.compute_content_id().unwrap(),
                     published_at_height: 200,
                     signer_key_ref: kr.clone(),
-                    chain_start: false,
+                    chain_link: ChainLink::Linked,
                 },
             ],
             ..DidHistory::new(test_did())
@@ -2884,7 +2963,7 @@ mod tests {
                 commitment: wrong_cid,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
-                chain_start: false,
+                chain_link: ChainLink::Anchor,
             }],
             ..DidHistory::new(test_did())
         };
@@ -2911,7 +2990,7 @@ mod tests {
                 commitment: cid,
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
-                chain_start: false,
+                chain_link: ChainLink::Anchor,
             }],
             ..DidHistory::new(test_did())
         };
@@ -2941,14 +3020,14 @@ mod tests {
                     commitment: cid1,
                     published_at_height: 100,
                     signer_key_ref: kr.clone(),
-                    chain_start: false,
+                    chain_link: ChainLink::Anchor,
                 },
                 CommitmentVersion {
                     sequence: 2,
                     commitment: cid2,
                     published_at_height: 150,
                     signer_key_ref: kr.clone(),
-                    chain_start: false,
+                    chain_link: ChainLink::Linked,
                 },
             ],
             ..DidHistory::new(test_did())
@@ -2985,14 +3064,14 @@ mod tests {
                     commitment: cid1,
                     published_at_height: 150,
                     signer_key_ref: kr.clone(),
-                    chain_start: true,
+                    chain_link: ChainLink::Anchor,
                 },
                 CommitmentVersion {
                     sequence: 2,
                     commitment: cid2,
                     published_at_height: 250,
                     signer_key_ref: kr.clone(),
-                    chain_start: false,
+                    chain_link: ChainLink::Linked,
                 },
             ],
             ..DidHistory::new(test_did())
@@ -3170,7 +3249,7 @@ mod tests {
             commitment: test_commitment(1),
             published_at_height: 100,
             signer_key_ref: test_key_ref(1),
-            chain_start: false,
+            chain_link: ChainLink::Linked,
         };
 
         let json = serde_json::to_string(&cv).expect("serialization must succeed");
@@ -3236,7 +3315,7 @@ mod tests {
                 commitment: test_commitment(1),
                 published_at_height: 100,
                 signer_key_ref: kr.clone(),
-                chain_start: false,
+                chain_link: ChainLink::Anchor,
             }],
             keys: alloc::vec![crate::state::VerificationMethod {
                 key_ref: kr.clone(),

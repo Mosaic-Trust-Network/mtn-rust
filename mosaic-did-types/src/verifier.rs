@@ -83,6 +83,8 @@ pub enum VerificationError {
     CommitmentAfterHeight { sequence: u64, published_at_height: u32, at_height: u32 },
     /// A commitment service `publishedBy` fragment is not a valid key reference.
     InvalidSignerKeyRef { sequence: u64 },
+    /// A commitment service `chainLink` is missing, unknown, or misplaced.
+    InvalidChainLink { sequence: u64 },
     /// An on-chain commitment uses a hashing algorithm this build cannot verify.
     ///
     /// No document can match such a commitment, so the timeline is
@@ -163,6 +165,9 @@ fn map_history_from_document_error(err: HistoryFromDocumentError) -> Verificatio
         } => VerificationError::CommitmentAfterHeight { sequence, published_at_height, at_height },
         HistoryFromDocumentError::InvalidSignerKeyRef(sequence) => {
             VerificationError::InvalidSignerKeyRef { sequence }
+        }
+        HistoryFromDocumentError::InvalidChainLink(sequence) => {
+            VerificationError::InvalidChainLink { sequence }
         }
     }
 }
@@ -701,12 +706,16 @@ mod tests {
     fn set_timeline(doc: &mut DidDocument, versions: &[(u64, &str)]) {
         let items: Vec<serde_json::Value> = versions
             .iter()
-            .map(|(seq, hash)| {
+            .enumerate()
+            .map(|(index, (seq, hash))| {
                 serde_json::json!({
                     "sequence": seq,
                     "contentId": hash,
                     "publishedAtHeight": seq * 100,
                     "publishedBy": "#iozA3AqW1GfPxgbgoJr1TTPFF1zFZC775C2UPvutHfaxQGPb",
+                    // The helper builds complete timelines: the first entry
+                    // anchors the chain, every later one links.
+                    "chainLink": if index == 0 { "anchor" } else { "linked" },
                 })
             })
             .collect();
@@ -920,12 +929,15 @@ mod tests {
     }
 
     fn add_commitment(mut history: DidHistory, seq: u64, at_height: u32) -> DidHistory {
+        use crate::history::ChainLink;
+        let chain_link =
+            if history.commitments.is_empty() { ChainLink::Anchor } else { ChainLink::Linked };
         history.commitments.push(crate::history::CommitmentVersion {
             sequence: seq,
             commitment: crate::did::ContentId::from_bytes(b"placeholder"),
             published_at_height: at_height,
             signer_key_ref: KeyRef::new(TEST_KEY_REF.as_bytes().to_vec()).unwrap(),
-            chain_start: false,
+            chain_link,
         });
         history
     }
