@@ -101,6 +101,10 @@ pub enum VerificationError {
     MissingCommitmentDocument,
     /// The `previousCommitment` hash chain between consecutive rights documents is broken.
     CommitmentChainBroken,
+    /// A commitment's chain position is structurally invalid: a `Linked` entry
+    /// has no visible predecessor, or a `WindowStart` appears past the first
+    /// visible entry.
+    InvalidCommitmentChainPosition { sequence: u64 },
     /// The achieved proof strength is below the policy minimum.
     InsufficientProofStrength,
     /// SMT inclusion proof verification failed (recomputed root does not match
@@ -137,6 +141,9 @@ fn map_commitment_document_error(err: CommitmentDocumentError) -> VerificationEr
             }
         }
         CommitmentDocumentError::ChainBroken { .. } => VerificationError::CommitmentChainBroken,
+        CommitmentDocumentError::InvalidChainPosition { sequence } => {
+            VerificationError::InvalidCommitmentChainPosition { sequence }
+        }
         CommitmentDocumentError::UnsupportedAlgorithm { sequence, content_id } => {
             VerificationError::UnsupportedCommitmentAlgorithm {
                 sequence,

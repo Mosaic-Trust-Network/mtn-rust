@@ -265,6 +265,11 @@ pub enum CommitmentDocumentError {
     /// anywhere else it must carry the immediately preceding commitment.
     #[error("rights document at sequence {sequence} does not link to the preceding commitment")]
     ChainBroken { sequence: u64 },
+    /// The commitment's chain position is structurally invalid: a `Linked`
+    /// entry has no visible predecessor, or a `WindowStart` appears past the
+    /// first visible entry.
+    #[error("commitment at sequence {sequence} has an invalid chain position")]
+    InvalidChainPosition { sequence: u64 },
     /// The on-chain commitment uses a hashing algorithm this build cannot verify.
     ///
     /// Distinct from a hash mismatch: no document can ever match this
@@ -693,7 +698,9 @@ impl DidHistory {
     ///    requirement: `Anchor` demands no `previous_commitment`, `Linked`
     ///    demands the previous visible commitment, and `WindowStart` marks the
     ///    first entry of a truncated view whose predecessor lies outside the
-    ///    window and is therefore not checked.
+    ///    window and is therefore not checked. A `Linked` first entry or a
+    ///    `WindowStart` past the first entry is structurally invalid and is
+    ///    reported as [`CommitmentDocumentError::InvalidChainPosition`].
     ///
     /// A *missing* document is not an error: at `Minimal` strength a presenter
     /// legitimately sends only the versions they need.
@@ -736,10 +743,29 @@ impl DidHistory {
             // document.
             let linked = match cv.chain_link {
                 ChainLink::Anchor => doc.previous_commitment().is_none(),
-                ChainLink::Linked => index.checked_sub(1).is_some_and(|prev| {
-                    doc.previous_commitment() == Some(&self.commitments[prev].commitment)
-                }),
-                ChainLink::WindowStart => true,
+                ChainLink::Linked => match index.checked_sub(1) {
+                    Some(prev) => {
+                        doc.previous_commitment() == Some(&self.commitments[prev].commitment)
+                    }
+                    // `Linked` without a visible predecessor is structurally
+                    // impossible; report it as such instead of a broken link.
+                    None => {
+                        return Err(CommitmentDocumentError::InvalidChainPosition {
+                            sequence: cv.sequence,
+                        });
+                    }
+                },
+                ChainLink::WindowStart => {
+                    if index == 0 {
+                        true
+                    } else {
+                        // A window boundary can only exist at the first
+                        // visible entry.
+                        return Err(CommitmentDocumentError::InvalidChainPosition {
+                            sequence: cv.sequence,
+                        });
+                    }
+                }
             };
             if !linked {
                 return Err(CommitmentDocumentError::ChainBroken { sequence: cv.sequence });
@@ -2842,6 +2868,113 @@ mod tests {
             "the real document at the visible start must verify despite its \
              predecessor being outside the window"
         );
+    }
+
+    /// The event-replay analogue of the truncated snapshot: a backward walk
+    /// that stops mid-history replays only a window of events, so its first
+    /// commitment is a window start, not a chain start. The genuine document
+    /// carries a predecessor outside the replayed window; marking the boundary
+    /// with `apply_window_start` keeps it verifiable.
+    #[test]
+    fn windowed_event_replay_marks_the_first_commitment_as_window_start() {
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+
+        // Full chain: 1 -> 2 -> 3.
+        let (_d1, cid1) = make_rights_doc_cid(1, None, key_str, "impersonate");
+        let (d2, cid2) = make_rights_doc_cid(2, Some(cid1), key_str, "impersonate");
+        let (_d3, cid3) = make_rights_doc_cid(3, Some(cid2), key_str, "impersonate");
+
+        // A light client that stopped at height 250 replays only the tail.
+        let mut walked = DidHistory::new(test_did());
+        walked.apply_window_start(DidHistoryEvent::CommitmentUpdated {
+            sequence: 2,
+            commitment: cid2,
+            signer_key_ref: kr.clone(),
+            at_height: 200,
+        });
+        walked.apply(DidHistoryEvent::CommitmentUpdated {
+            sequence: 3,
+            commitment: cid3,
+            signer_key_ref: kr.clone(),
+            at_height: 300,
+        });
+
+        assert_eq!(
+            walked.commitments[0].chain_link,
+            ChainLink::WindowStart,
+            "the first replayed commitment is a window start"
+        );
+        assert_eq!(walked.commitments[1].chain_link, ChainLink::Linked);
+        assert_eq!(
+            walked
+                .verify_right_window(&kr, Right::Impersonate, 200, Some(300), &set1(&[&d2]))
+                .unwrap(),
+            ValidityResult::Confirmed,
+            "the genuine document links to a predecessor outside the replayed window"
+        );
+    }
+
+    /// `Linked` means "link to the previous visible commitment". At the first
+    /// visible entry there is no visible predecessor, so the state is
+    /// structurally invalid rather than a broken link.
+    #[test]
+    fn verify_right_window_rejects_linked_first_entry() {
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+        let (doc, cid) = make_rights_doc_cid(1, None, key_str, "impersonate");
+
+        let history = DidHistory {
+            commitments: alloc::vec![CommitmentVersion {
+                sequence: 1,
+                commitment: cid,
+                published_at_height: 100,
+                signer_key_ref: kr.clone(),
+                chain_link: ChainLink::Linked,
+            }],
+            ..DidHistory::new(test_did())
+        };
+
+        let err = history
+            .verify_right_window(&kr, Right::Impersonate, 100, Some(200), &set1(&[&doc]))
+            .expect_err("a linked first entry has no visible predecessor");
+        assert_eq!(err, CommitmentDocumentError::InvalidChainPosition { sequence: 1 });
+    }
+
+    /// `WindowStart` marks the first visible entry only. Past the boundary it
+    /// is not a window start, so it is rejected instead of silently skipping
+    /// the link check.
+    #[test]
+    fn verify_right_window_rejects_window_start_past_the_boundary() {
+        let kr = test_key_ref(1);
+        let key_str = kr.as_str().unwrap();
+        let (_d1, cid1) = make_rights_doc_cid(1, None, key_str, "impersonate");
+        let (d2, cid2) = make_rights_doc_cid(2, Some(cid1), key_str, "impersonate");
+
+        let history = DidHistory {
+            commitments: alloc::vec![
+                CommitmentVersion {
+                    sequence: 1,
+                    commitment: cid1,
+                    published_at_height: 100,
+                    signer_key_ref: kr.clone(),
+                    chain_link: ChainLink::Anchor,
+                },
+                CommitmentVersion {
+                    sequence: 2,
+                    commitment: cid2,
+                    published_at_height: 150,
+                    signer_key_ref: kr.clone(),
+                    chain_link: ChainLink::WindowStart,
+                },
+            ],
+            ..DidHistory::new(test_did())
+        };
+
+        let err = history
+            .verify_right_window(&kr, Right::Impersonate, 150, Some(200), &set1(&[&d2]))
+            .expect_err("a window start past the first entry is invalid");
+        assert_eq!(err, CommitmentDocumentError::InvalidChainPosition { sequence: 2 });
     }
 
     /// After a governed reset the chain restarts, and the *next* document must
