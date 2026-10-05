@@ -1,0 +1,33 @@
+{
+  "name": "@mosaic-private/sdk",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "license": "LGPL-3.0-or-later",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.mts",
+      "import": "./dist/node.mjs"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    }
+  },
+  "scripts": {
+    "build": "bash scripts/build.sh",
+    "typecheck": "tsc --noEmit && tsc --project tests/tsconfig.json --noEmit",
+    "check": "tsc --noEmit",
+    "test": "node --test --test-isolation=none tests/codec.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

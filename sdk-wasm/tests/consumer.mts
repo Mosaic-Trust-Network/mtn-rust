@@ -1,0 +1,11 @@
+import { mosaic, type Right } from '@mosaic-private/sdk/node';
+import { initializeMosaic } from '@mosaic-private/sdk/browser';
+const id: string = mosaic.deriveDid(new Uint8Array(32));
+const encoded: Uint8Array = mosaic.didScale(id);
+const rights: readonly Right[] = mosaic.rights();
+const digest: string = mosaic.digestJson('{"n":9007199254740993}', 'blake3');
+void encoded; void rights; void digest; void initializeMosaic;
+// @ts-expect-error JSON text is mandatory to preserve the preimage.
+mosaic.digestJson({ n: 1 });
+// @ts-expect-error Unknown algorithms cannot enter the typed API.
+mosaic.contentIdFromHash(new Uint8Array(32), 'md5');

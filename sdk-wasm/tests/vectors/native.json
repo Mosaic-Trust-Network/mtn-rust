@@ -1,0 +1,247 @@
+{
+  "blake3Display": "cmuAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "blake3Scale": [
+    2,
+    1,
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31
+  ],
+  "did": "did:mosaic:iozABK3fWSoiQetVDuHjpZTvn8ZWfykWosS6msEBhZ38FT9E",
+  "didScale": [
+    192,
+    105,
+    111,
+    122,
+    65,
+    66,
+    75,
+    51,
+    102,
+    87,
+    83,
+    111,
+    105,
+    81,
+    101,
+    116,
+    86,
+    68,
+    117,
+    72,
+    106,
+    112,
+    90,
+    84,
+    118,
+    110,
+    56,
+    90,
+    87,
+    102,
+    121,
+    107,
+    87,
+    111,
+    115,
+    83,
+    54,
+    109,
+    115,
+    69,
+    66,
+    104,
+    90,
+    51,
+    56,
+    70,
+    84,
+    57,
+    69
+  ],
+  "digests": [
+    {
+      "blake3": {
+        "accepted": true,
+        "digest": "cmupG7REY_YoTJlCM5OsPKhhpLGe6M_5oiadeUpBxkWFdg"
+      },
+      "jsonText": "{\"z\":1,\"a\":\"é\"}",
+      "sha3": {
+        "accepted": true,
+        "digest": "cjuofpmoHPftiD6DYSFFJyu7PlbyTOuKRFheNX2eqxzWg0"
+      }
+    },
+    {
+      "blake3": {
+        "accepted": true,
+        "digest": "cmupG7REY_YoTJlCM5OsPKhhpLGe6M_5oiadeUpBxkWFdg"
+      },
+      "jsonText": "{\"a\":\"e\\u0301\",\"z\":1}",
+      "sha3": {
+        "accepted": true,
+        "digest": "cjuofpmoHPftiD6DYSFFJyu7PlbyTOuKRFheNX2eqxzWg0"
+      }
+    },
+    {
+      "blake3": {
+        "accepted": true,
+        "digest": "cmundmsJyYJsVufutkcjW2Upi-uiNLMzkPEG9rQwglLRpg"
+      },
+      "jsonText": "{\"n\":9.223372036854776e18}",
+      "sha3": {
+        "accepted": true,
+        "digest": "cjueytu0RWsKkSEpdFk7hy5jbyOToGPZt63IalVggdZR38"
+      }
+    }
+  ],
+  "flatDisplay": "cbz1thX6LZfHDZZKUs92febYZhYRcXddmzfzF2NvTkPNE",
+  "flatScale": [
+    0,
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31
+  ],
+  "foreignDids": [
+    {
+      "accepted": false,
+      "did": "did:mosaic:iez21JXEtMzXjbCK6BAYFU9ewX"
+    },
+    {
+      "accepted": false,
+      "did": "did:mosaic:isz7un9h2Ddua9rfHefJMKiPLxSy2pX"
+    }
+  ],
+  "rights": [
+    {
+      "name": "update",
+      "scale": [
+        0
+      ]
+    },
+    {
+      "name": "impersonate",
+      "scale": [
+        1
+      ]
+    },
+    {
+      "name": "delegate",
+      "scale": [
+        2
+      ]
+    },
+    {
+      "name": "issue",
+      "scale": [
+        3
+      ]
+    },
+    {
+      "name": "revoke",
+      "scale": [
+        4
+      ]
+    },
+    {
+      "name": "recovery",
+      "scale": [
+        5
+      ]
+    }
+  ],
+  "sha3Display": "cjuAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+  "sha3Scale": [
+    2,
+    0,
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30,
+    31
+  ]
+}
