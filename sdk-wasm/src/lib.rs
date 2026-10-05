@@ -4,6 +4,9 @@ use mosaic_did_types::{ContentId, Did, KeyPurpose, Right};
 use parity_scale_codec::Encode;
 use wasm_bindgen::prelude::*;
 
+mod envelope;
+pub use envelope::*;
+
 #[wasm_bindgen]
 pub fn derive_did(public_key: &[u8]) -> Result<String, String> {
     Did::from_public_key(public_key).map(|did| did.to_string()).map_err(|e| e.to_string())

@@ -54,3 +54,28 @@ Node and web builds come from the same fresh Rust release module. Existing
 Morpheus identities must use their separate backend; never rename them.
 Codec agreement does not establish signing, proof validation, runtime metadata,
 chain inclusion or finality. These are separate integration contracts.
+
+## Off-chain envelope signatures
+
+Prepare an AfterEnvelope containing object/array content and a proof with
+blockHeight and a 32-byte hexadecimal blockHash. The signing payload is the
+UTF-8 SHA3 digest string required by the current native envelope verifier.
+It is distinct from the BLAKE3 content commitment and a DID operation's SCALE
+payload. Unknown envelope/proof fields and overflowing lower-bound heights
+are rejected. Do not attach unsigned metadata to the envelope root.
+
+Use mosaicPublicKey and mosaicKeyRef for native Mosaic wire identities.
+keyMatchesReference checks public-key derivation only; it does not check DID
+membership or key-purpose grants. verifyEnvelopeSignature also binds the
+expected signer key reference and rejects foreign suites.
+
+signEnvelope calls a supplied signer with the prepared bytes and verifies its
+returned multicipher signature before exposing SignedEnvelope material.
+The caller owns key custody; production WASM accepts no private keys.
+No operation submission, proof inclusion or finality follows from this result.
+Embedded network fields are covered by the signature, not independently
+verified as chain identity.
+
+Run npm run test:browser for the isolated local Chrome gate. It uses a temporary
+profile and localhost-only static test assets, with public synthetic vectors.
+The returned JSON records real browser checks separately from Node tests.

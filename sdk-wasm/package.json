@@ -25,7 +25,8 @@
     "build": "bash scripts/build.sh",
     "typecheck": "tsc --noEmit && tsc --project tests/tsconfig.json --noEmit",
     "check": "tsc --noEmit",
-    "test": "node --test --test-isolation=none tests/codec.test.mjs"
+    "test": "node --test --test-isolation=none tests/*.test.mjs",
+    "test:browser": "python3 tests/browser/run.py"
   },
   "devDependencies": {
     "typescript": "7.0.2"

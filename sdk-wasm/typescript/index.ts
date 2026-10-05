@@ -14,6 +14,11 @@ export interface MosaicBindings {
  right_names(): string;
  right_scale(name: string): Uint8Array;
  purpose_scale(name: string): Uint8Array;
+ mosaic_public_key(raw: Uint8Array): string;
+ mosaic_key_ref(publicKey: string): string;
+ key_matches_reference(publicKey: string, keyRef: string): boolean;
+ envelope_signing_payload(json: string): Uint8Array;
+ verify_envelope_signature(json: string, publicKey: string, signature: string, keyRef: string): boolean;
 }
 function text(value: string): string {
  if (typeof value !== 'string') throw new TypeError('Expected text input');
@@ -29,8 +34,22 @@ function invoke<T>(operation: () => T): T {
   throw new Error(String(cause));
  }
 }
+export interface SignedEnvelope { readonly publicKey: string; readonly bytes: string; }
+export type EnvelopeSigner = (payload: Uint8Array) => Promise<string> | string;
 export function createMosaicSdk(bindings: MosaicBindings) {
  return Object.freeze({
+  mosaicPublicKey: (raw: Uint8Array) => invoke(() => bindings.mosaic_public_key(bytes(raw))),
+  mosaicKeyRef: (publicKey: string) => invoke(() => bindings.mosaic_key_ref(text(publicKey))),
+  keyMatchesReference: (publicKey: string, keyRef: string) => invoke(() => bindings.key_matches_reference(text(publicKey), text(keyRef))),
+  envelopeSigningPayload: (jsonText: string) => invoke(() => bindings.envelope_signing_payload(text(jsonText))),
+  verifyEnvelopeSignature: (jsonText: string, publicKey: string, signature: string, keyRef: string) => invoke(() => bindings.verify_envelope_signature(text(jsonText), text(publicKey), text(signature), text(keyRef))),
+  signEnvelope: async (jsonText: string, publicKey: string, keyRef: string, signer: EnvelopeSigner): Promise<SignedEnvelope> => {
+   if (!invoke(() => bindings.key_matches_reference(text(publicKey), text(keyRef)))) throw new Error('Envelope signer key reference mismatch');
+   const payload = invoke(() => bindings.envelope_signing_payload(text(jsonText)));
+   const signature = text(await signer(payload));
+   if (!invoke(() => bindings.verify_envelope_signature(jsonText, publicKey, signature, keyRef))) throw new Error('Envelope signer returned an invalid signature');
+   return Object.freeze({ publicKey, bytes: signature });
+  },
   deriveDid: (key: Uint8Array) => invoke(() => bindings.derive_did(bytes(key))),
   parseDid: (value: string) => invoke(() => bindings.parse_did(text(value))),
   didScale: (value: string) => invoke(() => bindings.did_scale(text(value))),

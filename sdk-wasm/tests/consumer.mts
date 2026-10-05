@@ -9,3 +9,10 @@ void encoded; void rights; void digest; void initializeMosaic;
 mosaic.digestJson({ n: 1 });
 // @ts-expect-error Unknown algorithms cannot enter the typed API.
 mosaic.contentIdFromHash(new Uint8Array(32), 'md5');
+
+const envelope = '{"content":{},"proof":{"blockHeight":1,"blockHash":"0x00"}}';
+const payload: Uint8Array = mosaic.envelopeSigningPayload(envelope);
+const verified: boolean = mosaic.verifyEnvelopeSignature(envelope, 'public-key', 'signature', 'key-ref');
+void payload; void verified;
+// @ts-expect-error Signing ports return wire signatures, not secret bytes.
+mosaic.signEnvelope(envelope, 'public-key', 'key-ref', () => new Uint8Array(64));
