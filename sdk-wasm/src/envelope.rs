@@ -38,7 +38,7 @@ fn parse_envelope(json: &str) -> Result<AfterEnvelope<serde_json::Value>, String
         },
     })
 }
-fn parse_key(text: &str) -> Result<MPublicKey, String> {
+pub(crate) fn parse_key(text: &str) -> Result<MPublicKey, String> {
     let key: MPublicKey =
         text.parse().map_err(|e: mosaic_keyvault::error::KeyvaultError| e.to_string())?;
     if !matches!(key, MPublicKey::Ed25519Blake3(_)) {
@@ -46,7 +46,7 @@ fn parse_key(text: &str) -> Result<MPublicKey, String> {
     }
     Ok(key)
 }
-fn parse_ref(text: &str) -> Result<MKeyId, String> {
+pub(crate) fn parse_ref(text: &str) -> Result<MKeyId, String> {
     let key: MKeyId =
         text.parse().map_err(|e: mosaic_keyvault::error::KeyvaultError| e.to_string())?;
     if !matches!(key, MKeyId::Ed25519Blake3(_)) {

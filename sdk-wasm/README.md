@@ -79,3 +79,22 @@ verified as chain identity.
 Run npm run test:browser for the isolated local Chrome gate. It uses a temporary
 profile and localhost-only static test assets, with public synthetic vectors.
 The returned JSON records real browser checks separately from Node tests.
+
+## DID operation signing
+
+initialDidKeyOperation prepares native initial AddKey SCALE; updateCommitmentOperation
+prepares a structured document commitment. Pass canonical decimal strings for
+all u64 nonce/floor/sequence values, including values beyond JavaScript precision.
+Only these two operations are supported by this SDK slice. No rotation or
+expiry support is implied. Rejecting malformed/trailing/noncanonical SCALE
+prevents the signed payload and submitted operation from disagreeing.
+
+signDidOperation copies caller bytes, including Node Buffer, before awaiting
+an external signer. Initial AddKey binds its signer to the embedded key.
+Native Rust verifies the returned signature before assembling SignedDidOperation
+and SsiOperation::Did SCALE. The returned typed arrays are caller-owned transport
+copies. These bytes are not an account-signed extrinsic or a batch encoding.
+The native payload is SCALE (operation, signer_key_ref, nonce); it contains no
+genesis hash. Require pinned network/runtime checks in the submission adapter.
+Cryptographic validity does not establish DID rights, nonce freshness, state
+sequence, chain inclusion or finality. Production WASM holds no private keys.

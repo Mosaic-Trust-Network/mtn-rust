@@ -17,6 +17,12 @@ export interface MosaicBindings {
  mosaic_public_key(raw: Uint8Array): string;
  mosaic_key_ref(publicKey: string): string;
  key_matches_reference(publicKey: string, keyRef: string): boolean;
+ initial_did_key_operation(publicKey: string, initialNonce: string): Uint8Array;
+ update_commitment_operation(did: string, commitment: string, sequence: string): Uint8Array;
+ did_operation_signing_payload(operation: Uint8Array, keyRef: string, nonce: string): Uint8Array;
+ verify_did_operation_signature(operation: Uint8Array, publicKey: string, signature: string, keyRef: string, nonce: string): boolean;
+ signed_did_operation_scale(operation: Uint8Array, publicKey: string, signature: string, keyRef: string, nonce: string): Uint8Array;
+ did_ssi_operation_scale(operation: Uint8Array, publicKey: string, signature: string, keyRef: string, nonce: string): Uint8Array;
  envelope_signing_payload(json: string): Uint8Array;
  verify_envelope_signature(json: string, publicKey: string, signature: string, keyRef: string): boolean;
 }
@@ -34,10 +40,26 @@ function invoke<T>(operation: () => T): T {
   throw new Error(String(cause));
  }
 }
+export interface SignedDidOperation { readonly signedScale: Uint8Array; readonly ssiScale: Uint8Array; readonly signerKeyRef: string; readonly nonce: string; }
 export interface SignedEnvelope { readonly publicKey: string; readonly bytes: string; }
 export type EnvelopeSigner = (payload: Uint8Array) => Promise<string> | string;
 export function createMosaicSdk(bindings: MosaicBindings) {
  return Object.freeze({
+  initialDidKeyOperation: (publicKey: string, initialNonce: string = '0') => invoke(() => bindings.initial_did_key_operation(text(publicKey), text(initialNonce))),
+  updateCommitmentOperation: (did: string, commitment: string, sequence: string) => invoke(() => bindings.update_commitment_operation(text(did), text(commitment), text(sequence))),
+  didOperationSigningPayload: (operation: Uint8Array, keyRef: string, nonce: string) => invoke(() => bindings.did_operation_signing_payload(bytes(operation), text(keyRef), text(nonce))),
+  verifyDidOperationSignature: (operation: Uint8Array, publicKey: string, signature: string, keyRef: string, nonce: string) => invoke(() => bindings.verify_did_operation_signature(bytes(operation), text(publicKey), text(signature), text(keyRef), text(nonce))),
+  signDidOperation: async (operation: Uint8Array, publicKey: string, keyRef: string, nonce: string, signer: EnvelopeSigner): Promise<SignedDidOperation> => {
+   const snapshot = Uint8Array.from(bytes(operation));
+   text(publicKey); text(keyRef); text(nonce);
+   if (!invoke(() => bindings.key_matches_reference(publicKey, keyRef))) throw new Error('DID operation signer key reference mismatch');
+   const payload = invoke(() => bindings.did_operation_signing_payload(snapshot, keyRef, nonce));
+   const signature = text(await signer(payload));
+   // Native assembly verifies the signature before returning transport bytes.
+   const signedScale = invoke(() => bindings.signed_did_operation_scale(snapshot, publicKey, signature, keyRef, nonce));
+   const ssiScale = invoke(() => bindings.did_ssi_operation_scale(snapshot, publicKey, signature, keyRef, nonce));
+   return Object.freeze({ signedScale, ssiScale, signerKeyRef: keyRef, nonce });
+  },
   mosaicPublicKey: (raw: Uint8Array) => invoke(() => bindings.mosaic_public_key(bytes(raw))),
   mosaicKeyRef: (publicKey: string) => invoke(() => bindings.mosaic_key_ref(text(publicKey))),
   keyMatchesReference: (publicKey: string, keyRef: string) => invoke(() => bindings.key_matches_reference(text(publicKey), text(keyRef))),

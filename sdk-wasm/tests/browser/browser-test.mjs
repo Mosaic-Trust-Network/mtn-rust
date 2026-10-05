@@ -54,5 +54,31 @@ try {
   let called=false;
   await rejectsAsync(() => sdk.signEnvelope(envelope.envelopeJson,envelope.publicKey,envelope.wrongKeyRef,() => {called=true; return envelope.signature;})); equal(called,false);
  });
+ const operations=await (await fetch('../vectors/operation.json')).json();
+ check('native initial AddKey operation', () => equal([...sdk.initialDidKeyOperation(operations.publicKey,operations.initialNonce)],operations.vectors[0].operationScale));
+ check('native UpdateCommitment operation', () => equal([...sdk.updateCommitmentOperation(operations.did,operations.commitment,operations.sequence)],operations.vectors[1].operationScale));
+ for(const item of operations.vectors) {
+  const op=Uint8Array.from(item.operationScale);
+  check(`${item.name} operation payload`, () => equal([...sdk.didOperationSigningPayload(op,operations.keyRef,operations.nonce)],item.payload));
+  check(`${item.name} operation signature`, () => equal(sdk.verifyDidOperationSignature(op,operations.publicKey,item.signature,operations.keyRef,operations.nonce),true));
+  check(`${item.name} altered nonce`, () => equal(sdk.verifyDidOperationSignature(op,operations.publicKey,item.signature,operations.keyRef,'18446744073709551614'),false));
+  check(`${item.name} wrong key`, () => {if(item.name==='initial') rejects(() => sdk.verifyDidOperationSignature(op,operations.wrongPublicKey,item.signature,operations.wrongKeyRef,operations.nonce));else equal(sdk.verifyDidOperationSignature(op,operations.wrongPublicKey,item.signature,operations.wrongKeyRef,operations.nonce),false);});
+  check(`${item.name} wrong reference`, () => {if(item.name==='initial') rejects(() => sdk.didOperationSigningPayload(op,operations.wrongKeyRef,operations.nonce));else equal(sdk.verifyDidOperationSignature(op,operations.publicKey,item.signature,operations.wrongKeyRef,operations.nonce),false);});
+  check(`${item.name} trailing bytes`, () => rejects(() => sdk.didOperationSigningPayload(Uint8Array.from([...item.operationScale,0]),operations.keyRef,operations.nonce)));
+  check(`${item.name} altered operation`, () => {const changed=op.slice();changed[changed.length-1]^=1;equal(sdk.verifyDidOperationSignature(changed,operations.publicKey,item.signature,operations.keyRef,operations.nonce),false);});
+  check(`${item.name} foreign signature`, () => rejects(() => sdk.verifyDidOperationSignature(op,operations.publicKey,item.signature.replace(/^so/,'se'),operations.keyRef,operations.nonce)));
+  await checkAsync(`${item.name} signer snapshot and native transport`,async () => {
+   const input=op.slice();
+   const signed=await sdk.signDidOperation(input,operations.publicKey,operations.keyRef,operations.nonce,async payload => {equal([...payload],item.payload);input.fill(255);await Promise.resolve();return item.signature;});
+   equal([...signed.signedScale],item.signedScale);equal([...signed.ssiScale],item.ssiScale);
+  });
+ }
+ const commit=Uint8Array.from(operations.vectors[1].operationScale);
+ for(const nonce of ['0','01','-1','1.5','18446744073709551616',1]) check(`invalid operation nonce ${nonce}`, () => rejects(() => sdk.didOperationSigningPayload(commit,operations.keyRef,nonce)));
+ check('operation decode bound', () => rejects(() => sdk.didOperationSigningPayload(new Uint8Array(4097),operations.keyRef,'1')));
+ check('initial operation nonce floor', () => rejects(() => sdk.didOperationSigningPayload(Uint8Array.from(operations.vectors[0].operationScale),operations.keyRef,operations.initialNonce)));
+ check('flat commitment rejected', () => rejects(() => sdk.updateCommitmentOperation(operations.did,sdk.contentIdFromHash(new Uint8Array(32),'blake3-flat'),'1')));
+ await checkAsync('invalid operation signer response', () => rejectsAsync(() => sdk.signDidOperation(commit,operations.publicKey,operations.keyRef,operations.nonce,() => operations.vectors[0].signature)));
+ await checkAsync('operation wrong reference prevents callback',async () => {let called=false;await rejectsAsync(() => sdk.signDidOperation(commit,operations.publicKey,operations.wrongKeyRef,operations.nonce,() => {called=true;return operations.vectors[1].signature;}));equal(called,false);});
  result.textContent=JSON.stringify({complete:true,browser:navigator.userAgent,pass:checks.filter(x=>x.pass).length,fail:checks.filter(x=>!x.pass).length,checks});
 } catch(error) { result.textContent=JSON.stringify({complete:true,fail:1,error:String(error),checks}); }

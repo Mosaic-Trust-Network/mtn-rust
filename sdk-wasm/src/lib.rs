@@ -6,6 +6,8 @@ use wasm_bindgen::prelude::*;
 
 mod envelope;
 pub use envelope::*;
+mod operation;
+pub use operation::*;
 
 #[wasm_bindgen]
 pub fn derive_did(public_key: &[u8]) -> Result<String, String> {

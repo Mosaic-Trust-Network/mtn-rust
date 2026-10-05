@@ -58,3 +58,5 @@ fn wasm_codec_bridge_roots_and_native_container_policy() {
 }
 
 mod envelope;
+
+mod operation;
