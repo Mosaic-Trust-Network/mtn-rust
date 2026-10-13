@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Upgraded the `polkadot-sdk` fork from `private-address-range-2512-2` (crate `2512.3.3`) to
+  `private-address-range-2606-1` (crate `2606.0.0`). The pallet needed no source changes: the
+  `frame-support`/`frame-system` APIs it uses and the `fungible::hold::Mutate` deposit flow are
+  unchanged. `runtime-benchmarks`, `try-runtime` and the bare `wasm32v1-none` build all still
+  compile.
+- `deny.toml` now allows `RUSTSEC-2025-0055`: the upgraded fork pins `tracing-subscriber` to
+  `=0.3.19`, while the advisory wants `>=0.3.20`; upstream keeps the pin because `0.3.20`
+  regressed ANSI colour codes (tokio-rs/tracing#3378).
+- Removed the vendored `core2` patch (`[patch.crates-io]` entry plus the `vendor/` directory);
+  no crate in the workspace dependency graph needs it anymore.
+
 ## 0.0.16 (2022-06-30)
 
 ### Added

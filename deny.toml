@@ -5,6 +5,7 @@ ignore = [
     "RUSTSEC-2022-0061", # `parity-wasm` is deprecated 🤦
     "RUSTSEC-2024-0436", # `paste` is unmaintained
     "RUSTSEC-2024-0370", # `proc-macro-error` is unmaintained
+    "RUSTSEC-2025-0055", # `tracing-subscriber` pinned to =0.3.19 by polkadot-sdk; 0.3.20 has an ANSI colour-code regression (tokio-rs/tracing#3378)
     "RUSTSEC-2025-0161", # `libsecp256k1` still arrives via polkadot-sdk/sp-core; keyvault uses k256
 ]
 
@@ -102,7 +103,7 @@ unused = 'deny'
 unknown-registry = "warn"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = ["https://github.com/Mosaic-Chain/polkadot-sdk?branch=private-address-range-2512-2"]
+allow-git = ["https://github.com/Mosaic-Chain/polkadot-sdk?branch=private-address-range-2606-1"]
 
 [sources.allow-org]
 #github = ["wigy_opensource_developer"]
