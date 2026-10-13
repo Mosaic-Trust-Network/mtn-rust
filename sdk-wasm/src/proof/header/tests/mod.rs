@@ -165,3 +165,17 @@ fn header_before_proof_bounds_digest_counts_and_allocations() {
     scale.extend_from_slice(&[0xff; 5]);
     assert!(inspect_mosaic_header_v1(&scale).is_err());
 }
+
+#[test]
+fn header_before_proof_digest_limit_counts_the_complete_encoded_item() {
+    let (mut header, _) = fixture();
+    // Below 2^14 payload bytes, the SCALE vector length occupies two bytes.
+    for (payload, accepted) in [(16381, true), (16382, false), (16384, false)] {
+        let item = DigestItem::Other(vec![0; payload]);
+        assert_eq!(item.encode().len() <= MAX_ENCODED_LOG, accepted);
+        header.digest.logs = vec![item];
+        let rpc = serde_json::to_string(&header).unwrap();
+        assert_eq!(mosaic_header_scale_v1(&rpc).is_ok(), accepted);
+        assert_eq!(inspect_mosaic_header_v1(&header.encode()).is_ok(), accepted);
+    }
+}

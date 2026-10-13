@@ -16,7 +16,8 @@ const MAX_HEADER: usize = 64 * 1024;
 const MAX_JSON: usize = 128 * 1024;
 const MAX_MEMORY: usize = 128 * 1024;
 const MAX_LOGS: usize = 64;
-const MAX_LOG: usize = 16 * 1024;
+// RPC log hex already contains the entire SCALE DigestItem (tag and length included).
+const MAX_ENCODED_LOG: usize = 16 * 1024;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,7 +49,7 @@ fn decode_header(scale: &[u8]) -> Result<NativeHeader, String> {
     if !input.is_empty()
         || header.encode() != scale
         || header.digest.logs.len() > MAX_LOGS
-        || header.digest.logs.iter().any(|log| log.encode().len() > MAX_LOG)
+        || header.digest.logs.iter().any(|log| log.encode().len() > MAX_ENCODED_LOG)
     {
         return Err(INVALID.into());
     }
@@ -67,7 +68,7 @@ pub fn mosaic_header_scale_v1(json: &str) -> Result<Vec<u8>, String> {
     }
     let mut total = 0;
     for log in bounds.digest.logs {
-        if !log.starts_with("0x") || log.len() > MAX_LOG * 2 + 2 {
+        if !log.starts_with("0x") || log.len() > MAX_ENCODED_LOG * 2 + 2 {
             return Err(INVALID.into());
         }
         let bytes = from_hex(&log).map_err(|_| INVALID)?;

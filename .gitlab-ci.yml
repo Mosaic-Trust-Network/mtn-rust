@@ -11,7 +11,7 @@ variables:
   CARGO_HOME: $CI_PROJECT_DIR/.cache/cargo
   CARGO_BUILD_JOBS: "2"
 
-validate:sdk:
+.sdk-validation:
   timeout: 2h
   before_script:
     - export PATH="$CARGO_HOME/bin:$PATH"
@@ -39,8 +39,24 @@ validate:sdk:
     key: sdk-rust-1.93.0
     paths: [.cache/cargo/, target/]
   artifacts:
-    expire_in: never
     paths:
       - sdk-wasm/package.json
       - sdk-wasm/dist/
       - sdk-wasm/generated/
+
+# Temporary review builds expire; mainline builds supply immutable consumer pins.
+validate:sdk:
+  extends: .sdk-validation
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: never
+    - when: on_success
+  artifacts:
+    expire_in: 30 days
+
+validate:sdk-mainline:
+  extends: .sdk-validation
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  artifacts:
+    expire_in: never

@@ -137,3 +137,8 @@ Native bounds: header SCALE64KiB, RPC JSON128KiB,64digest logs/16KiBper log,
 128KiB tracked header decoding; metadata SCALE512KiB,8MiB tracked decoding and
 32levels type-graph comparison. Malformed inputs throw; valid mismatches return
 false. No RPC client or dynamically trusted ABI fallback is introduced.
+
+CI keeps temporary branch/MR artifacts for 30 days. Immutable Tresor dependency
+pins select a successful default-branch build after merge; those SDK outputs are
+retained without expiry. Digest-log limits count the complete SCALE-encoded item,
+including its variant tag and compact length, in both RPC and binary inputs.

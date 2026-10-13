@@ -22,6 +22,20 @@ for(const [target,bindings] of [['node',require('../generated/node/mosaic_sdk_wa
   assert.equal(sdk.verifyBeforeProofHeaderV1(input()),true);
   assert.equal(sdk.verifyBeforeProofHeaderV1({...input(),nodes:proof.nodes.slice().reverse()}),true);
  });
+ test(`${target}: RPC logs and SCALE logs share the encoded 16 KiB boundary`,()=>{
+  // Frozen native DigestItem::Other vectors: tag + SCALE compact length + payload.
+  const accepted='00f5ff'+'00'.repeat(16381);
+  const rpc={...header.rpc,digest:{logs:['0x'+accepted]}};
+  const acceptedScale=sdk.mosaicHeaderScaleV1(JSON.stringify(rpc));
+  assert.equal(sdk.inspectMosaicHeaderV1(acceptedScale).blockHeight,'48');
+  const prefix=acceptedScale.slice(0,acceptedScale.length-accepted.length/2);
+  for(const encoded of ['00f9ff'+'00'.repeat(16382),'0002000100'+'00'.repeat(16384)]) {
+   assert.throws(()=>sdk.mosaicHeaderScaleV1(JSON.stringify({...rpc,digest:{logs:['0x'+encoded]}})));
+   const scale=Uint8Array.from([...prefix,...Buffer.from(encoded,'hex')]);
+   assert.throws(()=>sdk.inspectMosaicHeaderV1(scale));
+   assert.throws(()=>bindings.inspect_mosaic_header_v1(scale));
+  }
+ });
  test(`${target}: expected header identity and registration cannot be substituted`,()=>{
   const changed=scale.slice();changed[0]^=1;
   for(const altered of [{expectedBlockHash:new Uint8Array(32)},{expectedHeaderHeight:'47'},{headerScale:changed},{blockHeight:'49'},{extrinsicIndex:'8'},{nodes:['0x01']}])
