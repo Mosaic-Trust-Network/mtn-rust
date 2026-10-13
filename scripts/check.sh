@@ -2,7 +2,9 @@
 set -eux
 
 run_format()      { zepter format features; }
-run_propagate()   { zepter lint propagate-feature --feature std,runtime-benchmarks,try-runtime --workspace; }
+# Browser proof verification deliberately uses alloc-only trie primitives: their
+# std feature enables host networking/metrics, which cannot compile for browser WASM.
+run_propagate()   { zepter lint propagate-feature --feature std,runtime-benchmarks,try-runtime --workspace --ignore-missing-propagate mosaic-sdk-wasm/std:polkadot-sdk/std; }
 run_fmt()         { cargo fmt --check; }
 run_deny()        { cargo deny check --hide-inclusion-graph; }
 run_clippy()      { cargo clippy --workspace --all-targets --no-deps -- -D warnings; }

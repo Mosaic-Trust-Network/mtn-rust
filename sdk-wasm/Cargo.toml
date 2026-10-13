@@ -18,14 +18,19 @@ mosaic-did-types = { workspace = true, features = ["substrate"] }
 json-digest = { workspace = true }
 parity-scale-codec = { workspace = true }
 serde_json = { workspace = true }
+frame-metadata = { workspace = true }
+scale-info = { workspace = true }
+polkadot-sdk = { workspace = true, features = ["sp-trie", "sp-core", "sp-crypto-hashing", "sp-runtime", "serde"] }
 
 [features]
 default = [ "std" ]
 std = [
+	"frame-metadata/std",
 	"json-digest/std",
 	"mosaic-did-types/std",
 	"mosaic-keyvault/std",
 	"parity-scale-codec/std",
+	"scale-info/std",
 	"serde/std",
 	"serde_json/std",
 ]

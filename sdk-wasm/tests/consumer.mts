@@ -24,3 +24,19 @@ void operationPayload;
 mosaic.didOperationSigningPayload(op, 'key-ref', 1);
 // @ts-expect-error No private-key or raw signature bytes in the external signer port.
 mosaic.signDidOperation(op, 'public-key', 'key-ref', '1', () => new Uint8Array(64));
+
+const headerScale: Uint8Array = mosaic.mosaicHeaderScaleV1('{"number":"0x30"}');
+const headerInfo = mosaic.inspectMosaicHeaderV1(headerScale);
+// Expected identity comes from a separately authenticated profile, never inspection alone.
+const configuredExpectedBlockHash = new Uint8Array(32);
+const proofInput = {expectedBlockHash:configuredExpectedBlockHash,expectedHeaderHeight:'48',headerScale,contentId:digest,blockHeight:'42',extrinsicIndex:'7',nodes:['0x00']};
+void headerInfo;
+const bound: boolean = mosaic.verifyBeforeProofHeaderV1(proofInput);
+const qualified: boolean = mosaic.qualifyBeforeProofMetadataV1(new Uint8Array(32),new Uint8Array(5));
+void bound; void qualified;
+// @ts-expect-error Header height is a canonical decimal string.
+mosaic.verifyBeforeProofHeaderV1({...proofInput,expectedHeaderHeight:48});
+// @ts-expect-error The metadata expectation is exactly typed byte input.
+mosaic.qualifyBeforeProofMetadataV1('0x00',new Uint8Array(5));
+// @ts-expect-error No arbitrary expected root replaces header identity.
+mosaic.verifyBeforeProofHeaderV1({expectedStateRoot:new Uint8Array(32),contentId:digest,blockHeight:'42',extrinsicIndex:'7',nodes:['0x00']});

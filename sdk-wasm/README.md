@@ -98,3 +98,42 @@ The native payload is SCALE (operation, signer_key_ref, nonce); it contains no
 genesis hash. Require pinned network/runtime checks in the submission adapter.
 Cryptographic validity does not establish DID rights, nonce freshness, state
 sequence, chain inclusion or finality. Production WASM holds no private keys.
+
+# Native BeforeProof storage relation V1
+
+`beforeProofStorageKeyV1(contentId)` derives the pinned native
+`Did.BeforeProofs` key for a canonical structured commitment.
+`verifyBeforeProofStorageV1({expectedStateRoot, contentId, blockHeight,
+extrinsicIndex, nodes})` verifies raw RPC storage nodes using Substrate
+LayoutV1/Blake2 and the exact SCALE `(u32,u32)` registration record.
+Height/index are canonical decimal strings; the expected root is 32 bytes.
+Malformed/oversized inputs reject; a well-formed proof for a different relation
+returns false. Node order is immaterial. Raw nodes use lowercase `0x` hex.
+
+The caller must independently authenticate the expected state root, network,
+header/finality and runtime layout. A proof-supplied root is not a trust anchor.
+This function does not verify a document checksum or a user signature and must
+not alone promote a receipt to independently verified chain evidence. Synthetic
+golden vectors qualify codec/proof parity; they are not production consensus.
+
+### Header-bound BeforeProof and pinned runtime ABI (V1)
+
+`mosaicHeaderScaleV1(rpcJson)` converts bounded standard RPC header JSON through
+native `Header<u32, BlakeTwo256>`. `inspectMosaicHeaderV1(scale)` returns its hash,
+decimal height and state root. Inspection asserts no trust or finality.
+`verifyBeforeProofHeaderV1({expectedBlockHash, expectedHeaderHeight, headerScale,
+contentId, blockHeight, extrinsicIndex, nodes})` binds the raw storage proof to the
+exact expected native header and rejects registrations after that header's height.
+Only the header's decoded state root is used; no proof-supplied substitute root.
+
+`qualifyBeforeProofMetadataV1(expectedMetadataHash, metadataScale)` validates an
+independently pinned Blake2b256 metadata hash and the exact native V14
+Did.BeforeProofs key/value ABI. It does not authenticate metadata's association
+with runtime code, header, genesis or consensus. Callers must authenticate those
+associations and the expected block identity separately. A local simulation or
+provider-reported finalized hash alone is not an independent consensus verifier.
+
+Native bounds: header SCALE64KiB, RPC JSON128KiB,64digest logs/16KiBper log,
+128KiB tracked header decoding; metadata SCALE512KiB,8MiB tracked decoding and
+32levels type-graph comparison. Malformed inputs throw; valid mismatches return
+false. No RPC client or dynamically trusted ABI fallback is introduced.

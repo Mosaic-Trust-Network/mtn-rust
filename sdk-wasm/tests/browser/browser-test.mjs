@@ -80,5 +80,20 @@ try {
  check('flat commitment rejected', () => rejects(() => sdk.updateCommitmentOperation(operations.did,sdk.contentIdFromHash(new Uint8Array(32),'blake3-flat'),'1')));
  await checkAsync('invalid operation signer response', () => rejectsAsync(() => sdk.signDidOperation(commit,operations.publicKey,operations.keyRef,operations.nonce,() => operations.vectors[0].signature)));
  await checkAsync('operation wrong reference prevents callback',async () => {let called=false;await rejectsAsync(() => sdk.signDidOperation(commit,operations.publicKey,operations.wrongKeyRef,operations.nonce,() => {called=true;return operations.vectors[1].signature;}));equal(called,false);});
+ const storage=await (await fetch('../vectors/before-proof.json')).json();
+ const storageInput={expectedStateRoot:Uint8Array.from(storage.stateRoot),contentId:storage.contentId,blockHeight:storage.blockHeight,extrinsicIndex:storage.extrinsicIndex,nodes:storage.nodes};
+ check('native storage proof/key through browser WASM',()=>{equal([...sdk.beforeProofStorageKeyV1(storage.contentId)],storage.storageKey);equal(sdk.verifyBeforeProofStorageV1(storageInput),true);});
+ check('storage proof substituted root/index rejected',()=>{equal(sdk.verifyBeforeProofStorageV1({...storageInput,expectedStateRoot:new Uint8Array(32)}),false);equal(sdk.verifyBeforeProofStorageV1({...storageInput,extrinsicIndex:'8'}),false);});
+ check('storage proof malformed/oversized nodes rejected',()=>{rejects(()=>sdk.verifyBeforeProofStorageV1({...storageInput,nodes:['0xAB']}));rejects(()=>sdk.verifyBeforeProofStorageV1({...storageInput,nodes:['0x'+'00'.repeat(65537)]}));});
+ const header=await (await fetch('../vectors/before-proof-header.json')).json();
+ const headerScale=Uint8Array.from(header.scale);
+ const headerInput={expectedBlockHash:Uint8Array.from(header.blockHash),expectedHeaderHeight:header.blockHeight,headerScale,contentId:storage.contentId,blockHeight:storage.blockHeight,extrinsicIndex:storage.extrinsicIndex,nodes:storage.nodes};
+ check('native header codec/hash and storage relation',()=>{equal([...sdk.mosaicHeaderScaleV1(JSON.stringify(header.rpc))],header.scale);const info=sdk.inspectMosaicHeaderV1(headerScale);equal([...info.blockHash],header.blockHash);equal(info.blockHeight,'48');equal([...info.stateRoot],header.stateRoot);equal(sdk.verifyBeforeProofHeaderV1(headerInput),true);});
+ check('header identity/root substitution rejected',()=>{equal(sdk.verifyBeforeProofHeaderV1({...headerInput,expectedBlockHash:new Uint8Array(32)}),false);const changed=headerScale.slice();changed[0]^=1;equal(sdk.verifyBeforeProofHeaderV1({...headerInput,headerScale:changed}),false);equal(sdk.verifyBeforeProofHeaderV1({...headerInput,extrinsicIndex:'8'}),false);});
+ check('malformed header and bounded bridge',()=>{rejects(()=>sdk.inspectMosaicHeaderV1(Uint8Array.from([...headerScale,0])));rejects(()=>sdk.mosaicHeaderScaleV1(' '.repeat(131073)));rejects(()=>sdk.verifyBeforeProofHeaderV1({...headerInput,expectedHeaderHeight:'048'}));});
+ const metadata=await (await fetch('../vectors/before-proof-runtime.json')).json();
+ const metadataScale=new Uint8Array(await (await fetch('../vectors/before-proof-runtime.scale')).arrayBuffer());
+ check('native pinned BeforeProofs metadata ABI',()=>equal(sdk.qualifyBeforeProofMetadataV1(Uint8Array.from(metadata.metadataHash),metadataScale),true));
+ check('metadata substitution and input bounds rejected',()=>{equal(sdk.qualifyBeforeProofMetadataV1(new Uint8Array(32),metadataScale),false);rejects(()=>sdk.qualifyBeforeProofMetadataV1(new Uint8Array(31),metadataScale));rejects(()=>sdk.qualifyBeforeProofMetadataV1(Uint8Array.from(metadata.metadataHash),new Uint8Array(524289)));});
  result.textContent=JSON.stringify({complete:true,browser:navigator.userAgent,pass:checks.filter(x=>x.pass).length,fail:checks.filter(x=>!x.pass).length,checks});
 } catch(error) { result.textContent=JSON.stringify({complete:true,fail:1,error:String(error),checks}); }

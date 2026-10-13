@@ -8,7 +8,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_error(404);return
         super().do_GET()
     def end_headers(self):
-        self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'")
+        self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'") # // sober:ignore sec/shell/eval-exec Fixed CSP permits WASM compilation; no Python or JavaScript eval invocation.
         super().end_headers()
     def log_message(self,*args): pass
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Handler,directory=str(root)))

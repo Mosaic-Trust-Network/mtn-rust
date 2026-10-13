@@ -3,10 +3,13 @@
 **/.vscode
 **/.direnv
 
-Cargo.lock
+# Cargo.lock is tracked for reproducible SDK and workspace builds.
 
 # ProGit local project state (contains tokens in config.kdl - never commit)
 .project/
 
 .worktrees/
 .sober/
+
+# Task and CI tool caches are build inputs, never source.
+.cache/

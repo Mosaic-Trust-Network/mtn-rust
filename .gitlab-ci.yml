@@ -1,32 +1,46 @@
-image: "rust:1.93.0-trixie"
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+
+image: docker.io/library/rust@sha256:bbde3ca426faeebab3eb58b8005d3d6da70607817a14bb92a55c94611d4d905f
 
 variables:
-  CARGO_HOME: $CI_PROJECT_DIR/cargo
+  CARGO_HOME: $CI_PROJECT_DIR/.cache/cargo
+  CARGO_BUILD_JOBS: "2"
 
-test:cargo:
+validate:sdk:
+  timeout: 2h
   before_script:
-    - export PATH=$CARGO_HOME/bin:$PATH
-    - apt-get update && apt-get install -y clang
-    - rustc --version && cargo --version
-    # wasm targets for scripts/check.sh nostd + wasm-builder fallback
-    # (rust image ships host only)
+    - export PATH="$CARGO_HOME/bin:$PATH"
+    - apt-get update && apt-get install -y --no-install-recommends clang python3 chromium ca-certificates xz-utils
     - rustup target add wasm32v1-none wasm32-unknown-unknown
-    - curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-    - cargo binstall --no-discover-github-token --disable-telemetry -y cargo-deny zepter
-    - export RUST_BACKTRACE=1
-    - time cargo update
-    - du -hs target || true
-    - du -hs cargo || true
+    - cargo install --locked cargo-deny --version 0.20.2
+    - cargo install --locked zepter --version 1.88.1
+    - cargo install --locked wasm-bindgen-cli --version 0.2.129
+    - curl --fail --silent --show-error --proto '=https' --tlsv1.2 https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz --output /tmp/sdk-node.tar.xz
+    - printf '%s  %s\n' fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6 /tmp/sdk-node.tar.xz | sha256sum --check --strict
+    - tar -xJf /tmp/sdk-node.tar.xz -C /opt
+    - export PATH="/opt/node-v24.21.0-linux-x64/bin:$PATH"
   script:
-    - ./scripts/check.sh format
-    - ./scripts/check.sh propagate
-    - ./scripts/check.sh fmt
-    - ./scripts/check.sh deny
-    - ./scripts/check.sh clippy
-    - ./scripts/check.sh test
-    - ./scripts/check.sh serde-test
-    - ./scripts/check.sh nostd
+    - ./scripts/check.sh
+    - git diff --exit-code -- Cargo.lock '**/Cargo.toml'
+    - npm --prefix sdk-wasm ci --ignore-scripts
+    - npm --prefix sdk-wasm run build
+    - npm --prefix sdk-wasm run typecheck
+    - npm --prefix sdk-wasm test
+    # Chromium runs with its sandbox as an ordinary user, including in Docker CI.
+    - useradd --create-home sdk-browser
+    - chown -R sdk-browser sdk-wasm
+    - runuser -u sdk-browser -- env PATH="$PATH" npm --prefix sdk-wasm run test:browser
   cache:
+    key: sdk-rust-1.93.0
+    paths: [.cache/cargo/, target/]
+  artifacts:
+    expire_in: never
     paths:
-      - target/
-      - cargo/
+      - sdk-wasm/package.json
+      - sdk-wasm/dist/
+      - sdk-wasm/generated/

@@ -8,6 +8,9 @@ mod envelope;
 pub use envelope::*;
 mod operation;
 pub use operation::*;
+#[path = "proof/index.rs"]
+mod proof;
+pub use proof::*;
 
 #[wasm_bindgen]
 pub fn derive_did(public_key: &[u8]) -> Result<String, String> {

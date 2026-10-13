@@ -14,6 +14,12 @@ export interface MosaicBindings {
  right_names(): string;
  right_scale(name: string): Uint8Array;
  purpose_scale(name: string): Uint8Array;
+ mosaic_header_scale_v1(json: string): Uint8Array;
+ inspect_mosaic_header_v1(scale: Uint8Array): string;
+ verify_before_proof_header_v1(expectedBlockHash: Uint8Array, expectedHeaderHeight: string, headerScale: Uint8Array, contentId: string, height: string, index: string, proofJson: string): boolean;
+ qualify_before_proof_metadata_v1(expectedHash: Uint8Array, scale: Uint8Array): boolean;
+ before_proof_storage_key_v1(contentId: string): Uint8Array;
+ verify_before_proof_storage_v1(expectedRoot: Uint8Array, contentId: string, height: string, index: string, proofJson: string): boolean;
  mosaic_public_key(raw: Uint8Array): string;
  mosaic_key_ref(publicKey: string): string;
  key_matches_reference(publicKey: string, keyRef: string): boolean;
@@ -43,8 +49,64 @@ function invoke<T>(operation: () => T): T {
 export interface SignedDidOperation { readonly signedScale: Uint8Array; readonly ssiScale: Uint8Array; readonly signerKeyRef: string; readonly nonce: string; }
 export interface SignedEnvelope { readonly publicKey: string; readonly bytes: string; }
 export type EnvelopeSigner = (payload: Uint8Array) => Promise<string> | string;
+/** Expected root must be authenticated separately; this verifies only a storage relation. */
+export interface BeforeProofStorageV1 {
+ readonly expectedStateRoot: Uint8Array;
+ readonly contentId: string;
+ readonly blockHeight: string;
+ readonly extrinsicIndex: string;
+ readonly nodes: readonly string[];
+}
+/** Header identity is caller-pinned; no network/finality trust is inferred. */
+export interface BeforeProofHeaderV1 extends Omit<BeforeProofStorageV1, 'expectedStateRoot'> {
+ readonly expectedBlockHash: Uint8Array;
+ readonly expectedHeaderHeight: string;
+ readonly headerScale: Uint8Array;
+}
+export interface MosaicHeaderV1 {
+ readonly blockHash: Uint8Array;
+ readonly blockHeight: string;
+ readonly stateRoot: Uint8Array;
+}
+function fixedHash(value: Uint8Array): Uint8Array {
+ if(bytes(value).length!==32) throw new TypeError('Expected 32-byte hash');
+ return Uint8Array.from(value);
+}
+function boundedBytes(value: Uint8Array, maximum: number): Uint8Array {
+ if(bytes(value).length===0||value.length>maximum) throw new TypeError('Encoded input exceeds bounds');
+ return value;
+}
+function proofNodesJson(nodes: readonly string[]): string {
+ if(!Array.isArray(nodes)||nodes.length===0||nodes.length>512) throw new TypeError('Invalid before-proof storage input');
+ const snapshot: string[]=[];let encodedBytes=0;
+ for(const node of nodes) {
+  if(typeof node!=='string'||node.length>131074) throw new TypeError('Invalid before-proof storage input');
+  encodedBytes+=node.length;
+  if(encodedBytes>524288+1024) throw new TypeError('Invalid before-proof storage input');
+  snapshot.push(node);
+ }
+ return JSON.stringify(snapshot);
+}
 export function createMosaicSdk(bindings: MosaicBindings) {
  return Object.freeze({
+  mosaicHeaderScaleV1: (rpcJson: string): Uint8Array => {
+   if(text(rpcJson).length>131072) throw new TypeError('Header JSON exceeds bounds');
+   return invoke(()=>bindings.mosaic_header_scale_v1(rpcJson));
+  },
+  inspectMosaicHeaderV1: (scale: Uint8Array): MosaicHeaderV1 => {
+   const info=JSON.parse(invoke(()=>bindings.inspect_mosaic_header_v1(boundedBytes(scale,65536)))) as {blockHash:number[];blockHeight:string;stateRoot:number[]};
+   return Object.freeze({blockHash:Uint8Array.from(info.blockHash),blockHeight:info.blockHeight,stateRoot:Uint8Array.from(info.stateRoot)});
+  },
+  verifyBeforeProofHeaderV1: (input: BeforeProofHeaderV1): boolean => invoke(()=>bindings.verify_before_proof_header_v1(
+   fixedHash(input.expectedBlockHash),text(input.expectedHeaderHeight),boundedBytes(input.headerScale,65536),
+   text(input.contentId),text(input.blockHeight),text(input.extrinsicIndex),proofNodesJson(input.nodes))),
+  /** ABI qualification only; caller authenticates association with runtime/header. */
+  qualifyBeforeProofMetadataV1: (expectedHash: Uint8Array, scale: Uint8Array): boolean => invoke(()=>bindings.qualify_before_proof_metadata_v1(fixedHash(expectedHash),boundedBytes(scale,524288))),
+  beforeProofStorageKeyV1: (contentId: string) => invoke(() => bindings.before_proof_storage_key_v1(text(contentId))),
+  verifyBeforeProofStorageV1: (input: BeforeProofStorageV1): boolean => {
+   const {expectedStateRoot,contentId,blockHeight,extrinsicIndex,nodes}=input;
+   return invoke(()=>bindings.verify_before_proof_storage_v1(fixedHash(expectedStateRoot),text(contentId),text(blockHeight),text(extrinsicIndex),proofNodesJson(nodes)));
+  },
   initialDidKeyOperation: (publicKey: string, initialNonce: string = '0') => invoke(() => bindings.initial_did_key_operation(text(publicKey), text(initialNonce))),
   updateCommitmentOperation: (did: string, commitment: string, sequence: string) => invoke(() => bindings.update_commitment_operation(text(did), text(commitment), text(sequence))),
   didOperationSigningPayload: (operation: Uint8Array, keyRef: string, nonce: string) => invoke(() => bindings.did_operation_signing_payload(bytes(operation), text(keyRef), text(nonce))),
