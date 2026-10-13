@@ -6,6 +6,8 @@ rust-version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+# Mosaic fork of polkadot-sdk is not on crates.io, so this cannot be either
+publish = false
 
 [dependencies]
 mosaic-did-types = { workspace = true, features = ["substrate"] }

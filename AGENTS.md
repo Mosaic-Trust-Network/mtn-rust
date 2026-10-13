@@ -13,8 +13,8 @@ disruption.
 
 | WRONG (will trigger permission prompt) | CORRECT (use workdir) |
 |---|---|
-| `cd /home/wigy/work/mtn/iop-rs && cargo test` | `workdir="/home/wigy/work/mtn/iop-rs"`, command: `cargo test` |
-| `cd /home/wigy/work/mtn/iop-rs && ./scripts/check.sh` | `workdir="/home/wigy/work/mtn/iop-rs"`, command: `./scripts/check.sh` |
+| `cd <repo> && cargo test` | `workdir="<repo>"`, command: `cargo test` |
+| `cd <repo> && ./scripts/check.sh` | `workdir="<repo>"`, command: `./scripts/check.sh` |
 | `cd $PWD && cargo fmt` | `workdir="$PWD"`, command: `cargo fmt` |
 
 Do not write a command that starts with the characters `cd ` — not even as a

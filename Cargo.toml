@@ -14,17 +14,17 @@ members = [
 version = "0.1.0"
 rust-version = "1.88"
 edition = "2024"
-repository = "https://mosaicchain.io"
+repository = "https://github.com/Mosaic-Trust-Network/mtn-rust"
 license = "LGPL-3.0-or-later"
-homepage = "https://mosaic-trust.network"
+homepage = "https://mosaic-trust.network/"
 
 [workspace.dependencies]
 wasm-bindgen = { version = "=0.2.129" }
-mosaic-keyvault = { version = "0.1.0", default-features = false }
-mosaic-vault = { version = "0.1.0" }
-json-digest = { version = "0.1.0", default-features = false }
-mosaic-did-types = { version = "0.1.0", default-features = false }
-pallet-mosaic-did = { version = "0.1.0" }
+mosaic-keyvault = { version = "0.1.0", path = "keyvault", default-features = false }
+mosaic-vault = { version = "0.1.0", path = "vault" }
+json-digest = { version = "0.1.0", path = "json-digest", default-features = false }
+mosaic-did-types = { version = "0.1.0", path = "mosaic-did-types", default-features = false }
+pallet-mosaic-did = { version = "0.1.0", path = "pallet-mosaic-did" }
 
 android_logger = { version = "0.15.1" }
 blake2 = { version = "0.11.0-rc.6", default-features = false }
@@ -52,7 +52,7 @@ serde = { version = "1.0.219", default-features = false, features = ["derive", "
 serde_bytes = { version = "0.11.17", default-features = false, features = ["alloc"]}
 # NOTE: do NOT add `preserve_order` here — it force-enables serde_json/std,
 # which drags serde_core/std into the wasm32v1-none (bare, no-std) runtime
-# build and breaks it. See iop-rs ca5c08b. Canonical JSON sorts keys, so
+# build and breaks it. See commit ca5c08b. Canonical JSON sorts keys, so
 # insertion-order preservation is not needed on-chain.
 serde_json = { version = "1.0.142", default-features = false, features = ["alloc"] }
 sha2 = { version = "0.11.0", default-features = false }
@@ -64,10 +64,3 @@ thiserror = { version = "2", default-features = false }
 [profile.release]
 lto = true
 opt-level = 's'
-
-[patch.crates-io]
-mosaic-keyvault = { path = "./keyvault" }
-mosaic-vault = { path = "./vault" }
-json-digest = { path = "./json-digest" }
-mosaic-did-types = { path="./mosaic-did-types" }
-pallet-mosaic-did = { path="./pallet-mosaic-did" }

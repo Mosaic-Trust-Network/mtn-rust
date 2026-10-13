@@ -27,4 +27,5 @@ jni = { workspace = true }
 android_logger = { workspace = true }
 
 [features]
+default = [ "std" ]
 std = [ "mosaic-keyvault/std" ]
