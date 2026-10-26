@@ -57,6 +57,25 @@ fn alice_key_ref() -> KeyRef {
     KeyRef::new(format!("{}", auth.key_id()).into_bytes()).expect("valid key ref")
 }
 
+/// A distinct deterministic benchmark key; never used as a production secret.
+fn target_public_key() -> [u8; 32] {
+    use mosaic_keyvault::PrivateKey;
+    use mosaic_keyvault::ed25519::EdPrivateKey;
+
+    EdPrivateKey::from_bytes([0x42; 32])
+        .expect("valid benchmark key")
+        .public_key()
+        .to_bytes()
+        .try_into()
+        .expect("Ed25519 public key is 32 bytes")
+}
+
+fn target_key_ref() -> KeyRef {
+    let auth = Authentication::from_key_type_and_bytes(KeyType::Ed25519, &target_public_key())
+        .expect("valid target auth");
+    KeyRef::new(format!("{}", auth.key_id()).into_bytes()).expect("valid target key ref")
+}
+
 /// Create a signed AddKey operation for DID creation (first key).
 fn create_add_key_op(nonce: u64) -> SignedDidOperation {
     let did = alice_did();
@@ -183,6 +202,7 @@ fn create_revoke_right_op(
 
 /// Pre-populate DID state for operations that require an existing DID.
 fn setup_existing_did<T: Config>() {
+    frame_system::Pallet::<T>::set_block_number(1u32.into());
     let did = alice_did();
     let key_ref = alice_key_ref();
 
@@ -204,16 +224,39 @@ fn setup_existing_did<T: Config>() {
         state
             .keys
             .try_push(VerificationMethod {
-                key_ref: i.to_string().parse().expect("valid keyref"),
+                key_ref: if i == 1 {
+                    target_key_ref()
+                } else {
+                    i.to_string().parse().expect("valid keyref")
+                },
                 key_type: KeyType::Ed25519,
                 controller: did.clone(),
-                public_key: [0u8; 32].to_vec().try_into().expect("pk size is known"),
+                public_key: if i == 1 { target_public_key() } else { [0u8; 32] }
+                    .to_vec()
+                    .try_into()
+                    .expect("pk size is known"),
                 added_at_height: i,
                 expires_at_height: None,
                 revoked_at_height: None,
                 nonce: 0,
             })
             .expect("max keys/did is known");
+    }
+
+    // Match the normal creation bootstrap. Inserting keys directly must not
+    // omit the authority required by the operations being measured.
+    for right in [Right::Update, Right::Impersonate, Right::Delegate] {
+        state
+            .rights
+            .try_push(mosaic_did_types::RightGrant {
+                key_ref: key_ref.clone(),
+                right,
+                granted_at_height: 1,
+                expires_at_height: None,
+                revoked_at_height: None,
+                matures_at_height: None,
+            })
+            .expect("bootstrap rights fit");
     }
 
     DidStates::<T>::insert(did, state);
@@ -224,7 +267,7 @@ fn setup_did_with_right<T: Config>() {
     setup_existing_did::<T>();
 
     let did = alice_did();
-    let key_ref = alice_key_ref();
+    let key_ref = target_key_ref();
 
     DidStates::<T>::mutate(&did, |maybe_state| {
         let state = maybe_state.as_mut().expect("did exists");
@@ -267,7 +310,7 @@ mod benchmarks {
 
         let caller: T::AccountId = whitelisted_caller();
         let did = alice_did();
-        let key_ref = alice_key_ref();
+        let key_ref = target_key_ref();
         let signed_op = create_revoke_key_op(&did, &key_ref, 1);
         let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
 
@@ -275,8 +318,8 @@ mod benchmarks {
         submit_did_operations(RawOrigin::Signed(caller), operations);
 
         let state = DidStates::<T>::get(&did).expect("did exists");
-        let key = state.find_key(&key_ref).expect("key exists");
-        assert!(key.revoked_at_height.is_some());
+        assert!(state.find_key(&key_ref).is_none());
+        assert!(state.has_right_at(&alice_key_ref(), Right::Update, 1));
     }
 
     #[benchmark]
@@ -285,7 +328,7 @@ mod benchmarks {
 
         let caller: T::AccountId = whitelisted_caller();
         let did = alice_did();
-        let key_ref = alice_key_ref();
+        let key_ref = target_key_ref();
         let signed_op = create_add_right_op(&did, &key_ref, Right::Issue, 1);
         let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
 
@@ -302,7 +345,7 @@ mod benchmarks {
 
         let caller: T::AccountId = whitelisted_caller();
         let did = alice_did();
-        let key_ref = alice_key_ref();
+        let key_ref = target_key_ref();
         let signed_op = create_revoke_right_op(&did, &key_ref, Right::Issue, 1);
         let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
 
@@ -310,12 +353,8 @@ mod benchmarks {
         submit_did_operations(RawOrigin::Signed(caller), operations);
 
         let state = DidStates::<T>::get(&did).expect("did exists");
-        let grant = state
-            .rights
-            .iter()
-            .find(|r| r.right == Right::Issue && r.key_ref == key_ref)
-            .expect("right exists");
-        assert!(grant.revoked_at_height.is_some());
+        assert!(!state.rights.iter().any(|r| r.right == Right::Issue && r.key_ref == key_ref));
+        assert!(state.has_right_at(&alice_key_ref(), Right::Delegate, 1));
     }
 
     #[benchmark]
@@ -350,5 +389,5 @@ mod benchmarks {
         assert!(DidStates::<T>::contains_key(distinct_did(n - 1)));
     }
 
-    // impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);
+    impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);
 }

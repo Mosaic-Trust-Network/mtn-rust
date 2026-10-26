@@ -10,10 +10,11 @@ run_deny()        { cargo deny check --hide-inclusion-graph; }
 run_clippy()      { cargo clippy --workspace --all-targets --no-deps -- -D warnings; }
 run_test()        { cargo test --workspace ${TEST_FILTER:+-- "$TEST_FILTER"}; }
 run_serde-test()  { cargo test --workspace --features serde ${TEST_FILTER:+-- "$TEST_FILTER"}; }
+run_benchmark-test() { cargo test --locked --workspace --features runtime-benchmarks ${TEST_FILTER:+-- "$TEST_FILTER"}; }
 run_nostd() { cargo check -p pallet-mosaic-did --no-default-features --target wasm32v1-none; }
 
 if [ $# -eq 0 ]; then
-    STEPS=(format propagate fmt deny clippy test serde-test nostd)
+    STEPS=(format propagate fmt deny clippy test serde-test benchmark-test nostd)
 else
     STEPS=("$@")
 fi
@@ -25,6 +26,9 @@ for step in "${STEPS[@]}"; do
     elif [[ "$step" == serde-test:* ]]; then
         TEST_FILTER="${step#serde-test:}"
         step="serde-test"
+    elif [[ "$step" == benchmark-test:* ]]; then
+        TEST_FILTER="${step#benchmark-test:}"
+        step="benchmark-test"
     else
         unset TEST_FILTER
     fi
