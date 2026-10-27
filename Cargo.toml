@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 rust-version = "1.88"
 edition = "2024"
 repository = "https://github.com/Mosaic-Trust-Network/mtn-rust"
@@ -20,11 +20,11 @@ homepage = "https://mosaic-trust.network/"
 
 [workspace.dependencies]
 wasm-bindgen = { version = "=0.2.129" }
-mosaic-keyvault = { version = "0.1.0", path = "keyvault", default-features = false }
-mosaic-vault = { version = "0.1.0", path = "vault" }
-json-digest = { version = "0.1.0", path = "json-digest", default-features = false }
-mosaic-did-types = { version = "0.1.0", path = "mosaic-did-types", default-features = false }
-pallet-mosaic-did = { version = "0.1.0", path = "pallet-mosaic-did" }
+mosaic-keyvault = { version = "0.1.1", path = "keyvault", default-features = false }
+mosaic-vault = { version = "0.1.1", path = "vault" }
+json-digest = { version = "0.1.1", path = "json-digest", default-features = false }
+mosaic-did-types = { version = "0.1.1", path = "mosaic-did-types", default-features = false }
+pallet-mosaic-did = { version = "0.1.1", path = "pallet-mosaic-did" }
 
 android_logger = { version = "0.15.1" }
 blake2 = { version = "0.11.0-rc.6", default-features = false }

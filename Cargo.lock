@@ -7074,7 +7074,7 @@ dependencies = [
 
 [[package]]
 name = "json-digest"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "hex",
@@ -8396,7 +8396,7 @@ dependencies = [
 
 [[package]]
 name = "mosaic-did-types"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "bounded-collections 0.3.2",
@@ -8415,7 +8415,7 @@ dependencies = [
 
 [[package]]
 name = "mosaic-keyvault"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake2 0.11.0",
  "blake3",
@@ -8443,7 +8443,7 @@ dependencies = [
 
 [[package]]
 name = "mosaic-sdk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "json-digest",
  "mosaic-did-types",
@@ -8469,7 +8469,7 @@ dependencies = [
 
 [[package]]
 name = "mosaic-vault"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "android_logger",
  "byteorder",
@@ -10142,7 +10142,7 @@ dependencies = [
 
 [[package]]
 name = "pallet-mosaic-did"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "mosaic-did-types",
  "mosaic-keyvault",
