@@ -7,6 +7,7 @@ ignore = [
     "RUSTSEC-2024-0370", # `proc-macro-error` is unmaintained
     "RUSTSEC-2025-0055", # `tracing-subscriber` pinned to =0.3.19 by polkadot-sdk; 0.3.20 has an ANSI colour-code regression (tokio-rs/tracing#3378)
     "RUSTSEC-2025-0161", # `libsecp256k1` still arrives via polkadot-sdk/sp-core; keyvault uses k256
+    "RUSTSEC-2026-0387", # `crypto-bigint` 0.5.5 via `k256`/`p256` 0.13 (alloy, revm, sp-core); fixed only in 0.7.6, no compatible 0.5.x patch
 ]
 
 [licenses]
