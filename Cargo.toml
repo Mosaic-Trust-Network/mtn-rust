@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 rust-version = "1.88"
 edition = "2024"
 repository = "https://github.com/Mosaic-Trust-Network/mtn-rust"
@@ -19,12 +19,11 @@ license = "LGPL-3.0-or-later"
 homepage = "https://mosaic-trust.network/"
 
 [workspace.dependencies]
-wasm-bindgen = { version = "=0.2.129" }
-mosaic-keyvault = { version = "0.1.1", path = "keyvault", default-features = false }
-mosaic-vault = { version = "0.1.1", path = "vault" }
-json-digest = { version = "0.1.1", path = "json-digest", default-features = false }
-mosaic-did-types = { version = "0.1.1", path = "mosaic-did-types", default-features = false }
-pallet-mosaic-did = { version = "0.1.1", path = "pallet-mosaic-did" }
+mosaic-keyvault = { version = "0.1.2", path = "keyvault", default-features = false }
+mosaic-vault = { version = "0.1.2", path = "vault" }
+json-digest = { version = "0.1.2", path = "json-digest", default-features = false }
+mosaic-did-types = { version = "0.1.2", path = "mosaic-did-types", default-features = false }
+pallet-mosaic-did = { version = "0.1.2", path = "pallet-mosaic-did" }
 
 android_logger = { version = "0.15.1" }
 blake2 = { version = "0.11.0-rc.6", default-features = false }
@@ -43,7 +42,7 @@ multibase = { version = "0.9.1", default-features = false }
 orion = { version = "0.17.11" }
 parity-scale-codec = { version = "3", default-features = false, features = ["derive", "max-encoded-len"] }
 parking_lot = { version = "0.12.4", features = ["serde"] }
-polkadot-sdk = { version = "2606.0.0", git = "https://github.com/Mosaic-Chain/polkadot-sdk", branch = "private-address-range-2606-1", default-features = false }
+polkadot-sdk = { version = "2606.5.0", git = "https://github.com/Mosaic-Chain/polkadot-sdk", branch = "private-address-range-2606-3", default-features = false }
 rand = { version = "0.10.0", default-features = false }
 ripemd = { version = "0.2.0", default-features = false }
 rmp-serde = { version = "1.3.0" }
@@ -59,6 +58,7 @@ sha2 = { version = "0.11.0", default-features = false }
 bip39 = { package = "tiny-bip39", version = "2.0.0", features = ["rand"], default-features = false }
 typetag = { version = "0.2.20" }
 thiserror = { version = "2", default-features = false }
+wasm-bindgen = { version = "=0.2.129" }
 
 # Experiment for optimizing WASM and FFI binary sizes
 [profile.release]
