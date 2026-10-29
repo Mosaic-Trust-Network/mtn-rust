@@ -347,8 +347,8 @@ pub mod pallet {
     /// `distinct_dids` is the upper bound (one per DID-carrying operation) for
     /// the pre-dispatch charge, and the actually touched count for the
     /// post-dispatch refund. The explicit read covers the lazy per-DID capture
-    /// until generated weights absorb it from the `submit_batch_distinct_dids`
-    /// benchmark; drop it when `weights.rs` is next regenerated.
+    /// until the per-operation weights are regenerated from the current
+    /// benchmark suite; drop it together with the weights update.
     pub fn batch_weight<T: Config>(operations: &[SsiOperation], distinct_dids: u64) -> Weight {
         operations
             .iter()

@@ -11,11 +11,13 @@ use super::*;
 use frame_benchmarking::v2::*;
 use frame_system::RawOrigin;
 use mosaic_did_types::{
-    Authentication, ContentId, Did, DidOperation, KeyRef, KeyType, MAX_KEYS_PER_DID, Right,
-    SignedDidOperation, SsiOperation, VerificationMethod, ed25519_blake3_signature,
+    Authentication, ContentId, Did, DidOperation, GovernedOperation, KeyRef, KeyType,
+    MAX_KEYS_PER_DID, Right, SignedDidOperation, SsiOperation, VerificationMethod,
+    ed25519_blake3_signature,
 };
 use parity_scale_codec::{Encode, alloc::string::ToString};
 use polkadot_sdk::sp_core::Get;
+use polkadot_sdk::sp_runtime::Saturating;
 
 /// RFC 8032 test vector 1 - Alice's Ed25519 key pair.
 /// sk: 9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60
@@ -57,7 +59,27 @@ fn alice_key_ref() -> KeyRef {
     KeyRef::new(format!("{}", auth.key_id()).into_bytes()).expect("valid key ref")
 }
 
-/// A distinct deterministic benchmark key; never used as a production secret.
+/// Sign an operation with Alice's key, using her current key reference.
+fn sign_alice_operation(operation: DidOperation, nonce: u64) -> SignedDidOperation {
+    let signed_op = SignedDidOperation {
+        operation,
+        signer_key_ref: alice_key_ref(),
+        signature: ed25519_blake3_signature([0u8; 64]),
+        nonce,
+    };
+
+    let message = (&signed_op.operation, &signed_op.signer_key_ref, &signed_op.nonce).encode();
+    let signature = sign_with_alice(&message);
+
+    SignedDidOperation { signature, ..signed_op }
+}
+
+/// A protocol-valid commitment content ID for benchmark operations.
+fn benchmark_commitment() -> ContentId {
+    ContentId::structured_blake3([0xAB; 32])
+}
+
+/// A deterministic benchmark key; never used as a production secret.
 fn target_public_key() -> [u8; 32] {
     use mosaic_keyvault::PrivateKey;
     use mosaic_keyvault::ed25519::EdPrivateKey;
@@ -94,49 +116,6 @@ fn create_add_key_op(nonce: u64) -> SignedDidOperation {
     let message = (&signed_op.operation, &signed_op.signer_key_ref, &signed_op.nonce).encode();
     let signature = sign_with_alice(&message);
 
-    SignedDidOperation { signature, ..signed_op }
-}
-
-/// Deterministic distinct Ed25519 secret key for benchmark index `i`.
-fn distinct_sk(i: u32) -> mosaic_keyvault::ed25519::EdPrivateKey {
-    use mosaic_keyvault::ed25519::EdPrivateKey;
-
-    let mut seed = [0u8; 32];
-    seed[..4].copy_from_slice(&(i + 1).to_le_bytes());
-    EdPrivateKey::from_bytes(seed).expect("any 32 bytes is a valid Ed25519 seed")
-}
-
-/// The DID created by `create_distinct_add_key_op(i)`.
-fn distinct_did(i: u32) -> Did {
-    use mosaic_keyvault::PrivateKey as _;
-
-    Did::from_public_key(&distinct_sk(i).public_key().to_bytes()).expect("valid DID")
-}
-
-/// A self-signed `AddKey` creation operation for a distinct DID.
-fn create_distinct_add_key_op(i: u32) -> SignedDidOperation {
-    use mosaic_keyvault::PrivateKey as _;
-
-    let sk = distinct_sk(i);
-    let pk_bytes = sk.public_key().to_bytes();
-    let auth =
-        Authentication::from_key_type_and_bytes(KeyType::Ed25519, &pk_bytes).expect("valid auth");
-    let key_ref = KeyRef::new(format!("{}", auth.key_id()).into_bytes()).expect("key ref fits");
-
-    let signed_op = SignedDidOperation {
-        operation: DidOperation::AddKey {
-            did: Did::from_public_key(&pk_bytes).expect("valid DID"),
-            auth,
-            expires_at_height: None,
-            initial_nonce: 0,
-        },
-        signer_key_ref: key_ref,
-        signature: ed25519_blake3_signature([0u8; 64]),
-        nonce: 1,
-    };
-
-    let message = (&signed_op.operation, &signed_op.signer_key_ref, &signed_op.nonce).encode();
-    let signature = mosaic_keyvault::multicipher::MSignature::Ed25519Blake3(sk.sign(&message));
     SignedDidOperation { signature, ..signed_op }
 }
 
@@ -198,6 +177,69 @@ fn create_revoke_right_op(
     let signature = sign_with_alice(&message);
 
     SignedDidOperation { signature, ..signed_op }
+}
+
+/// Create a signed UpdateCommitment operation.
+fn create_update_commitment_op(
+    did: &Did, commitment: ContentId, sequence: u64, nonce: u64,
+) -> SignedDidOperation {
+    sign_alice_operation(
+        DidOperation::UpdateCommitment { did: did.clone(), commitment, sequence },
+        nonce,
+    )
+}
+
+/// Create a signed AnnounceGoverned operation.
+fn create_announce_governed_op(
+    did: &Did, operation: GovernedOperation, nonce: u64,
+) -> SignedDidOperation {
+    sign_alice_operation(DidOperation::AnnounceGoverned { did: did.clone(), operation }, nonce)
+}
+
+/// Create a signed CancelGoverned operation.
+fn create_cancel_governed_op(did: &Did, nonce: u64) -> SignedDidOperation {
+    sign_alice_operation(DidOperation::CancelGoverned { did: did.clone() }, nonce)
+}
+
+/// Create a signed ExecuteGoverned operation.
+fn create_execute_governed_op(did: &Did, nonce: u64) -> SignedDidOperation {
+    sign_alice_operation(DidOperation::ExecuteGoverned { did: did.clone() }, nonce)
+}
+
+/// The benchmark commitment reset used by both announcement and execution.
+fn benchmark_governed_operation() -> GovernedOperation {
+    GovernedOperation::CommitmentReset {
+        reason: benchmark_commitment(),
+        commitment: ContentId::structured_blake3([0xCD; 32]),
+        sequence: 1,
+    }
+}
+
+/// Fund a benchmark caller with enough free balance to cover the governed
+/// operation deposit. Benchmark setup only; never part of the measured call.
+fn fund_for_deposit<T: Config>(caller: &T::AccountId) {
+    use frame_support::traits::tokens::fungible::{Inspect as _, Unbalanced as _};
+
+    let amount = T::GovernedOpDeposit::get().saturating_add(T::Currency::minimum_balance());
+    let free = T::Currency::balance(caller);
+    let issuance = T::Currency::total_issuance();
+
+    T::Currency::write_balance(caller, free.saturating_add(amount))
+        .expect("benchmark caller balance can be written");
+    T::Currency::set_total_issuance(issuance.saturating_add(amount));
+}
+
+/// Submit one signed operation as benchmark setup.
+fn submit_setup_operation<T: Config>(caller: T::AccountId, signed_op: SignedDidOperation) {
+    let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
+    Pallet::<T>::submit_did_operations(RawOrigin::Signed(caller).into(), operations)
+        .expect("benchmark setup operation succeeds");
+}
+
+/// Announce the benchmark governed operation so cancel and execute have state.
+fn setup_pending_governed_op<T: Config>(caller: &T::AccountId) {
+    let signed_op = create_announce_governed_op(&alice_did(), benchmark_governed_operation(), 1);
+    submit_setup_operation::<T>(caller.clone(), signed_op);
 }
 
 /// Pre-populate DID state for operations that require an existing DID.
@@ -358,6 +400,80 @@ mod benchmarks {
     }
 
     #[benchmark]
+    fn update_commitment<T: Config>() {
+        setup_existing_did::<T>();
+
+        let caller: T::AccountId = whitelisted_caller();
+        let did = alice_did();
+        let commitment = benchmark_commitment();
+        let signed_op = create_update_commitment_op(&did, commitment, 1, 1);
+        let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
+
+        #[extrinsic_call]
+        submit_did_operations(RawOrigin::Signed(caller), operations);
+
+        let state = DidStates::<T>::get(&did).expect("did exists");
+        assert_eq!(state.commitment, Some((1, commitment)));
+    }
+
+    #[benchmark]
+    fn announce_governed_op<T: Config>() {
+        setup_existing_did::<T>();
+
+        let caller: T::AccountId = whitelisted_caller();
+        fund_for_deposit::<T>(&caller);
+        let did = alice_did();
+        let governed_op = benchmark_governed_operation();
+        let signed_op = create_announce_governed_op(&did, governed_op.clone(), 1);
+        let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
+
+        #[extrinsic_call]
+        submit_did_operations(RawOrigin::Signed(caller), operations);
+
+        let pending = PendingGovernedOps::<T>::get(&did).expect("pending op exists");
+        assert_eq!(pending.operation, governed_op);
+    }
+
+    #[benchmark]
+    fn cancel_governed_op<T: Config>() {
+        setup_existing_did::<T>();
+
+        let caller: T::AccountId = whitelisted_caller();
+        fund_for_deposit::<T>(&caller);
+        setup_pending_governed_op::<T>(&caller);
+
+        let did = alice_did();
+        let signed_op = create_cancel_governed_op(&did, 2);
+        let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
+
+        #[extrinsic_call]
+        submit_did_operations(RawOrigin::Signed(caller), operations);
+
+        assert!(PendingGovernedOps::<T>::get(&did).is_none());
+    }
+
+    #[benchmark]
+    fn execute_governed_op<T: Config>() {
+        setup_existing_did::<T>();
+
+        let caller: T::AccountId = whitelisted_caller();
+        fund_for_deposit::<T>(&caller);
+        setup_pending_governed_op::<T>(&caller);
+        frame_system::Pallet::<T>::set_block_number((GOVERNED_OP_DELAY_BLOCKS + 1).into());
+
+        let did = alice_did();
+        let signed_op = create_execute_governed_op(&did, 2);
+        let operations = sp_std::vec![SsiOperation::Did(signed_op)].try_into().unwrap();
+
+        #[extrinsic_call]
+        submit_did_operations(RawOrigin::Signed(caller), operations);
+
+        let state = DidStates::<T>::get(&did).expect("did exists");
+        assert_eq!(state.commitment, Some((1, ContentId::structured_blake3([0xCD; 32]))));
+        assert!(PendingGovernedOps::<T>::get(&did).is_none());
+    }
+
+    #[benchmark]
     fn register_before_proof<T: Config>() {
         let caller: T::AccountId = whitelisted_caller();
         let content_id = ContentId::from_bytes(b"benchmark test document content");
@@ -369,24 +485,35 @@ mod benchmarks {
         assert!(BeforeProofs::<T>::contains_key(content_id));
     }
 
-    /// Worst case for the lazy per-DID capture: one extrinsic with `n`
-    /// operations, each creating a different DID, so the batch pays one
-    /// `DidStates::get` per operation. The other benchmarks submit single-op
-    /// batches; this one isolates the distinct-DID term for weight generation.
-    #[benchmark]
-    fn submit_batch_distinct_dids<T: Config>(n: Linear<1, { T::MaxOperationsPerTx::get() }>) {
-        let caller: T::AccountId = whitelisted_caller();
+    #[cfg(test)]
+    mod tests {
+        use super::*;
 
-        let mut operations = sp_std::vec![];
-        for i in 0..n {
-            operations.push(SsiOperation::Did(create_distinct_add_key_op(i)));
+        /// Every `WeightInfo` entry must have a benchmark and nothing else: the
+        /// weight generator emits one function per benchmark, so an extra
+        /// benchmark produces a weight file that no longer implements the
+        /// trait.
+        #[test]
+        fn benchmarks_match_weight_info() {
+            let names: sp_std::vec::Vec<sp_std::vec::Vec<u8>> =
+                <Pallet<crate::mock::Test> as frame_benchmarking::Benchmarking>::benchmarks(false)
+                    .into_iter()
+                    .map(|benchmark| benchmark.name)
+                    .collect();
+            let expected: sp_std::vec::Vec<sp_std::vec::Vec<u8>> = sp_std::vec![
+                b"add_key".to_vec(),
+                b"revoke_key".to_vec(),
+                b"add_right".to_vec(),
+                b"revoke_right".to_vec(),
+                b"update_commitment".to_vec(),
+                b"announce_governed_op".to_vec(),
+                b"cancel_governed_op".to_vec(),
+                b"execute_governed_op".to_vec(),
+                b"register_before_proof".to_vec(),
+            ];
+
+            assert_eq!(names, expected);
         }
-        let operations = operations.try_into().expect("n fits MaxOperationsPerTx");
-
-        #[extrinsic_call]
-        submit_did_operations(RawOrigin::Signed(caller), operations);
-
-        assert!(DidStates::<T>::contains_key(distinct_did(n - 1)));
     }
 
     impl_benchmark_test_suite!(Pallet, crate::mock::new_test_ext(), crate::mock::Test);
